@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/api"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 )
@@ -107,11 +108,12 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 		var images []api.ImageData
 		for _, p := range msg.Content {
 			if img, ok := p.(prompty.ImagePart); ok {
-				if len(img.Data) > 0 {
+				switch {
+				case len(img.Data) > 0:
 					images = append(images, api.ImageData(img.Data))
-				} else if img.URL != "" {
+				case img.URL != "":
 					return nil, fmt.Errorf("%w: Ollama does not support image URL, use Data", adapter.ErrUnsupportedContentType)
-				} else {
+				default:
 					return nil, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
 				}
 			}

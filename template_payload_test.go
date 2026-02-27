@@ -11,10 +11,10 @@ import (
 func TestSpliceHistory(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		rendered []ChatMessage
-		history  []ChatMessage
-		wantLen  int
+		name        string
+		rendered    []ChatMessage
+		history     []ChatMessage
+		wantLen     int
 		firstUserAt int // index of first non-system in result
 	}{
 		{"empty history", []ChatMessage{{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}}, {Role: "user", Content: []ContentPart{TextPart{Text: "U"}}}}, nil, 2, 1},
@@ -73,9 +73,9 @@ func TestExtractVarsFromTree(t *testing.T) {
 		return tpl
 	}
 	tests := []struct {
-		name  string
-		tpl   string
-		want  []string
+		name string
+		tpl  string
+		want []string
 	}{
 		{"no vars", "plain text", nil},
 		{"one var", "{{ .user_name }}", []string{"user_name"}},

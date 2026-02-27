@@ -11,13 +11,13 @@
 //  1. Translate(exec *prompty.PromptExecution) (any, error)
 //     - Map exec.Messages ([]ChatMessage) to the provider's message format.
 //     - For messages with RoleTool, each message SHOULD contain exactly one ToolResultPart;
-//       some adapters use only the first part when multiple are present.
+//     some adapters use only the first part when multiple are present.
 //     - Map exec.Tools ([]ToolDefinition) to the provider's tool schema.
 //     - Apply exec.ModelConfig (e.g. temperature, max_tokens) to the request.
 //     - Return the provider's request type; callers will type-assert (e.g. req.(*MySDK.ChatParams)).
 //     - Use adapter.ExtractModelConfig(exec.ModelConfig) for well-known keys.
 //     - Return adapter.ErrUnsupportedRole or adapter.ErrUnsupportedContentType when the provider
-//       does not support a role or ContentPart type (e.g. ImagePart with URL when the SDK requires base64).
+//     does not support a role or ContentPart type (e.g. ImagePart with URL when the SDK requires base64).
 //
 //  2. ParseResponse(raw any) ([]prompty.ContentPart, error)
 //     - Type-assert raw to the provider's response type (e.g. *MySDK.ChatResponse).

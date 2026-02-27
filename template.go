@@ -80,13 +80,13 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		return nil
 	}
 	out := &ChatPromptTemplate{
-		Messages:         slices.Clone(c.Messages),
-		Tools:            slices.Clone(c.Tools),
-		RequiredVars:     slices.Clone(c.RequiredVars),
-		requiredFromAST:  c.requiredFromAST,
-		Metadata:         c.Metadata,
-		tokenCounter:     c.tokenCounter,
-		parsedTemplates:  c.parsedTemplates,
+		Messages:        slices.Clone(c.Messages),
+		Tools:           slices.Clone(c.Tools),
+		RequiredVars:    slices.Clone(c.RequiredVars),
+		requiredFromAST: c.requiredFromAST,
+		Metadata:        c.Metadata,
+		tokenCounter:    c.tokenCounter,
+		parsedTemplates: c.parsedTemplates,
 	}
 	if c.PartialVariables != nil {
 		out.PartialVariables = maps.Clone(c.PartialVariables)

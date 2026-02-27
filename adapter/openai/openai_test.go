@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/v3"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -111,7 +113,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 	params, err := a.TranslateTyped(exec)
 	require.NoError(t, err)
 	assert.True(t, params.Temperature.Valid())
-	assert.Equal(t, 0.5, params.Temperature.Value)
+	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-9)
 	assert.True(t, params.MaxTokens.Valid())
 	assert.Equal(t, int64(100), params.MaxTokens.Value)
 }
@@ -183,11 +185,11 @@ func TestTranslate_UserMessagePreservesTextImageOrder(t *testing.T) {
 	require.NotNil(t, params.Messages[0].OfUser)
 	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
 	require.Len(t, parts, 3)
-	assert.NotNil(t, parts[0].OfString)
-	assert.Equal(t, "before ", parts[0].OfString.Value)
+	assert.NotNil(t, parts[0].OfText)
+	assert.Equal(t, "before ", parts[0].OfText.Text)
 	assert.NotNil(t, parts[1].OfImageURL)
-	assert.NotNil(t, parts[2].OfString)
-	assert.Equal(t, " after", parts[2].OfString.Value)
+	assert.NotNil(t, parts[2].OfText)
+	assert.Equal(t, " after", parts[2].OfText.Text)
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {
@@ -209,7 +211,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 	tc := params.Messages[0].OfAssistant.ToolCalls[0]
 	assert.Equal(t, "call_1", tc.OfFunction.ID)
 	assert.Equal(t, "get_weather", tc.OfFunction.Function.Name)
-	assert.Equal(t, `{"location":"NYC"}`, tc.OfFunction.Function.Arguments)
+	assert.JSONEq(t, `{"location":"NYC"}`, tc.OfFunction.Function.Arguments)
 }
 
 func TestTranslate_UnsupportedRole(t *testing.T) {
@@ -263,7 +265,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	tc := parts[0].(prompty.ToolCallPart)
 	assert.Equal(t, "call_1", tc.ID)
 	assert.Equal(t, "get_weather", tc.Name)
-	assert.Equal(t, `{"location":"NYC"}`, tc.Args)
+	assert.JSONEq(t, `{"location":"NYC"}`, tc.Args)
 }
 
 func TestParseResponse_InvalidType(t *testing.T) {
@@ -315,7 +317,7 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	params, err := a.TranslateTyped(exec)
 	require.NoError(t, err)
 	require.NotNil(t, params)
-	assert.Len(t, params.Messages, 0)
+	assert.Empty(t, params.Messages)
 }
 
 func TestTranslate_InvalidToolCallArgs(t *testing.T) {

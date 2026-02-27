@@ -6,6 +6,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"))
 }
 
 func ExampleAdapter_Translate() {
@@ -116,7 +117,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 	req, err := a.TranslateTyped(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.Temperature)
-	assert.Equal(t, float32(0.5), *req.Config.Temperature)
+	assert.InDelta(t, 0.5, float64(*req.Config.Temperature), 1e-9)
 	assert.Equal(t, int32(100), req.Config.MaxOutputTokens)
 }
 
@@ -179,7 +180,7 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 	}
 	_, err := a.TranslateTyped(exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
 }
 
@@ -323,5 +324,5 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	req, err := a.TranslateTyped(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req)
-	assert.Len(t, req.Contents, 0)
+	assert.Empty(t, req.Contents)
 }

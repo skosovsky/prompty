@@ -5,6 +5,7 @@ import "context"
 // Role is the message role in a chat (system, user, assistant, tool).
 type Role string
 
+// Chat message roles.
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
@@ -26,9 +27,9 @@ func (TextPart) isContentPart() {}
 
 // ImagePart holds image URL, MIME type, and optional inline data.
 type ImagePart struct {
-	URL     string
+	URL      string
 	MIMEType string
-	Data   []byte
+	Data     []byte
 }
 
 func (ImagePart) isContentPart() {}
@@ -68,7 +69,7 @@ type ToolDefinition struct {
 
 // PromptMetadata holds observability metadata.
 type PromptMetadata struct {
-	ID          string   // From manifest id
+	ID          string // From manifest id
 	Version     string
 	Description string   // From manifest description
 	Tags        []string // From manifest metadata.tags

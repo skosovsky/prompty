@@ -12,10 +12,11 @@ import (
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Registry loads prompt templates from the filesystem (lazy, cached).
-// Resolves name+env to {dir}/{name}.{env}.yaml with fallback to {dir}/{name}.yaml.
+// Ensures Registry implements prompty.PromptRegistry.
 var _ prompty.PromptRegistry = (*Registry)(nil)
 
+// Registry loads prompt templates from the filesystem (lazy, cached).
+// Resolves name+env to {dir}/{name}.{env}.yaml with fallback to {dir}/{name}.yaml.
 type Registry struct {
 	dir   string
 	mu    sync.RWMutex
@@ -35,8 +36,10 @@ type Option func(*Registry)
 
 // GetTemplate returns a template by name and env. Lazy-loads and caches.
 // File resolution: {dir}/{name}.{env}.yaml or .yml, fallback {dir}/{name}.yaml or .yml.
-// Name must not contain ':' (used as cache key separator).
 func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.ChatPromptTemplate, error) {
+	if err := prompty.ValidateName(name, env); err != nil {
+		return nil, err
+	}
 	key := name + ":" + env
 	r.mu.RLock()
 	tpl, ok := r.cache[key]
@@ -59,6 +62,7 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 			path := filepath.Join(r.dir, name+"."+env+ext)
 			tpl, err := manifest.ParseFile(path)
 			if err == nil {
+				tpl.Metadata.Environment = env
 				r.cache[key] = tpl
 				return prompty.CloneTemplate(tpl), nil
 			}
@@ -71,6 +75,7 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 		path := filepath.Join(r.dir, name+ext)
 		tpl, err := manifest.ParseFile(path)
 		if err == nil {
+			tpl.Metadata.Environment = env
 			r.cache[key] = tpl
 			return prompty.CloneTemplate(tpl), nil
 		}

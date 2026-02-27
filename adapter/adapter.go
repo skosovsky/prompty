@@ -122,6 +122,9 @@ func toInt64(v any) (int64, bool) {
 	case int8:
 		return int64(x), true
 	case uint:
+		if x > math.MaxInt64 {
+			return math.MaxInt64, true
+		}
 		return int64(x), true
 	case uint8:
 		return int64(x), true
@@ -135,8 +138,14 @@ func toInt64(v any) (int64, bool) {
 		}
 		return int64(x), true
 	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return 0, false
+		}
 		return int64(x), true
 	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return 0, false
+		}
 		return int64(x), true
 	default:
 		return 0, false

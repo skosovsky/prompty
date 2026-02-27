@@ -28,10 +28,10 @@ func TestVariableError_Unwrap(t *testing.T) {
 		Template: "t",
 		Err:      ErrMissingVariable,
 	}
-	assert.True(t, errors.Is(err, ErrMissingVariable))
+	require.ErrorIs(t, err, ErrMissingVariable)
 	unwrapped := errors.Unwrap(err)
-	require.NotNil(t, unwrapped)
-	assert.True(t, errors.Is(unwrapped, ErrMissingVariable))
+	require.Error(t, unwrapped)
+	assert.ErrorIs(t, unwrapped, ErrMissingVariable)
 }
 
 func TestVariableError_errorsAs(t *testing.T) {
@@ -45,10 +45,10 @@ func TestVariableError_errorsAs(t *testing.T) {
 	outer := fmt.Errorf("outer: %w", wrapped)
 
 	var ve *VariableError
-	require.True(t, errors.As(outer, &ve))
+	require.ErrorAs(t, outer, &ve)
 	assert.Equal(t, "foo", ve.Variable)
 	assert.Equal(t, "bar", ve.Template)
-	assert.True(t, errors.Is(ve, ErrMissingVariable))
+	assert.ErrorIs(t, ve, ErrMissingVariable)
 }
 
 func TestSentinelErrors_Is(t *testing.T) {
@@ -66,6 +66,7 @@ func TestSentinelErrors_Is(t *testing.T) {
 		{"template parse", ErrTemplateParse, ErrTemplateParse, true},
 		{"invalid manifest", ErrInvalidManifest, ErrInvalidManifest, true},
 		{"reserved variable", ErrReservedVariable, ErrReservedVariable, true},
+		{"invalid name", ErrInvalidName, ErrInvalidName, true},
 		{"wrapped missing", fmt.Errorf("wrap: %w", ErrMissingVariable), ErrMissingVariable, true},
 		{"wrong target", ErrMissingVariable, ErrTemplateRender, false},
 	}
@@ -76,4 +77,3 @@ func TestSentinelErrors_Is(t *testing.T) {
 		})
 	}
 }
-

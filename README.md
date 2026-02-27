@@ -1,0 +1,103 @@
+# prompty
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/skosovsky/prompty.svg)](https://pkg.go.dev/github.com/skosovsky/prompty)
+
+Prompt template management for Go LLM applications. Provider-agnostic: load templates, render with typed payloads, then map to OpenAI, Anthropic, Gemini, or Ollama via adapters.
+
+## Features
+
+- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata
+- **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing
+- **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection
+- **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`) with TTL cache
+- **Adapters**: map `PromptExecution` to provider request types (OpenAI, Anthropic, Gemini, Ollama); parse responses back to `[]ContentPart`
+- **Observability**: `PromptMetadata` (ID, version, description, tags, environment) on every execution
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/skosovsky/prompty"
+)
+
+func main() {
+    tpl, err := prompty.NewChatPromptTemplate(
+        []prompty.MessageTemplate{
+            {Role: prompty.RoleSystem, Content: "You are {{ .bot_name }}."},
+            {Role: prompty.RoleUser, Content: "{{ .query }}"},
+        },
+        prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
+    )
+    if err != nil {
+        panic(err)
+    }
+    type Payload struct {
+        Query string `prompt:"query"`
+    }
+    ctx := context.Background()
+    exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is 2+2?"})
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(exec.Messages[0].Content[0].(prompty.TextPart).Text)
+    fmt.Println(exec.Messages[1].Content[0].(prompty.TextPart).Text)
+}
+```
+
+## Registries
+
+| Package | Description |
+|---------|-------------|
+| `github.com/skosovsky/prompty/fileregistry` | Load YAML manifests from a directory; lazy load with cache; `Reload()` to clear cache |
+| `github.com/skosovsky/prompty/embedregistry` | Load from `embed.FS` at build time; eager load; no mutex |
+| `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); TTL cache; `Evict`/`EvictAll`; `Close()` for resource cleanup |
+
+Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.yaml`. Name must not contain `':'`.
+
+## Adapters
+
+| Package | Translate result | Notes |
+|---------|------------------|--------|
+| `github.com/skosovsky/prompty/adapter/openai` | `*openai.ChatCompletionNewParams` | Tools, images (URL/base64), tool calls |
+| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | Images as base64 only |
+| `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Model set at call site |
+| `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
+
+Each adapter implements `Translate(exec) (any, error)` and `TranslateTyped(exec)` for the concrete type; `ParseResponse(raw)` returns `[]prompty.ContentPart`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Registry[Registry]
+    Template[ChatPromptTemplate]
+    Format[FormatStruct]
+    Exec[PromptExecution]
+    Adapter[ProviderAdapter]
+    API[LLM API]
+
+    Registry -->|GetTemplate| Template
+    Template -->|FormatStruct + payload| Format
+    Format --> Exec
+    Exec -->|Translate| Adapter
+    Adapter -->|request| API
+    API -->|raw response| Adapter
+    Adapter -->|ParseResponse| ContentParts[ContentPart]
+```
+
+Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validation** → **Rendering** (with tool injection) → **PromptExecution** → **Adapter** → LLM API. HTTP/transport is the caller’s responsibility.
+
+## Template functions
+
+- `truncate_chars .text 4000` — trim by rune count
+- `truncate_tokens .text 2000` — trim by token count (uses `TokenCounter` from template options; default `CharFallbackCounter`)
+- `render_tools_as_xml .Tools` / `render_tools_as_json .Tools` — inject tool definitions into the prompt (e.g. for local Llama)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

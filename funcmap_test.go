@@ -77,11 +77,11 @@ func TestRenderToolsAsXML_Golden(t *testing.T) {
 	require.NoError(t, err)
 	golden := filepath.Join("testdata", "funcmap", "tools.xml.golden")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		require.NoError(t, os.MkdirAll(filepath.Dir(golden), 0755))
-		require.NoError(t, os.WriteFile(golden, []byte(got), 0644))
+		require.NoError(t, os.MkdirAll(filepath.Dir(golden), 0750))
+		require.NoError(t, os.WriteFile(golden, []byte(got), 0600))
 		return
 	}
-	want, err := os.ReadFile(golden)
+	want, err := os.ReadFile(golden) // #nosec G304 -- golden path is from testdata constant
 	require.NoError(t, err)
 	assert.Equal(t, string(want), got)
 }
@@ -96,11 +96,11 @@ func TestRenderToolsAsJSON_Golden(t *testing.T) {
 	require.NoError(t, err)
 	golden := filepath.Join("testdata", "funcmap", "tools.json.golden")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		require.NoError(t, os.MkdirAll(filepath.Dir(golden), 0755))
-		require.NoError(t, os.WriteFile(golden, []byte(got), 0644))
+		require.NoError(t, os.MkdirAll(filepath.Dir(golden), 0750))
+		require.NoError(t, os.WriteFile(golden, []byte(got), 0600))
 		return
 	}
-	want, err := os.ReadFile(golden)
+	want, err := os.ReadFile(golden) // #nosec G304 -- golden path is from testdata constant
 	require.NoError(t, err)
 	assert.Equal(t, string(want), got)
 }

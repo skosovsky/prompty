@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -94,7 +96,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(500), params.MaxTokens)
 	assert.True(t, params.Temperature.Valid())
-	assert.Equal(t, 0.3, params.Temperature.Value)
+	assert.InDelta(t, 0.3, params.Temperature.Value, 1e-9)
 }
 
 func TestTranslate_NilExecution(t *testing.T) {
@@ -137,6 +139,23 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "location", tool.InputSchema.Required[0])
 }
 
+func TestToolSchemaFromParameters_RequiredAsStringSlice(t *testing.T) {
+	t.Parallel()
+	// When building ToolDefinition in Go, required is often []string; it must not be dropped.
+	params := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"q": map[string]any{"type": "string"},
+			"limit": map[string]any{"type": "integer"},
+		},
+		"required": []string{"q", "limit"},
+	}
+	schema := toolSchemaFromParameters(params)
+	require.Len(t, schema.Required, 2)
+	assert.Equal(t, "q", schema.Required[0])
+	assert.Equal(t, "limit", schema.Required[1])
+}
+
 func TestTranslate_ImagePartData(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -166,7 +185,7 @@ func TestTranslate_ImagePartURLRejected(t *testing.T) {
 	}
 	_, err := a.TranslateTyped(exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "Anthropic does not support image URLs")
 }
 

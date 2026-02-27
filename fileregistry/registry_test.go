@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -27,13 +28,14 @@ messages:
   - role: system
     content: "Hello {{ .user_name }}"
 `)
-	require.NoError(t, os.WriteFile(dest, data, 0644))
+	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent", "")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
+	assert.Empty(t, tpl.Metadata.Environment)
 }
 
 func TestFileRegistry_GetTemplate_EnvFallback(t *testing.T) {
@@ -46,7 +48,7 @@ version: "1"
 messages:
   - role: system
     content: "Base {{ .user_name }}"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	// env "staging" -> try support_agent.staging.yaml (missing), then support_agent.yaml
@@ -54,6 +56,7 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Contains(t, tpl.Messages[0].Content, "Base")
+	assert.Equal(t, "staging", tpl.Metadata.Environment)
 }
 
 func TestFileRegistry_GetTemplate_EnvSpecific(t *testing.T) {
@@ -65,20 +68,21 @@ version: "1"
 messages:
   - role: system
     content: "Base"
-`), 0644))
+`), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.production.yaml"), []byte(`
 id: support_agent
 version: "1"
 messages:
   - role: system
     content: "Production"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent", "production")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "Production", tpl.Messages[0].Content)
+	assert.Equal(t, "production", tpl.Metadata.Environment)
 }
 
 func TestFileRegistry_GetTemplate_EnvSpecificInvalidYAML(t *testing.T) {
@@ -90,8 +94,8 @@ version: "1"
 messages:
   - role: system
     content: "Base"
-`), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.yaml"), []byte("id: p\nmessages: [unclosed"), 0644))
+`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.yaml"), []byte("id: p\nmessages: [unclosed"), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	_, err := reg.GetTemplate(ctx, "p", "prod")
@@ -110,7 +114,7 @@ messages:
   - role: system
     content: "From .yml file"
 `)
-	require.NoError(t, os.WriteFile(dest, data, 0644))
+	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "agent", "")
@@ -132,7 +136,7 @@ messages:
 tools:
   - name: only_tool
     description: "Only"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	tpl1, err := reg.GetTemplate(ctx, "safe", "")
@@ -168,7 +172,7 @@ version: "1"
 messages:
   - role: system
     content: "v1"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p", "")
@@ -181,7 +185,7 @@ version: "1"
 messages:
   - role: system
     content: "v2"
-`), 0644))
+`), 0600))
 	tpl2, err := reg.GetTemplate(ctx, "p", "")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", tpl2.Messages[0].Content)
@@ -196,18 +200,26 @@ version: "1"
 messages:
   - role: system
     content: "x"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	done := make(chan struct{})
+	type result struct {
+		tpl *prompty.ChatPromptTemplate
+		err error
+	}
+	done := make(chan result, 50)
 	for range 50 {
 		go func() {
-			_, _ = reg.GetTemplate(ctx, "p", "")
-			done <- struct{}{}
+			tpl, err := reg.GetTemplate(ctx, "p", "")
+			done <- result{tpl: tpl, err: err}
 		}()
 	}
 	for range 50 {
-		<-done
+		r := <-done
+		require.NoError(t, r.err)
+		require.NotNil(t, r.tpl)
+		assert.Equal(t, "p", r.tpl.Metadata.ID)
+		assert.Equal(t, "x", r.tpl.Messages[0].Content)
 	}
 }
 
@@ -220,7 +232,7 @@ version: "1"
 messages:
   - role: system
     content: "q"
-`), 0644))
+`), 0600))
 	reg := New(dir)
 	ctx := context.Background()
 	done := make(chan struct{})

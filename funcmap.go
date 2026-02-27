@@ -52,7 +52,10 @@ func makeTruncateTokens(tc TokenCounter) func(string, int) (string, error) {
 		lo, hi := 0, len(runes)
 		for lo < hi {
 			mid := (lo + hi + 1) / 2
-			n, _ = tc.Count(string(runes[:mid]))
+			n, err = tc.Count(string(runes[:mid]))
+			if err != nil {
+				return "", err
+			}
 			if n <= maxTokens {
 				lo = mid
 			} else {
@@ -82,7 +85,10 @@ func renderToolsAsXML(tools any) (string, error) {
 	for _, t := range list {
 		params := ""
 		if len(t.Parameters) > 0 {
-			b, _ := json.Marshal(t.Parameters)
+			b, err := json.Marshal(t.Parameters)
+			if err != nil {
+				return "", fmt.Errorf("render_tools_as_xml: marshal parameters: %w", err)
+			}
 			params = string(b)
 		}
 		tx := xmlTool{Name: t.Name, Description: t.Description, Parameters: params}

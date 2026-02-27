@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -34,6 +35,7 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
+	assert.Empty(t, tpl.Metadata.Environment)
 	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
 }
 
@@ -49,6 +51,7 @@ func TestEmbedRegistry_GetTemplate_BaseFallback(t *testing.T) {
 	// Base file has "Agent {{ .user_name }}"; agent.prod.yaml has "Agent prod"
 	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
 	assert.NotContains(t, tpl.Messages[0].Content, "Agent prod")
+	assert.Empty(t, tpl.Metadata.Environment)
 }
 
 func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
@@ -60,6 +63,22 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Contains(t, tpl.Messages[0].Content, "Agent prod")
+	assert.Equal(t, "prod", tpl.Metadata.Environment)
+}
+
+// TestEmbedRegistry_GetTemplate_EnvFallback ensures that when env-specific file is missing,
+// fallback to base file still sets Metadata.Environment to the requested env.
+func TestEmbedRegistry_GetTemplate_EnvFallback(t *testing.T) {
+	t.Parallel()
+	reg, err := New(promptsFS, "testdata/prompts")
+	require.NoError(t, err)
+	ctx := context.Background()
+	// No agent.staging.yaml exists; fallback to agent.yaml
+	tpl, err := reg.GetTemplate(ctx, "agent", "staging")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}", "content from base file")
+	assert.Equal(t, "staging", tpl.Metadata.Environment, "Environment must be set to requested env on fallback")
 }
 
 func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
@@ -71,4 +90,3 @@ func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
-

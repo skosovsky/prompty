@@ -2,7 +2,6 @@ package prompty
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -29,7 +28,7 @@ func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 	msgs := []MessageTemplate{{Role: "system", Content: "Hi {{ .name }}"}, {Role: "user", Content: "{{ end }}"}}
 	_, err := NewChatPromptTemplate(msgs)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrTemplateParse))
+	assert.ErrorIs(t, err, ErrTemplateParse)
 }
 
 func TestFormatStruct_SimpleVars(t *testing.T) {
@@ -80,9 +79,9 @@ func TestFormatStruct_MissingRequired(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, &Payload{Other: "x"})
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrMissingVariable))
+	require.ErrorIs(t, err, ErrMissingVariable)
 	var ve *VariableError
-	require.True(t, errors.As(err, &ve))
+	require.ErrorAs(t, err, &ve)
 	assert.Equal(t, "user_name", ve.Variable)
 }
 
@@ -112,7 +111,7 @@ func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, &PayloadWithTools{Tools: "x"})
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrReservedVariable))
+	assert.ErrorIs(t, err, ErrReservedVariable)
 }
 
 func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
@@ -142,7 +141,7 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, &NoTags{X: "y"})
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPayload))
+	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_NilPayload(t *testing.T) {
@@ -152,7 +151,7 @@ func TestFormatStruct_NilPayload(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, nil)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPayload))
+	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_NilPointerPayload(t *testing.T) {
@@ -166,7 +165,7 @@ func TestFormatStruct_NilPointerPayload(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, p)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPayload))
+	require.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_NonStructPayload(t *testing.T) {
@@ -176,10 +175,10 @@ func TestFormatStruct_NonStructPayload(t *testing.T) {
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, 42)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPayload))
+	require.ErrorIs(t, err, ErrInvalidPayload)
 	_, err = tpl.FormatStruct(ctx, "string")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPayload))
+	require.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_CancelledContext(t *testing.T) {
@@ -255,6 +254,29 @@ func TestFormatStruct_ToolsInjection(t *testing.T) {
 	text := exec.Messages[0].Content[0].(TextPart).Text
 	assert.Contains(t, text, "foo")
 	assert.Contains(t, text, "bar")
+}
+
+// failingTokenCounter implements TokenCounter and returns an error for Count (to trigger ErrTemplateRender path).
+type failingTokenCounter struct{}
+
+func (failingTokenCounter) Count(string) (int, error) {
+	return 0, fmt.Errorf("token counter failure")
+}
+
+func TestFormatStruct_ErrTemplateRender(t *testing.T) {
+	t.Parallel()
+	// Template parses but Execute fails because truncate_tokens uses a TokenCounter that returns error.
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: "system", Content: "{{ truncate_tokens .text 10 }}"},
+	}, WithTokenCounter(failingTokenCounter{}))
+	require.NoError(t, err)
+	type P struct {
+		Text string `prompt:"text"`
+	}
+	ctx := context.Background()
+	_, err = tpl.FormatStruct(ctx, &P{Text: "hello"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTemplateRender)
 }
 
 func TestWithTokenCounter_Nil(t *testing.T) {

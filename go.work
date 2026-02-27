@@ -6,4 +6,5 @@ use (
 	./adapter/gemini
 	./adapter/ollama
 	./adapter/openai
+	./remoteregistry/git
 )

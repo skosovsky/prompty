@@ -12,7 +12,7 @@ func isNilNode(node parse.Node) bool {
 		return true
 	}
 	v := reflect.ValueOf(node)
-	if v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Interface {
 		v = v.Elem()
 	}
 	return v.Kind() == reflect.Pointer && v.IsNil()

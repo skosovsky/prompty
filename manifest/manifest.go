@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/skosovsky/prompty"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,14 +47,14 @@ type rawMessage struct {
 func ParseBytes(data []byte) (*prompty.ChatPromptTemplate, error) {
 	var raw rawManifest
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%w: %v", prompty.ErrInvalidManifest, err)
+		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
 	return convert(&raw)
 }
 
 // ParseFile reads and parses a manifest file.
 func ParseFile(path string) (*prompty.ChatPromptTemplate, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is validated by caller
 	if err != nil {
 		return nil, fmt.Errorf("manifest: read file: %w", err)
 	}

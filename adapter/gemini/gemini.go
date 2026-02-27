@@ -8,6 +8,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+
 	"google.golang.org/genai"
 )
 
@@ -99,9 +100,9 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*Request, error
 		}}
 		for _, t := range exec.Tools {
 			config.Tools[0].FunctionDeclarations = append(config.Tools[0].FunctionDeclarations, &genai.FunctionDeclaration{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  nil,
+				Name:                 t.Name,
+				Description:          t.Description,
+				Parameters:           nil,
 				ParametersJsonSchema: t.Parameters,
 			})
 		}
@@ -116,15 +117,20 @@ func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, erro
 		case prompty.TextPart:
 			genParts = append(genParts, genai.NewPartFromText(x.Text))
 		case prompty.ImagePart:
-			if len(x.Data) > 0 {
-				genParts = append(genParts, genai.NewPartFromBytes(x.Data, x.MIMEType))
-			} else if x.URL != "" {
+			switch {
+			case len(x.Data) > 0:
+				mime := x.MIMEType
+				if mime == "" {
+					mime = "image/png"
+				}
+				genParts = append(genParts, genai.NewPartFromBytes(x.Data, mime))
+			case x.URL != "":
 				mime := x.MIMEType
 				if mime == "" {
 					mime = "image/png"
 				}
 				genParts = append(genParts, genai.NewPartFromURI(x.URL, mime))
-			} else {
+			default:
 				return nil, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
 			}
 		default:

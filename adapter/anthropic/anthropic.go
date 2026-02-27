@@ -8,11 +8,12 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 )
 
-const defaultMaxTokens = 1024
+const defaultMaxTokens int64 = 1024
 
 // Adapter implements adapter.ProviderAdapter for the Anthropic Messages API.
 // Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
@@ -107,25 +108,7 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*anthropic.Mess
 	if len(exec.Tools) > 0 {
 		params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
 		for _, t := range exec.Tools {
-			var props map[string]any
-			var required []string
-			if t.Parameters != nil {
-				if p, ok := t.Parameters["properties"].(map[string]any); ok {
-					props = p
-				}
-				if r, ok := t.Parameters["required"].([]any); ok {
-					for _, x := range r {
-						if s, ok := x.(string); ok {
-							required = append(required, s)
-						}
-					}
-				}
-			}
-			schema := anthropic.ToolInputSchemaParam{
-				Type:       constant.Object("object"),
-				Properties: props,
-				Required:   required,
-			}
+			schema := toolSchemaFromParameters(t.Parameters)
 			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
 			if t.Description != "" {
 				tool.OfTool.Description = anthropic.String(t.Description)
@@ -136,6 +119,35 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*anthropic.Mess
 	return params, nil
 }
 
+// toolSchemaFromParameters builds ToolInputSchemaParam from a JSON Schema map, preserving type, properties, required.
+// Other top-level keys (e.g. additionalProperties, description) are not set; the SDK struct may not support them.
+func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaParam {
+	schema := anthropic.ToolInputSchemaParam{
+		Type: constant.Object("object"),
+	}
+	if params == nil {
+		return schema
+	}
+	if t, ok := params["type"].(string); ok && t != "" {
+		schema.Type = constant.Object(t)
+	}
+	if p, ok := params["properties"].(map[string]any); ok {
+		schema.Properties = p
+	}
+	if r, ok := params["required"].([]any); ok {
+		required := make([]string, 0, len(r))
+		for _, x := range r {
+			if s, ok := x.(string); ok {
+				required = append(required, s)
+			}
+		}
+		schema.Required = required
+	} else if r, ok := params["required"].([]string); ok {
+		schema.Required = r
+	}
+	return schema
+}
+
 func (a *Adapter) userMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
@@ -143,16 +155,17 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (anthropic.MessagePar
 		case prompty.TextPart:
 			blocks = append(blocks, anthropic.NewTextBlock(x.Text))
 		case prompty.ImagePart:
-			if len(x.Data) > 0 {
+			switch {
+			case len(x.Data) > 0:
 				// Data takes precedence per TD.md
 				mime := x.MIMEType
 				if mime == "" {
 					mime = "image/png"
 				}
 				blocks = append(blocks, anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(x.Data)))
-			} else if x.URL != "" {
+			case x.URL != "":
 				return anthropic.MessageParam{}, fmt.Errorf("%w: Anthropic does not support image URLs, provide base64 Data", adapter.ErrUnsupportedContentType)
-			} else {
+			default:
 				return anthropic.MessageParam{}, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
 			}
 		default:
@@ -203,21 +216,16 @@ func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
-			// SDK may set text on block.Text or only via AsText() depending on response shape.
 			text := block.Text
-			if text == "" {
-				text = block.AsText().Text
-			}
 			if text != "" {
 				out = append(out, prompty.TextPart{Text: text})
 			}
 		case "tool_use":
-			tu := block.AsToolUse()
-			args := string(tu.Input)
+			args := string(block.Input)
 			if args == "" {
 				args = "{}"
 			}
-			out = append(out, prompty.ToolCallPart{ID: tu.ID, Name: tu.Name, Args: args})
+			out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
 		}
 	}
 	if len(out) == 0 {

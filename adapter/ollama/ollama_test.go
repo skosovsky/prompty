@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -113,7 +115,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 	req, err := a.TranslateTyped(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Options)
-	assert.Equal(t, 0.5, req.Options["temperature"])
+	assert.InDelta(t, 0.5, req.Options["temperature"], 1e-9)
 	assert.Equal(t, int64(100), req.Options["num_predict"])
 }
 
@@ -162,7 +164,7 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 	}
 	_, err := a.TranslateTyped(exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
 }
 
@@ -232,13 +234,13 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	args.Set("location", "NYC")
 	resp := &api.ChatResponse{
 		Message: api.Message{
-			Role:   "assistant",
+			Role:    "assistant",
 			Content: "",
 			ToolCalls: []api.ToolCall{{
 				ID: "call_1",
 				Function: api.ToolCallFunction{
 					Index:     0,
-					Name:     "get_weather",
+					Name:      "get_weather",
 					Arguments: args,
 				},
 			}},

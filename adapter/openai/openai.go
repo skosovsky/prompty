@@ -9,6 +9,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/openai/openai-go/v3/shared/constant"
+
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 )
@@ -55,7 +56,7 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*openai.ChatCom
 	}
 	if exec.ModelConfig != nil {
 		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			params.Model = shared.ChatModel(m)
+			params.Model = shared.ChatModel(m) //nolint:unconvert // ChatModel is a distinct type
 		}
 		mp := adapter.ExtractModelConfig(exec.ModelConfig)
 		if mp.Temperature != nil {
@@ -170,6 +171,8 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 					Type: "function",
 				},
 			})
+		default:
+			return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
 		}
 	}
 	text := b.String()

@@ -1,0 +1,10 @@
+# Binaries
+*.exe
+*.out
+support_agent
+
+# Coverage
+coverage.out
+
+# IDE / OS
+.DS_Store

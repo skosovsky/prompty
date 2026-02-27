@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -51,9 +52,9 @@ func TestTextFromParts(t *testing.T) {
 func TestExtractModelConfig(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		cfg    map[string]any
-		check  func(t *testing.T, mp ModelParams)
+		name  string
+		cfg   map[string]any
+		check func(t *testing.T, mp ModelParams)
 	}{
 		{"nil map", nil, func(t *testing.T, mp ModelParams) {
 			assert.Nil(t, mp.Temperature)
@@ -69,15 +70,15 @@ func TestExtractModelConfig(t *testing.T) {
 		}},
 		{"temperature float64", map[string]any{"temperature": 0.7}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.Temperature)
-			assert.Equal(t, 0.7, *mp.Temperature)
+			assert.InDelta(t, 0.7, *mp.Temperature, 1e-9)
 		}},
 		{"temperature float32", map[string]any{"temperature": float32(0.5)}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.Temperature)
-			assert.Equal(t, 0.5, *mp.Temperature)
+			assert.InDelta(t, 0.5, *mp.Temperature, 1e-9)
 		}},
 		{"temperature int", map[string]any{"temperature": 1}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.Temperature)
-			assert.Equal(t, float64(1), *mp.Temperature)
+			assert.InDelta(t, float64(1), *mp.Temperature, 1e-9)
 		}},
 		{"max_tokens int64", map[string]any{"max_tokens": int64(100)}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.MaxTokens)
@@ -93,7 +94,7 @@ func TestExtractModelConfig(t *testing.T) {
 		}},
 		{"top_p", map[string]any{"top_p": 0.9}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.TopP)
-			assert.Equal(t, 0.9, *mp.TopP)
+			assert.InDelta(t, 0.9, *mp.TopP, 1e-9)
 		}},
 		{"stop []string", map[string]any{"stop": []string{"A", "B"}}, func(t *testing.T, mp ModelParams) {
 			assert.Equal(t, []string{"A", "B"}, mp.Stop)
@@ -108,11 +109,11 @@ func TestExtractModelConfig(t *testing.T) {
 			"stop":        []string{"END"},
 		}, func(t *testing.T, mp ModelParams) {
 			require.NotNil(t, mp.Temperature)
-			assert.Equal(t, 0.5, *mp.Temperature)
+			assert.InDelta(t, 0.5, *mp.Temperature, 1e-9)
 			require.NotNil(t, mp.MaxTokens)
 			assert.Equal(t, int64(50), *mp.MaxTokens)
 			require.NotNil(t, mp.TopP)
-			assert.Equal(t, 0.95, *mp.TopP)
+			assert.InDelta(t, 0.95, *mp.TopP, 1e-9)
 			assert.Equal(t, []string{"END"}, mp.Stop)
 		}},
 		{"unknown key ignored", map[string]any{"model": "gpt-4", "foo": 1}, func(t *testing.T, mp ModelParams) {
@@ -135,10 +136,10 @@ func TestExtractModelConfig(t *testing.T) {
 func TestToFloat64(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		v     any
-		want  float64
-		ok    bool
+		name string
+		v    any
+		want float64
+		ok   bool
 	}{
 		{"float64", float64(1.5), 1.5, true},
 		{"float32", float32(2.5), 2.5, true},
@@ -162,7 +163,7 @@ func TestToFloat64(t *testing.T) {
 			got, ok := toFloat64(tt.v)
 			assert.Equal(t, tt.ok, ok)
 			if tt.ok {
-				assert.Equal(t, tt.want, got)
+				assert.InDelta(t, tt.want, got, 1e-9)
 			}
 		})
 	}
@@ -171,10 +172,10 @@ func TestToFloat64(t *testing.T) {
 func TestToInt64(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		v     any
-		want  int64
-		ok    bool
+		name string
+		v    any
+		want int64
+		ok   bool
 	}{
 		{"int64", int64(1), 1, true},
 		{"int", 2, 2, true},
@@ -208,10 +209,10 @@ func TestToInt64(t *testing.T) {
 func TestToStringSlice(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		v       any
-		want    []string
-		wantOk  bool
+		name   string
+		v      any
+		want   []string
+		wantOk bool
 	}{
 		{"[]string", []string{"a", "b"}, []string{"a", "b"}, true},
 		{"[]any all strings", []any{"x", "y"}, []string{"x", "y"}, true},

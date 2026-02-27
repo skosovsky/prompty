@@ -11,9 +11,10 @@ import (
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex.
+// Ensures Registry implements prompty.PromptRegistry.
 var _ prompty.PromptRegistry = (*Registry)(nil)
 
+// Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates.
 type Registry struct {
 	cache map[string]*prompty.ChatPromptTemplate
 }
@@ -38,8 +39,10 @@ func New(fsys fs.FS, root string, _ ...Option) (*Registry, error) {
 		if idx := strings.LastIndex(name, "."); idx >= 0 {
 			env := name[idx+1:]
 			name = name[:idx]
+			tpl.Metadata.Environment = env
 			r.cache[name+":"+env] = tpl
 		} else {
+			tpl.Metadata.Environment = ""
 			r.cache[name+":"] = tpl
 		}
 		return nil
@@ -55,7 +58,11 @@ type Option func(*Registry)
 
 // GetTemplate returns a template by name and env. O(1) map lookup.
 // Prefer name:env key; if missing, fallback to name: (base file).
+// Check order: name validation, then context, then cache (aligned with other registries).
 func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.ChatPromptTemplate, error) {
+	if err := prompty.ValidateName(name, env); err != nil {
+		return nil, err
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -64,7 +71,9 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 		return prompty.CloneTemplate(tpl), nil
 	}
 	if tpl, ok := r.cache[name+":"]; ok {
-		return prompty.CloneTemplate(tpl), nil
+		clone := prompty.CloneTemplate(tpl)
+		clone.Metadata.Environment = env
+		return clone, nil
 	}
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, name)
 }
