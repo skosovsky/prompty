@@ -1,0 +1,12 @@
+<tools>
+  <tool>
+    <name>get_weather</name>
+    <description>Get weather</description>
+    <parameters>{&#34;type&#34;:&#34;object&#34;}</parameters>
+  </tool>
+  <tool>
+    <name>search</name>
+    <description>Search</description>
+    <parameters></parameters>
+  </tool>
+</tools>

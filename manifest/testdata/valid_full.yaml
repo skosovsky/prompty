@@ -1,0 +1,29 @@
+id: support_agent
+version: "1.2"
+description: "Customer support agent"
+
+model_config:
+  temperature: 0.7
+  max_tokens: 2048
+
+variables:
+  required:
+    - user_query
+  partial:
+    bot_name: "SupportBot"
+
+tools:
+  - name: get_order_status
+    description: "Get order status"
+    parameters:
+      type: object
+      properties:
+        order_id:
+          type: string
+
+messages:
+  - role: system
+    content: "You are {{ .bot_name }}. {{ render_tools_as_xml .Tools }}"
+  - role: user
+    content: "{{ .user_query }}"
+    optional: true
