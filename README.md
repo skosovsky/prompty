@@ -6,7 +6,8 @@ Prompt template management for Go LLM applications. Provider-agnostic: load temp
 
 ## Features
 
-- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata
+- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters)
+- **Media**: `exec.ResolveMedia(ctx)` downloads image URLs into `MediaPart.Data` before sending to adapters that require inline data (Anthropic, Ollama); OpenAI and Gemini accept URL natively
 - **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing
 - **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection
 - **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`) with TTL cache
@@ -68,7 +69,7 @@ Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with f
 | `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Model set at call site |
 | `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
 
-Each adapter implements `Translate(ctx, exec) (any, error)` and `TranslateTyped(ctx, exec)` for the concrete type; `ParseResponse(ctx, raw)` returns `[]prompty.ContentPart`; `ParseStreamChunk(ctx, rawChunk)` returns stream parts or `ErrStreamNotImplemented`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers. For MediaPart with URL, Anthropic and Ollama download in `Translate(ctx)` (https, size limit, MIME); OpenAI and Gemini accept URL natively.
+Each adapter implements `Translate(ctx, exec) (any, error)` and `TranslateTyped(ctx, exec)` for the concrete type; `ParseResponse(ctx, raw)` returns `[]prompty.ContentPart`; `ParseStreamChunk(ctx, rawChunk)` returns stream parts or `ErrStreamNotImplemented`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers. **Media:** OpenAI and Gemini accept image URL in `MediaPart` natively. For Anthropic and Ollama (base64 only), call `exec.ResolveMedia(ctx)` before `Translate` when using image URLs; otherwise the adapter returns `adapter.ErrMediaNotResolved`. ResolveMedia fetches over HTTPS with size limit and fills `Data`/`MIMEType` (image type only).
 
 ## Architecture
 

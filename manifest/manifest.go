@@ -60,17 +60,6 @@ func buildTemplate(m *fileManifest) (*prompty.ChatPromptTemplate, error) {
 	if len(m.Messages) == 0 {
 		return nil, fmt.Errorf("%w: missing messages", prompty.ErrInvalidManifest)
 	}
-	validRoles := map[string]bool{
-		string(prompty.RoleSystem):    true,
-		string(prompty.RoleDeveloper): true,
-		string(prompty.RoleUser):      true,
-		string(prompty.RoleAssistant): true,
-	}
-	for i, msg := range m.Messages {
-		if !validRoles[string(msg.Role)] {
-			return nil, fmt.Errorf("%w: message %d: invalid role %q", prompty.ErrInvalidManifest, i, msg.Role)
-		}
-	}
 	opts := []prompty.ChatTemplateOption{
 		prompty.WithMetadata(prompty.PromptMetadata{
 			ID:          m.ID,

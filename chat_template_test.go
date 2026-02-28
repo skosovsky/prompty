@@ -2,12 +2,17 @@ package prompty
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+
+	"github.com/skosovsky/prompty/mediafetch"
 )
 
 func TestMain(m *testing.M) {
@@ -255,6 +260,35 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 	assert.Equal(t, "last", exec.Messages[3].Content[0].(TextPart).Text)
 }
 
+// TestFormatStruct_ChatHistory_SpliceAfterDeveloper ensures history is inserted after all system/developer anchors.
+func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: "system", Content: "System."},
+		{Role: "developer", Content: "Developer."},
+		{Role: "user", Content: "{{ .query }}"},
+	})
+	require.NoError(t, err)
+	history := []ChatMessage{
+		{Role: RoleUser, Content: []ContentPart{TextPart{Text: "hist_user"}}},
+	}
+	type Payload struct {
+		Query   string        `prompt:"query"`
+		History []ChatMessage `prompt:"history"`
+	}
+	ctx := context.Background()
+	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "last", History: history})
+	require.NoError(t, err)
+	// Expected: system, developer, history[0], user
+	require.Len(t, exec.Messages, 4)
+	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
+	assert.Equal(t, RoleDeveloper, exec.Messages[1].Role)
+	assert.Equal(t, RoleUser, exec.Messages[2].Role)
+	assert.Equal(t, "hist_user", exec.Messages[2].Content[0].(TextPart).Text)
+	assert.Equal(t, RoleUser, exec.Messages[3].Role)
+	assert.Equal(t, "last", exec.Messages[3].Content[0].(TextPart).Text)
+}
+
 func TestFormatStruct_ToolsInjection(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -342,4 +376,50 @@ func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	for range n {
 		require.NoError(t, <-errCh)
 	}
+}
+
+func TestPromptExecution_ResolveMedia(t *testing.T) {
+	t.Parallel()
+	imageBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a} // PNG magic
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(imageBytes)
+	}))
+	defer srv.Close()
+
+	oldClient := mediafetch.DefaultClient
+	mediafetch.DefaultClient = &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	defer func() { mediafetch.DefaultClient = oldClient }()
+
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "image", URL: srv.URL},
+			}},
+		},
+	}
+	err := exec.ResolveMedia(context.Background())
+	require.NoError(t, err)
+	part := exec.Messages[0].Content[0].(MediaPart)
+	assert.Equal(t, imageBytes, part.Data)
+	assert.Equal(t, "image/png", part.MIMEType)
+}
+
+func TestPromptExecution_ResolveMedia_NonImageFailFast(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "audio", URL: "https://example.com/audio.mp3"},
+			}},
+		},
+	}
+	err := exec.ResolveMedia(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "currently only 'image' media type is supported")
+	assert.Contains(t, err.Error(), "audio")
 }

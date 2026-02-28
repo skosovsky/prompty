@@ -200,7 +200,7 @@ func spliceHistory(rendered []ChatMessage, history []ChatMessage) []ChatMessage 
 	}
 	insertAt := 0
 	for i, m := range rendered {
-		if m.Role != RoleSystem {
+		if m.Role != RoleSystem && m.Role != RoleDeveloper {
 			insertAt = i
 			break
 		}

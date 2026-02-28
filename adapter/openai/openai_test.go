@@ -225,7 +225,8 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 	}
 	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedRole)
+	assert.Contains(t, err.Error(), "unknown_role")
 }
 
 func TestParseResponse_TextOnly(t *testing.T) {
@@ -341,7 +342,7 @@ func TestParseStreamChunk_ToolCallChunk(t *testing.T) {
 	tc := parts[0].(prompty.ToolCallPart)
 	assert.Equal(t, "call_1", tc.ID)
 	assert.Equal(t, "get_weather", tc.Name)
-	assert.Equal(t, `{"loc":"NYC"}`, tc.ArgsChunk)
+	assert.JSONEq(t, `{"loc":"NYC"}`, tc.ArgsChunk)
 }
 
 func TestTranslate_ResponseFormat(t *testing.T) {

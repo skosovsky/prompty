@@ -9,7 +9,6 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
-	"github.com/skosovsky/prompty/mediafetch"
 )
 
 // Adapter implements adapter.ProviderAdapter for the Ollama Chat API.
@@ -99,7 +98,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	return req, nil
 }
 
-func (a *Adapter) translateMessage(ctx context.Context, msg prompty.ChatMessage) ([]api.Message, error) {
+func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) ([]api.Message, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
 		for _, p := range msg.Content {
@@ -115,11 +114,7 @@ func (a *Adapter) translateMessage(ctx context.Context, msg prompty.ChatMessage)
 			if img, ok := p.(prompty.MediaPart); ok && img.MediaType == "image" {
 				data := img.Data
 				if len(data) == 0 && img.URL != "" {
-					fetched, _, err := mediafetch.FetchImage(ctx, img.URL, mediafetch.DefaultMaxBodySize)
-					if err != nil {
-						return nil, fmt.Errorf("%w: fetch image URL: %w", adapter.ErrUnsupportedContentType, err)
-					}
-					data = fetched
+					return nil, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
 				}
 				if len(data) == 0 {
 					return nil, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
@@ -181,7 +176,7 @@ func (a *Adapter) translateMessage(ctx context.Context, msg prompty.ChatMessage)
 		}
 		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
 	default:
-		return nil, adapter.ErrUnsupportedRole
+		return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 	}
 }
 

@@ -120,7 +120,7 @@ func (a *Adapter) messageToUnion(msg prompty.ChatMessage) (openai.ChatCompletion
 	case prompty.RoleTool:
 		return a.toolResultMessage(msg.Content)
 	default:
-		return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedRole
+		return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 	}
 }
 

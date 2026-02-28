@@ -82,18 +82,20 @@ func TestParseBytes_InvalidBadYAML(t *testing.T) {
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
-func TestParseBytes_InvalidRole(t *testing.T) {
+func TestParseBytes_AcceptsCustomRole(t *testing.T) {
 	t.Parallel()
 	data := []byte(`
 id: x
 version: "1"
 messages:
-  - role: invalid_role
+  - role: custom_alien
     content: "Hi"
 `)
-	_, err := ParseBytes(data)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages, 1)
+	assert.Equal(t, prompty.Role("custom_alien"), tpl.Messages[0].Role)
 }
 
 func TestParseFile(t *testing.T) {

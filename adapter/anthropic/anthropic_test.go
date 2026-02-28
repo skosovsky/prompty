@@ -175,7 +175,7 @@ func TestTranslate_ImagePartData(t *testing.T) {
 	assert.NotNil(t, params.Messages[0].Content[0].OfImage)
 }
 
-func TestTranslate_ImagePartURLFetchFails(t *testing.T) {
+func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -187,8 +187,7 @@ func TestTranslate_ImagePartURLFetchFails(t *testing.T) {
 	}
 	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
-	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
-	assert.Contains(t, err.Error(), "fetch image URL")
+	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
 }
 
 func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {

@@ -1,6 +1,11 @@
 package prompty
 
-import "context"
+import (
+	"context"
+	"fmt"
+
+	"github.com/skosovsky/prompty/mediafetch"
+)
 
 // Role is the message role in a chat (system, developer, user, assistant, tool).
 type Role string
@@ -106,11 +111,38 @@ type PromptExecution struct {
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
 }
 
+// ResolveMedia downloads content for all MediaParts that have a URL but no Data.
+// Only "image" media type is supported; other types with URL and empty Data return an error (fail-fast).
+func (e *PromptExecution) ResolveMedia(ctx context.Context) error {
+	for i, msg := range e.Messages {
+		for j, part := range msg.Content {
+			mp, ok := part.(MediaPart)
+			if !ok {
+				continue
+			}
+			if mp.URL == "" || len(mp.Data) > 0 {
+				continue
+			}
+			if mp.MediaType != "image" {
+				return fmt.Errorf("resolve media %s: currently only 'image' media type is supported for downloading, got %q", mp.URL, mp.MediaType)
+			}
+			data, contentType, err := mediafetch.FetchImage(ctx, mp.URL, mediafetch.DefaultMaxBodySize)
+			if err != nil {
+				return fmt.Errorf("resolve media %s: %w", mp.URL, err)
+			}
+			mp.Data = data
+			mp.MIMEType = contentType
+			e.Messages[i].Content[j] = mp
+		}
+	}
+	return nil
+}
+
 // MessageTemplate is the raw template for one message before rendering.
 // After FormatStruct it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
 type MessageTemplate struct {
-	Role         Role   // RoleSystem, RoleUser, RoleAssistant
+	Role         Role   // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
 	Content      string // Go text/template: e.g. "Hello, {{ .user_name }}"
 	Optional     bool   // true → skip if all referenced variables are zero-value
 	CacheControl string `yaml:"cache_control"` // e.g. "ephemeral" for prompt caching (Anthropic)

@@ -29,6 +29,9 @@ var (
 // AllowedImagePrefixes are Content-Type prefixes accepted for image media (e.g. "image/png"). Do not modify.
 var AllowedImagePrefixes = []string{"image/"}
 
+// DefaultClient is the HTTP client used for fetching. Override in tests to use a custom client (e.g. TLS with InsecureSkipVerify).
+var DefaultClient = http.DefaultClient
+
 // FetchImage downloads a URL with ctx, size limit, and optional MIME check. Only https is allowed.
 func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte, contentType string, err error) {
 	if maxBytes <= 0 {
@@ -45,7 +48,7 @@ func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: new request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := DefaultClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: do request: %w", err)
 	}

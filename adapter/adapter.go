@@ -31,6 +31,7 @@ var (
 	ErrMalformedArgs                = errors.New("adapter: tool call args or tool parameters JSON is malformed")
 	ErrStreamNotImplemented         = errors.New("adapter: streaming not implemented for this provider")
 	ErrStructuredOutputNotSupported = errors.New("adapter: structured output (response_format) not supported by this provider")
+	ErrMediaNotResolved             = errors.New("adapter: media URL not resolved (call ResolveMedia first)")
 )
 
 // ModelParams holds well-known model config keys extracted from PromptExecution.ModelConfig.

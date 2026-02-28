@@ -16,8 +16,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Ignore HTTP/2 client readLoop goroutine left by default client after FetchImage (e.g. TestTranslate_ImagePartURLFetchFails).
-	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"))
+	goleak.VerifyTestMain(m)
 }
 
 func ExampleAdapter_Translate() {
@@ -139,20 +138,19 @@ func TestTranslate_ImagePartData(t *testing.T) {
 	assert.Equal(t, api.ImageData([]byte{0xff, 0xd8}), req.Messages[0].Images[0])
 }
 
-func TestTranslate_ImagePartURLFetchFails(t *testing.T) {
+func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
+				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png"},
 			}},
 		},
 	}
 	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
-	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
-	assert.Contains(t, err.Error(), "fetch image URL")
+	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
 }
 
 func TestTranslate_ImagePartEmptyRejected(t *testing.T) {

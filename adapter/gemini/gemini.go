@@ -90,7 +90,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			}
 			contents = append(contents, c)
 		default:
-			return nil, adapter.ErrUnsupportedRole
+			return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 		}
 	}
 	if len(systemParts) > 0 {

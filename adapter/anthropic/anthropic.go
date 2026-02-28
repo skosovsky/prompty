@@ -12,7 +12,6 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
-	"github.com/skosovsky/prompty/mediafetch"
 )
 
 const defaultMaxTokens int64 = 1024
@@ -103,7 +102,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			}
 			messages = append(messages, m)
 		default:
-			return nil, adapter.ErrUnsupportedRole
+			return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 		}
 	}
 	if len(systemTexts) > 0 {
@@ -153,7 +152,7 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) userMessage(ctx context.Context, parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
@@ -166,14 +165,7 @@ func (a *Adapter) userMessage(ctx context.Context, parts []prompty.ContentPart) 
 			data := x.Data
 			mime := x.MIMEType
 			if len(data) == 0 && x.URL != "" {
-				fetched, contentType, err := mediafetch.FetchImage(ctx, x.URL, mediafetch.DefaultMaxBodySize)
-				if err != nil {
-					return anthropic.MessageParam{}, fmt.Errorf("%w: fetch image URL: %w", adapter.ErrUnsupportedContentType, err)
-				}
-				data = fetched
-				if contentType != "" {
-					mime = contentType
-				}
+				return anthropic.MessageParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
 			}
 			if len(data) == 0 {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
