@@ -2,6 +2,7 @@ package prompty
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 	"text/template/parse"
 )
@@ -60,7 +61,15 @@ func getPayloadFields(payload any) (vars map[string]any, history []ChatMessage, 
 			f := typ.Field(i)
 			tag := f.Tag.Get("prompt")
 			if tag == "" || tag == "-" {
-				continue
+				// Fallback to json tag: use first part only (e.g. "field_name,omitempty" -> "field_name").
+				jsonTag := f.Tag.Get("json")
+				if jsonTag == "" || jsonTag == "-" {
+					continue
+				}
+				tag = strings.TrimSpace(strings.Split(jsonTag, ",")[0])
+				if tag == "" {
+					continue
+				}
 			}
 			if f.Type == chatMessageSliceType {
 				schema.fields = append(schema.fields, payloadField{index: i, tag: tag, isHistory: true})

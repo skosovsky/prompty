@@ -62,7 +62,7 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 	for i, m := range tpl.Messages {
 		parsed, err := template.New("").Funcs(funcMap).Parse(m.Content)
 		if err != nil {
-			return nil, fmt.Errorf("%w: message %d: %v", ErrTemplateParse, i, err)
+			return nil, fmt.Errorf("%w: message %d: %w", ErrTemplateParse, i, err)
 		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
 			tpl: parsed, role: m.Role, optional: m.Optional,
@@ -132,7 +132,7 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 		}
 		var buf bytes.Buffer
 		if err := pm.tpl.Execute(&buf, merged); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTemplateRender, err)
+			return nil, fmt.Errorf("%w: %w", ErrTemplateRender, err)
 		}
 		text := buf.String()
 		out = append(out, ChatMessage{Role: pm.role, Content: []ContentPart{TextPart{Text: text}}})

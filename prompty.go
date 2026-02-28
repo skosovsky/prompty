@@ -2,12 +2,13 @@ package prompty
 
 import "context"
 
-// Role is the message role in a chat (system, user, assistant, tool).
+// Role is the message role in a chat (system, developer, user, assistant, tool).
 type Role string
 
 // Chat message roles.
 const (
 	RoleSystem    Role = "system"
+	RoleDeveloper Role = "developer" // Replaces system for OpenAI o1/o3-style models
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
 	RoleTool      Role = "tool"
@@ -25,14 +26,23 @@ type TextPart struct {
 
 func (TextPart) isContentPart() {}
 
-// ImagePart holds image URL, MIME type, and optional inline data.
-type ImagePart struct {
-	URL      string
-	MIMEType string
-	Data     []byte
+// MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
+// Adapters that do not accept URL natively may download the URL in Translate(ctx) and send inline data.
+type MediaPart struct {
+	MediaType string // "image", "audio", "video", "document"
+	MIMEType  string // e.g. "application/pdf", "image/jpeg"
+	URL       string // Optional: link (adapters may fetch and convert to inline)
+	Data      []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
 }
 
-func (ImagePart) isContentPart() {}
+func (MediaPart) isContentPart() {}
+
+// ReasoningPart is the hidden reasoning chain returned by some models (e.g. DeepSeek R1, OpenAI o-series).
+type ReasoningPart struct {
+	Text string
+}
+
+func (ReasoningPart) isContentPart() {}
 
 // ToolCallPart represents an AI request to call a function (in assistant message).
 type ToolCallPart struct {
@@ -67,6 +77,13 @@ type ToolDefinition struct {
 	Parameters  map[string]any `json:"parameters,omitempty"` // JSON Schema for parameters
 }
 
+// SchemaDefinition describes a structured output (JSON Schema) for response format.
+type SchemaDefinition struct {
+	Name        string         `json:"name,omitempty" yaml:"name,omitempty"`
+	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
+	Schema      map[string]any `json:"schema" yaml:"schema"` // JSON Schema
+}
+
 // PromptMetadata holds observability metadata.
 type PromptMetadata struct {
 	ID          string // From manifest id
@@ -78,10 +95,11 @@ type PromptMetadata struct {
 
 // PromptExecution is the result of formatting a template; immutable after creation.
 type PromptExecution struct {
-	Messages    []ChatMessage
-	Tools       []ToolDefinition
-	ModelConfig map[string]any
-	Metadata    PromptMetadata
+	Messages       []ChatMessage
+	Tools          []ToolDefinition
+	ModelConfig    map[string]any
+	Metadata       PromptMetadata
+	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
 }
 
 // MessageTemplate is the raw template for one message before rendering.

@@ -10,46 +10,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// rawManifest is the YAML/JSON manifest structure before conversion to ChatPromptTemplate.
-type rawManifest struct {
-	ID          string         `yaml:"id"`
-	Version     string         `yaml:"version"`
-	Description string         `yaml:"description"`
-	ModelConfig map[string]any `yaml:"model_config"`
-	Metadata    rawMetadata    `yaml:"metadata"`
-	Variables   rawVariables   `yaml:"variables"`
-	Tools       []rawTool      `yaml:"tools"`
-	Messages    []rawMessage   `yaml:"messages"`
-}
-
-type rawMetadata struct {
-	Tags []string `yaml:"tags"`
-}
-
-type rawVariables struct {
-	Required []string       `yaml:"required"`
-	Partial  map[string]any `yaml:"partial"`
-}
-
-type rawTool struct {
-	Name        string         `yaml:"name"`
-	Description string         `yaml:"description"`
-	Parameters  map[string]any `yaml:"parameters"`
-}
-
-type rawMessage struct {
-	Role     string `yaml:"role"`
-	Content  string `yaml:"content"`
-	Optional bool   `yaml:"optional"`
+// fileManifest is the YAML manifest shape bound directly to domain types.
+type fileManifest struct {
+	ID          string                  `yaml:"id"`
+	Version     string                  `yaml:"version"`
+	Description string                  `yaml:"description"`
+	ModelConfig map[string]any          `yaml:"model_config"`
+	Metadata    struct{ Tags []string } `yaml:"metadata"`
+	Variables   struct {
+		Required []string       `yaml:"required"`
+		Partial  map[string]any `yaml:"partial"`
+	} `yaml:"variables"`
+	Tools    []prompty.ToolDefinition  `yaml:"tools"`
+	Messages []prompty.MessageTemplate `yaml:"messages"`
 }
 
 // ParseBytes parses a YAML manifest and returns a ChatPromptTemplate.
 func ParseBytes(data []byte) (*prompty.ChatPromptTemplate, error) {
-	var raw rawManifest
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	var m fileManifest
+	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
-	return convert(&raw)
+	return buildTemplate(&m)
 }
 
 // ParseFile reads and parses a manifest file.
@@ -70,56 +52,43 @@ func ParseFS(fsys fs.FS, name string) (*prompty.ChatPromptTemplate, error) {
 	return ParseBytes(data)
 }
 
-func convert(raw *rawManifest) (*prompty.ChatPromptTemplate, error) {
-	if raw.ID == "" {
+func buildTemplate(m *fileManifest) (*prompty.ChatPromptTemplate, error) {
+	if m.ID == "" {
 		return nil, fmt.Errorf("%w: missing id", prompty.ErrInvalidManifest)
 	}
-	if len(raw.Messages) == 0 {
+	if len(m.Messages) == 0 {
 		return nil, fmt.Errorf("%w: missing messages", prompty.ErrInvalidManifest)
 	}
 	validRoles := map[string]bool{
 		string(prompty.RoleSystem):    true,
+		string(prompty.RoleDeveloper): true,
 		string(prompty.RoleUser):      true,
 		string(prompty.RoleAssistant): true,
 	}
-	messages := make([]prompty.MessageTemplate, 0, len(raw.Messages))
-	for i, m := range raw.Messages {
-		if !validRoles[m.Role] {
-			return nil, fmt.Errorf("%w: message %d: invalid role %q", prompty.ErrInvalidManifest, i, m.Role)
+	for i, msg := range m.Messages {
+		if !validRoles[string(msg.Role)] {
+			return nil, fmt.Errorf("%w: message %d: invalid role %q", prompty.ErrInvalidManifest, i, msg.Role)
 		}
-		messages = append(messages, prompty.MessageTemplate{
-			Role:     prompty.Role(m.Role),
-			Content:  m.Content,
-			Optional: m.Optional,
-		})
-	}
-	tools := make([]prompty.ToolDefinition, 0, len(raw.Tools))
-	for _, t := range raw.Tools {
-		tools = append(tools, prompty.ToolDefinition{
-			Name:        t.Name,
-			Description: t.Description,
-			Parameters:  t.Parameters,
-		})
 	}
 	opts := []prompty.ChatTemplateOption{
 		prompty.WithMetadata(prompty.PromptMetadata{
-			ID:          raw.ID,
-			Version:     raw.Version,
-			Description: raw.Description,
-			Tags:        raw.Metadata.Tags,
+			ID:          m.ID,
+			Version:     m.Version,
+			Description: m.Description,
+			Tags:        m.Metadata.Tags,
 		}),
 	}
-	if len(raw.Variables.Required) > 0 {
-		opts = append(opts, prompty.WithRequiredVars(raw.Variables.Required))
+	if len(m.Variables.Required) > 0 {
+		opts = append(opts, prompty.WithRequiredVars(m.Variables.Required))
 	}
-	if len(raw.Variables.Partial) > 0 {
-		opts = append(opts, prompty.WithPartialVariables(raw.Variables.Partial))
+	if len(m.Variables.Partial) > 0 {
+		opts = append(opts, prompty.WithPartialVariables(m.Variables.Partial))
 	}
-	if len(tools) > 0 {
-		opts = append(opts, prompty.WithTools(tools))
+	if len(m.Tools) > 0 {
+		opts = append(opts, prompty.WithTools(m.Tools))
 	}
-	if len(raw.ModelConfig) > 0 {
-		opts = append(opts, prompty.WithConfig(raw.ModelConfig))
+	if len(m.ModelConfig) > 0 {
+		opts = append(opts, prompty.WithConfig(m.ModelConfig))
 	}
-	return prompty.NewChatPromptTemplate(messages, opts...)
+	return prompty.NewChatPromptTemplate(m.Messages, opts...)
 }

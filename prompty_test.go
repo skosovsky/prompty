@@ -11,7 +11,7 @@ func TestContentPart_Implementations(t *testing.T) {
 	t.Parallel()
 	// Compile-time: only our types implement ContentPart
 	var _ ContentPart = (*TextPart)(nil)
-	var _ ContentPart = (*ImagePart)(nil)
+	var _ ContentPart = (*MediaPart)(nil)
 	var _ ContentPart = (*ToolCallPart)(nil)
 	var _ ContentPart = (*ToolResultPart)(nil)
 }
@@ -20,7 +20,7 @@ func TestContentPart_RuntimeAssertions(t *testing.T) {
 	t.Parallel()
 	parts := []ContentPart{
 		TextPart{Text: "hi"},
-		ImagePart{URL: "https://example.com/img.png", MIMEType: "image/png"},
+		MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
 		ToolCallPart{ID: "1", Name: "foo", Args: "{}"},
 		ToolResultPart{ToolCallID: "1", Name: "foo", Content: "ok", IsError: false},
 	}
@@ -29,7 +29,7 @@ func TestContentPart_RuntimeAssertions(t *testing.T) {
 		// Type assertions
 		switch p.(type) {
 		case TextPart:
-		case ImagePart:
+		case MediaPart:
 		case ToolCallPart:
 		case ToolResultPart:
 		default:
@@ -44,13 +44,13 @@ func TestChatMessage_WithContentParts(t *testing.T) {
 		Role: "user",
 		Content: []ContentPart{
 			TextPart{Text: "What is this?"},
-			ImagePart{URL: "https://example.com/pic.png", MIMEType: "image/png"},
+			MediaPart{MediaType: "image", URL: "https://example.com/pic.png", MIMEType: "image/png"},
 		},
 	}
 	assert.Equal(t, RoleUser, msg.Role)
 	require.Len(t, msg.Content, 2)
 	assert.IsType(t, TextPart{}, msg.Content[0])
-	assert.IsType(t, ImagePart{}, msg.Content[1])
+	assert.IsType(t, MediaPart{}, msg.Content[1])
 }
 
 func TestPromptExecution_ImmutableShape(t *testing.T) {

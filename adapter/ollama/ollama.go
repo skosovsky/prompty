@@ -1,6 +1,7 @@
 package ollama
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/mediafetch"
 )
 
 // Adapter implements adapter.ProviderAdapter for the Ollama Chat API.
@@ -34,15 +36,15 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *api.ChatRequest.
-func (a *Adapter) Translate(exec *prompty.PromptExecution) (any, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	return a.TranslateTyped(exec)
+	return a.TranslateTyped(ctx, exec)
 }
 
 // TranslateTyped returns the concrete type so callers avoid type assertion.
-func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*api.ChatRequest, error) {
+func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*api.ChatRequest, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -75,7 +77,7 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*api.ChatReques
 		}
 	}
 	for _, msg := range exec.Messages {
-		m, err := a.translateMessage(msg)
+		m, err := a.translateMessage(ctx, msg)
 		if err != nil {
 			return nil, err
 		}
@@ -94,11 +96,11 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*api.ChatReques
 	return req, nil
 }
 
-func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, error) {
+func (a *Adapter) translateMessage(ctx context.Context, msg prompty.ChatMessage) ([]api.Message, error) {
 	switch msg.Role {
-	case prompty.RoleSystem:
+	case prompty.RoleSystem, prompty.RoleDeveloper:
 		for _, p := range msg.Content {
-			if _, ok := p.(prompty.ImagePart); ok {
+			if _, ok := p.(prompty.MediaPart); ok {
 				return nil, fmt.Errorf("%w: Ollama does not support images in system messages", adapter.ErrUnsupportedContentType)
 			}
 		}
@@ -107,22 +109,26 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 	case prompty.RoleUser:
 		var images []api.ImageData
 		for _, p := range msg.Content {
-			if img, ok := p.(prompty.ImagePart); ok {
-				switch {
-				case len(img.Data) > 0:
-					images = append(images, api.ImageData(img.Data))
-				case img.URL != "":
-					return nil, fmt.Errorf("%w: Ollama does not support image URL, use Data", adapter.ErrUnsupportedContentType)
-				default:
-					return nil, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+			if img, ok := p.(prompty.MediaPart); ok && img.MediaType == "image" {
+				data := img.Data
+				if len(data) == 0 && img.URL != "" {
+					fetched, _, err := mediafetch.FetchImage(ctx, img.URL, mediafetch.DefaultMaxBodySize)
+					if err != nil {
+						return nil, fmt.Errorf("%w: fetch image URL: %w", adapter.ErrUnsupportedContentType, err)
+					}
+					data = fetched
 				}
+				if len(data) == 0 {
+					return nil, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+				}
+				images = append(images, api.ImageData(data))
 			}
 		}
 		text := adapter.TextFromParts(msg.Content)
 		return []api.Message{{Role: "user", Content: text, Images: images}}, nil
 	case prompty.RoleAssistant:
 		for _, p := range msg.Content {
-			if _, ok := p.(prompty.ImagePart); ok {
+			if _, ok := p.(prompty.MediaPart); ok {
 				return nil, fmt.Errorf("%w: Ollama does not support images in assistant messages", adapter.ErrUnsupportedContentType)
 			}
 		}
@@ -154,7 +160,7 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 		var foundToolResult bool
 		for _, p := range msg.Content {
 			switch x := p.(type) {
-			case prompty.ImagePart:
+			case prompty.MediaPart:
 				return nil, fmt.Errorf("%w: Ollama does not support images in tool messages", adapter.ErrUnsupportedContentType)
 			case prompty.ToolResultPart:
 				if !foundToolResult {
@@ -204,7 +210,8 @@ func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
 }
 
 // ParseResponse converts *api.ChatResponse into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
+func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+	_ = ctx
 	resp, ok := raw.(*api.ChatResponse)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse
@@ -232,6 +239,13 @@ func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
 		return nil, adapter.ErrEmptyResponse
 	}
 	return out, nil
+}
+
+// ParseStreamChunk is not implemented for Ollama.
+func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
+	_ = ctx
+	_ = rawChunk
+	return nil, adapter.ErrStreamNotImplemented
 }
 
 var _ adapter.ProviderAdapter = (*Adapter)(nil)

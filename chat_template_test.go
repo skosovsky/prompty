@@ -144,6 +144,23 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
+// TestFormatStruct_JsonTagFallback ensures payload uses json tag when prompt tag is missing (strings.Split(tag, ",")[0]).
+func TestFormatStruct_JsonTagFallback(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleSystem, Content: "Hello, {{ .user_name }}!"},
+	})
+	require.NoError(t, err)
+	type Payload struct {
+		UserName string `json:"user_name,omitempty"` // no prompt tag; fallback to json first part
+	}
+	ctx := context.Background()
+	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Bob"})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	assert.Equal(t, "Hello, Bob!", exec.Messages[0].Content[0].(TextPart).Text)
+}
+
 func TestFormatStruct_NilPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})

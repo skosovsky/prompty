@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/mediafetch"
 )
 
 const defaultMaxTokens int64 = 1024
@@ -39,15 +41,15 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
-func (a *Adapter) Translate(exec *prompty.PromptExecution) (any, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	return a.TranslateTyped(exec)
+	return a.TranslateTyped(ctx, exec)
 }
 
 // TranslateTyped returns the concrete type so callers avoid type assertion.
-func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
+func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -77,10 +79,10 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*anthropic.Mess
 	var messages []anthropic.MessageParam
 	for _, msg := range exec.Messages {
 		switch msg.Role {
-		case prompty.RoleSystem:
+		case prompty.RoleSystem, prompty.RoleDeveloper:
 			systemTexts = append(systemTexts, adapter.TextFromParts(msg.Content))
 		case prompty.RoleUser:
-			m, err := a.userMessage(msg.Content)
+			m, err := a.userMessage(ctx, msg.Content)
 			if err != nil {
 				return nil, err
 			}
@@ -148,26 +150,35 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) userMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+func (a *Adapter) userMessage(ctx context.Context, parts []prompty.ContentPart) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
 			blocks = append(blocks, anthropic.NewTextBlock(x.Text))
-		case prompty.ImagePart:
-			switch {
-			case len(x.Data) > 0:
-				// Data takes precedence per TD.md
-				mime := x.MIMEType
-				if mime == "" {
-					mime = "image/png"
-				}
-				blocks = append(blocks, anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(x.Data)))
-			case x.URL != "":
-				return anthropic.MessageParam{}, fmt.Errorf("%w: Anthropic does not support image URLs, provide base64 Data", adapter.ErrUnsupportedContentType)
-			default:
-				return anthropic.MessageParam{}, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+		case prompty.MediaPart:
+			if x.MediaType != "image" {
+				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
+			data := x.Data
+			mime := x.MIMEType
+			if len(data) == 0 && x.URL != "" {
+				fetched, contentType, err := mediafetch.FetchImage(ctx, x.URL, mediafetch.DefaultMaxBodySize)
+				if err != nil {
+					return anthropic.MessageParam{}, fmt.Errorf("%w: fetch image URL: %w", adapter.ErrUnsupportedContentType, err)
+				}
+				data = fetched
+				if contentType != "" {
+					mime = contentType
+				}
+			}
+			if len(data) == 0 {
+				return anthropic.MessageParam{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+			}
+			if mime == "" {
+				mime = "image/png"
+			}
+			blocks = append(blocks, anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(data)))
 		default:
 			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 		}
@@ -207,7 +218,8 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.Mess
 }
 
 // ParseResponse converts *anthropic.Message into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
+func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+	_ = ctx
 	msg, ok := raw.(*anthropic.Message)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse
@@ -232,6 +244,13 @@ func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
 		return nil, adapter.ErrEmptyResponse
 	}
 	return out, nil
+}
+
+// ParseStreamChunk is not implemented for Anthropic.
+func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
+	_ = ctx
+	_ = rawChunk
+	return nil, adapter.ErrStreamNotImplemented
 }
 
 var _ adapter.ProviderAdapter = (*Adapter)(nil)

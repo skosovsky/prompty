@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -28,18 +29,19 @@ func New() *Adapter {
 }
 
 // Translate converts PromptExecution into *Request (Contents + Config).
-func (a *Adapter) Translate(exec *prompty.PromptExecution) (any, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	return a.TranslateTyped(exec)
+	return a.TranslateTyped(ctx, exec)
 }
 
 // TranslateTyped returns the concrete type so callers avoid type assertion.
-func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*Request, error) {
+func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*Request, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
+	_ = ctx
 	config := &genai.GenerateContentConfig{}
 	// Model is set on the genai client, not in Config; we do not read "model" from ModelConfig.
 	if exec.ModelConfig != nil {
@@ -67,7 +69,7 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*Request, error
 	var contents []*genai.Content
 	for _, msg := range exec.Messages {
 		switch msg.Role {
-		case prompty.RoleSystem:
+		case prompty.RoleSystem, prompty.RoleDeveloper:
 			systemParts = append(systemParts, adapter.TextFromParts(msg.Content))
 		case prompty.RoleUser:
 			c, err := a.userContent(msg.Content)
@@ -116,7 +118,10 @@ func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, erro
 		switch x := p.(type) {
 		case prompty.TextPart:
 			genParts = append(genParts, genai.NewPartFromText(x.Text))
-		case prompty.ImagePart:
+		case prompty.MediaPart:
+			if x.MediaType != "image" {
+				return nil, adapter.ErrUnsupportedContentType
+			}
 			switch {
 			case len(x.Data) > 0:
 				mime := x.MIMEType
@@ -131,7 +136,7 @@ func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, erro
 				}
 				genParts = append(genParts, genai.NewPartFromURI(x.URL, mime))
 			default:
-				return nil, fmt.Errorf("%w: ImagePart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+				return nil, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
 			}
 		default:
 			return nil, adapter.ErrUnsupportedContentType
@@ -181,7 +186,8 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 }
 
 // ParseResponse converts *genai.GenerateContentResponse into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
+func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+	_ = ctx
 	resp, ok := raw.(*genai.GenerateContentResponse)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse
@@ -207,6 +213,13 @@ func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
 		return nil, adapter.ErrEmptyResponse
 	}
 	return out, nil
+}
+
+// ParseStreamChunk is not implemented for Gemini.
+func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
+	_ = ctx
+	_ = rawChunk
+	return nil, adapter.ErrStreamNotImplemented
 }
 
 var _ adapter.ProviderAdapter = (*Adapter)(nil)

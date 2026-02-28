@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -25,7 +26,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, _ := a.TranslateTyped(exec)
+	params, _ := a.TranslateTyped(context.Background(), exec)
 	fmt.Println(params.Messages[0].OfUser.Content.OfString.Value)
 	// Output: Hello
 }
@@ -38,7 +39,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.NotNil(t, params.Messages[0].OfUser)
@@ -54,7 +55,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 2)
 	assert.NotNil(t, params.Messages[0].OfSystem)
@@ -73,7 +74,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Tools, 1)
 	assert.Equal(t, "get_weather", params.Tools[0].GetFunction().Name)
@@ -90,7 +91,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.NotNil(t, params.Messages[0].OfTool)
@@ -110,7 +111,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 			"max_tokens":  int64(100),
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	assert.True(t, params.Temperature.Valid())
 	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-9)
@@ -121,7 +122,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 func TestTranslate_NilExecution(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.Translate(nil)
+	_, err := a.Translate(context.Background(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
@@ -134,11 +135,11 @@ func TestTranslate_ImagePartData(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
 				prompty.TextPart{Text: "What is this?"},
-				prompty.ImagePart{Data: imgData, MIMEType: "image/jpeg"},
+				prompty.MediaPart{MediaType: "image", Data: imgData, MIMEType: "image/jpeg"},
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.NotNil(t, params.Messages[0].OfUser)
@@ -154,11 +155,11 @@ func TestTranslate_ImagePartURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.ImagePart{URL: "https://example.com/img.png", MIMEType: "image/png"},
+				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Messages[0].OfUser)
 	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
@@ -175,12 +176,12 @@ func TestTranslate_UserMessagePreservesTextImageOrder(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
 				prompty.TextPart{Text: "before "},
-				prompty.ImagePart{Data: imgData, MIMEType: "image/jpeg"},
+				prompty.MediaPart{MediaType: "image", Data: imgData, MIMEType: "image/jpeg"},
 				prompty.TextPart{Text: " after"},
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Messages[0].OfUser)
 	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
@@ -203,7 +204,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.NotNil(t, params.Messages[0].OfAssistant)
@@ -222,7 +223,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.TranslateTyped(exec)
+	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 }
@@ -235,7 +236,7 @@ func TestParseResponse_TextOnly(t *testing.T) {
 			Message: openai.ChatCompletionMessage{Content: "Hello back"},
 		}},
 	}
-	parts, err := a.ParseResponse(completion)
+	parts, err := a.ParseResponse(context.Background(), completion)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	assert.Equal(t, "Hello back", parts[0].(prompty.TextPart).Text)
@@ -259,7 +260,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			},
 		}},
 	}
-	parts, err := a.ParseResponse(completion)
+	parts, err := a.ParseResponse(context.Background(), completion)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	tc := parts[0].(prompty.ToolCallPart)
@@ -271,7 +272,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 func TestParseResponse_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse("not a completion")
+	_, err := a.ParseResponse(context.Background(), "not a completion")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -279,7 +280,7 @@ func TestParseResponse_InvalidType(t *testing.T) {
 func TestParseResponse_EmptyChoices(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(&openai.ChatCompletion{Choices: nil})
+	_, err := a.ParseResponse(context.Background(), &openai.ChatCompletion{Choices: nil})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
@@ -290,9 +291,18 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 	completion := &openai.ChatCompletion{
 		Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: ""}}},
 	}
-	_, err := a.ParseResponse(completion)
+	_, err := a.ParseResponse(context.Background(), completion)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
+}
+
+func TestParseStreamChunk_NotImplemented(t *testing.T) {
+	t.Parallel()
+	a := New()
+	parts, err := a.ParseStreamChunk(context.Background(), nil)
+	require.Error(t, err)
+	assert.Nil(t, parts)
+	assert.ErrorIs(t, err, adapter.ErrStreamNotImplemented)
 }
 
 func TestTranslate_StopSequences(t *testing.T) {
@@ -304,7 +314,7 @@ func TestTranslate_StopSequences(t *testing.T) {
 		},
 		ModelConfig: map[string]any{"stop": []string{"STOP", "END"}},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Stop.OfStringArray)
 	assert.Equal(t, []string{"STOP", "END"}, params.Stop.OfStringArray)
@@ -314,7 +324,7 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{Messages: nil}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params)
 	assert.Empty(t, params.Messages)
@@ -330,7 +340,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(exec)
+	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }

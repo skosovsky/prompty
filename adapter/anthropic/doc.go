@@ -2,7 +2,8 @@
 // Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
 // Use TranslateTyped to get the concrete type without a type assertion.
 //
-// ImagePart: only base64 Data is supported; URL is rejected. When both Data and URL are set, Data takes precedence.
+// MediaPart: only MediaType "image" is supported. When Data is set it is sent as base64; when only URL is set,
+// the adapter downloads it in Translate(ctx) (respecting ctx, size limit, and image MIME check; only https). Data takes precedence over URL.
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 //
 // Tool schema: only "properties" and "required" from ToolDefinition.Parameters are mapped

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -38,18 +39,19 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams.
-func (a *Adapter) Translate(exec *prompty.PromptExecution) (any, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	return a.TranslateTyped(exec)
+	return a.TranslateTyped(ctx, exec)
 }
 
 // TranslateTyped returns the concrete type so callers avoid type assertion.
-func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
+func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) { //nolint:revive // ctx required by ProviderAdapter
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
+	_ = ctx // interface requirement; OpenAI accepts image URL natively, no I/O in Translate
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(exec.Messages)),
 		Model:    a.defaultModel,
@@ -94,7 +96,7 @@ func (a *Adapter) TranslateTyped(exec *prompty.PromptExecution) (*openai.ChatCom
 
 func (a *Adapter) messageToUnion(msg prompty.ChatMessage) (openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
-	case prompty.RoleSystem:
+	case prompty.RoleSystem, prompty.RoleDeveloper:
 		text := adapter.TextFromParts(msg.Content)
 		return openai.SystemMessage(text), nil
 	case prompty.RoleUser:
@@ -115,9 +117,12 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 		switch x := p.(type) {
 		case prompty.TextPart:
 			contentParts = append(contentParts, openai.TextContentPart(x.Text))
-		case prompty.ImagePart:
+		case prompty.MediaPart:
+			if x.MediaType != "image" {
+				return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
+			}
 			hasImage = true
-			part, err := imagePartToOpenAI(x)
+			part, err := mediaPartToOpenAI(x)
 			if err != nil {
 				return openai.ChatCompletionMessageParamUnion{}, err
 			}
@@ -132,7 +137,7 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 	return openai.UserMessage(contentParts), nil
 }
 
-func imagePartToOpenAI(p prompty.ImagePart) (openai.ChatCompletionContentPartUnionParam, error) {
+func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUnionParam, error) {
 	url := p.URL
 	if len(p.Data) > 0 {
 		mime := p.MIMEType
@@ -198,7 +203,8 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (openai.ChatCom
 }
 
 // ParseResponse converts *openai.ChatCompletion into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
+func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+	_ = ctx
 	completion, ok := raw.(*openai.ChatCompletion)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse
@@ -224,6 +230,13 @@ func (a *Adapter) ParseResponse(raw any) ([]prompty.ContentPart, error) {
 		return nil, adapter.ErrEmptyResponse
 	}
 	return out, nil
+}
+
+// ParseStreamChunk is not implemented for OpenAI; use SSE handling in caller.
+func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
+	_ = ctx
+	_ = rawChunk
+	return nil, adapter.ErrStreamNotImplemented
 }
 
 // Compile-time check that Adapter implements ProviderAdapter.

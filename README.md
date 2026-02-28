@@ -68,7 +68,7 @@ Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with f
 | `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Model set at call site |
 | `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
 
-Each adapter implements `Translate(exec) (any, error)` and `TranslateTyped(exec)` for the concrete type; `ParseResponse(raw)` returns `[]prompty.ContentPart`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers.
+Each adapter implements `Translate(ctx, exec) (any, error)` and `TranslateTyped(ctx, exec)` for the concrete type; `ParseResponse(ctx, raw)` returns `[]prompty.ContentPart`; `ParseStreamChunk(ctx, rawChunk)` returns stream parts or `ErrStreamNotImplemented`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers. For MediaPart with URL, Anthropic and Ollama download in `Translate(ctx)` (https, size limit, MIME); OpenAI and Gemini accept URL natively.
 
 ## Architecture
 
@@ -97,6 +97,24 @@ Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validati
 - `truncate_chars .text 4000` — trim by rune count
 - `truncate_tokens .text 2000` — trim by token count (uses `TokenCounter` from template options; default `CharFallbackCounter`)
 - `render_tools_as_xml .Tools` / `render_tools_as_json .Tools` — inject tool definitions into the prompt (e.g. for local Llama)
+
+## Development
+
+This repo uses **Go Workspaces** (`go.work`). The root and all adapter/registry submodules must be listed there so that changes to the core `prompty` package and adapters compile together in one PR without publishing intermediate versions.
+
+**Pre-check:** Before changing interfaces in the root module, run from repo root:
+
+```bash
+go work sync
+go build ./...
+cd adapter/openai && go build . && cd ../..
+cd adapter/anthropic && go build . && cd ../..
+cd adapter/gemini && go build . && cd ../..
+cd adapter/ollama && go build . && cd ../..
+cd remoteregistry/git && go build . && cd ../..
+```
+
+Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./adapter/gemini`, `./adapter/ollama`, `./remoteregistry/git`.
 
 ## License
 

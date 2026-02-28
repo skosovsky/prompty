@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -16,7 +17,8 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	// Ignore HTTP/2 client readLoop goroutine left by default client after FetchImage (e.g. TestTranslate_ImagePartURLFetchFails).
+	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"))
 }
 
 func ExampleAdapter_Translate() {
@@ -26,7 +28,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, _ := a.TranslateTyped(exec)
+	params, _ := a.TranslateTyped(context.Background(), exec)
 	fmt.Println(params.Messages[0].Content[0].OfText.Text)
 	// Output: Hello
 }
@@ -39,7 +41,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
@@ -57,7 +59,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
@@ -74,7 +76,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.Equal(t, anthropic.MessageParamRoleUser, params.Messages[0].Role)
@@ -92,7 +94,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 		},
 		ModelConfig: map[string]any{"max_tokens": int64(500), "temperature": 0.3},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	assert.Equal(t, int64(500), params.MaxTokens)
 	assert.True(t, params.Temperature.Valid())
@@ -102,7 +104,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 func TestTranslate_NilExecution(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.Translate(nil)
+	_, err := a.Translate(context.Background(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
@@ -128,7 +130,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Tools, 1)
 	tool := params.Tools[0].OfTool
@@ -145,7 +147,7 @@ func TestToolSchemaFromParameters_RequiredAsStringSlice(t *testing.T) {
 	params := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"q": map[string]any{"type": "string"},
+			"q":     map[string]any{"type": "string"},
 			"limit": map[string]any{"type": "integer"},
 		},
 		"required": []string{"q", "limit"},
@@ -162,31 +164,31 @@ func TestTranslate_ImagePartData(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.ImagePart{Data: []byte{0xff, 0xd8}, MIMEType: "image/jpeg"},
+				prompty.MediaPart{MediaType: "image", Data: []byte{0xff, 0xd8}, MIMEType: "image/jpeg"},
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
 	assert.NotNil(t, params.Messages[0].Content[0].OfImage)
 }
 
-func TestTranslate_ImagePartURLRejected(t *testing.T) {
+func TestTranslate_ImagePartURLFetchFails(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.ImagePart{URL: "https://example.com/img.png"},
+				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png"},
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(exec)
+	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
-	assert.Contains(t, err.Error(), "Anthropic does not support image URLs")
+	assert.Contains(t, err.Error(), "fetch image URL")
 }
 
 func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
@@ -195,11 +197,11 @@ func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.ImagePart{Data: []byte{0xff, 0xd8}, URL: "https://example.com/img.png", MIMEType: "image/jpeg"},
+				prompty.MediaPart{MediaType: "image", Data: []byte{0xff, 0xd8}, URL: "https://example.com/img.png", MIMEType: "image/jpeg"},
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
@@ -217,7 +219,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 2)
@@ -235,7 +237,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.TranslateTyped(exec)
+	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 }
@@ -249,7 +251,7 @@ func TestTranslate_StopSequences(t *testing.T) {
 		},
 		ModelConfig: map[string]any{"stop": []string{"STOP", "END"}},
 	}
-	params, err := a.TranslateTyped(exec)
+	params, err := a.TranslateTyped(context.Background(), exec)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"STOP", "END"}, params.StopSequences)
 }
@@ -260,7 +262,7 @@ func TestParseResponse_TextOnly(t *testing.T) {
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{{Type: "text", Text: "Hello back"}},
 	}
-	parts, err := a.ParseResponse(msg)
+	parts, err := a.ParseResponse(context.Background(), msg)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	assert.Equal(t, "Hello back", parts[0].(prompty.TextPart).Text)
@@ -269,7 +271,7 @@ func TestParseResponse_TextOnly(t *testing.T) {
 func TestParseResponse_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse("not a message")
+	_, err := a.ParseResponse(context.Background(), "not a message")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -286,7 +288,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			Input: json.RawMessage(toolInput),
 		}},
 	}
-	parts, err := a.ParseResponse(msg)
+	parts, err := a.ParseResponse(context.Background(), msg)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	tc := parts[0].(prompty.ToolCallPart)
@@ -299,7 +301,7 @@ func TestParseResponse_EmptyContent(t *testing.T) {
 	t.Parallel()
 	a := New()
 	msg := &anthropic.Message{Content: []anthropic.ContentBlockUnion{}}
-	_, err := a.ParseResponse(msg)
+	_, err := a.ParseResponse(context.Background(), msg)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
@@ -314,7 +316,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(exec)
+	_, err := a.TranslateTyped(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
