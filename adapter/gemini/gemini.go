@@ -109,6 +109,16 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			})
 		}
 	}
+	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
+		config.ResponseMIMEType = "application/json"
+		schema, err := mapToGenaiSchema(exec.ResponseFormat.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("response_format schema: %w", err)
+		}
+		if schema != nil {
+			config.ResponseSchema = schema
+		}
+	}
 	return &Request{Contents: contents, Config: config}, nil
 }
 
@@ -215,11 +225,30 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	return out, nil
 }
 
-// ParseStreamChunk is not implemented for Gemini.
+// ParseStreamChunk parses a single Gemini stream chunk (*genai.GenerateContentResponse).
+// Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
 func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
 	_ = ctx
-	_ = rawChunk
-	return nil, adapter.ErrStreamNotImplemented
+	chunk, ok := rawChunk.(*genai.GenerateContentResponse)
+	if !ok {
+		return nil, adapter.ErrInvalidResponse
+	}
+	var out []prompty.ContentPart
+	if text := chunk.Text(); text != "" {
+		out = append(out, prompty.TextPart{Text: text})
+	}
+	for _, fc := range chunk.FunctionCalls() {
+		var argsChunk string
+		if len(fc.Args) > 0 {
+			b, err := json.Marshal(fc.Args)
+			if err != nil {
+				continue
+			}
+			argsChunk = string(b)
+		}
+		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, ArgsChunk: argsChunk})
+	}
+	return out, nil
 }
 
 var _ adapter.ProviderAdapter = (*Adapter)(nil)

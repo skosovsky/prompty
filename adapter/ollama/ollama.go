@@ -48,6 +48,9 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
+	if exec.ResponseFormat != nil {
+		return nil, adapter.ErrStructuredOutputNotSupported
+	}
 	model := a.defaultModel
 	if exec.ModelConfig != nil {
 		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
@@ -241,11 +244,31 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	return out, nil
 }
 
-// ParseStreamChunk is not implemented for Ollama.
+// ParseStreamChunk parses a single Ollama stream chunk (*api.ChatResponse, Done: false).
+// Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
 func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
 	_ = ctx
-	_ = rawChunk
-	return nil, adapter.ErrStreamNotImplemented
+	chunk, ok := rawChunk.(*api.ChatResponse)
+	if !ok {
+		return nil, adapter.ErrInvalidResponse
+	}
+	var out []prompty.ContentPart
+	if chunk.Message.Content != "" {
+		out = append(out, prompty.TextPart{Text: chunk.Message.Content})
+	}
+	for _, tc := range chunk.Message.ToolCalls {
+		argsMap := tc.Function.Arguments.ToMap()
+		var argsChunk string
+		if len(argsMap) > 0 {
+			b, err := json.Marshal(argsMap)
+			if err != nil {
+				continue
+			}
+			argsChunk = string(b)
+		}
+		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, ArgsChunk: argsChunk})
+	}
+	return out, nil
 }
 
 var _ adapter.ProviderAdapter = (*Adapter)(nil)

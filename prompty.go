@@ -21,7 +21,8 @@ type ContentPart interface {
 
 // TextPart holds plain text content.
 type TextPart struct {
-	Text string
+	Text         string
+	CacheControl string // e.g. "ephemeral" for prompt caching (Anthropic)
 }
 
 func (TextPart) isContentPart() {}
@@ -29,10 +30,11 @@ func (TextPart) isContentPart() {}
 // MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
 // Adapters that do not accept URL natively may download the URL in Translate(ctx) and send inline data.
 type MediaPart struct {
-	MediaType string // "image", "audio", "video", "document"
-	MIMEType  string // e.g. "application/pdf", "image/jpeg"
-	URL       string // Optional: link (adapters may fetch and convert to inline)
-	Data      []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
+	MediaType    string // "image", "audio", "video", "document"
+	MIMEType     string // e.g. "application/pdf", "image/jpeg"
+	URL          string // Optional: link (adapters may fetch and convert to inline)
+	Data         []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
+	CacheControl string // e.g. "ephemeral" for prompt caching (Anthropic)
 }
 
 func (MediaPart) isContentPart() {}
@@ -45,10 +47,12 @@ type ReasoningPart struct {
 func (ReasoningPart) isContentPart() {}
 
 // ToolCallPart represents an AI request to call a function (in assistant message).
+// In streaming: ArgsChunk holds incremental JSON; Args is set in non-stream ParseResponse.
 type ToolCallPart struct {
-	ID   string // Empty for models that do not support ID (e.g. base Gemini)
-	Name string
-	Args string // JSON string of arguments
+	ID        string // Empty for models that do not support ID (e.g. base Gemini)
+	Name      string
+	Args      string // Full JSON string of arguments (non-stream response)
+	ArgsChunk string // Chunk of JSON arguments (streaming); client glues chunks
 }
 
 func (ToolCallPart) isContentPart() {}
@@ -106,9 +110,10 @@ type PromptExecution struct {
 // After FormatStruct it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
 type MessageTemplate struct {
-	Role     Role   // RoleSystem, RoleUser, RoleAssistant
-	Content  string // Go text/template: e.g. "Hello, {{ .user_name }}"
-	Optional bool   // true → skip if all referenced variables are zero-value
+	Role         Role   // RoleSystem, RoleUser, RoleAssistant
+	Content      string // Go text/template: e.g. "Hello, {{ .user_name }}"
+	Optional     bool   // true → skip if all referenced variables are zero-value
+	CacheControl string `yaml:"cache_control"` // e.g. "ephemeral" for prompt caching (Anthropic)
 }
 
 // PromptRegistry returns a chat prompt template by name and environment.

@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"context"
 	"embed"
 	"testing"
 
@@ -109,4 +110,83 @@ func TestParseFS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "simple_prompt", tpl.Metadata.ID)
+}
+
+func TestParseBytes_ResponseFormat(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: with_schema
+version: "1"
+messages:
+  - role: user
+    content: "Return JSON"
+response_format:
+  name: my_schema
+  schema:
+    type: object
+    properties:
+      key:
+        type: string
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.NotNil(t, tpl.ResponseFormat)
+	assert.Equal(t, "my_schema", tpl.ResponseFormat.Name)
+	require.NotNil(t, tpl.ResponseFormat.Schema)
+	assert.Equal(t, "object", tpl.ResponseFormat.Schema["type"])
+	// Payload must have at least one prompt/json tag for getPayloadFields to accept it
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.NotNil(t, exec.ResponseFormat)
+	assert.Equal(t, "my_schema", exec.ResponseFormat.Name)
+}
+
+func TestParseBytes_CacheControl(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: with_cache
+version: "1"
+messages:
+  - role: system
+    content: "You are a helper."
+    cache_control: ephemeral
+  - role: user
+    content: "Hi"
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages, 2)
+	assert.Equal(t, "ephemeral", tpl.Messages[0].CacheControl)
+	assert.Empty(t, tpl.Messages[1].CacheControl)
+}
+
+func TestParseBytes_CacheControlPassThrough(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: with_cache_pass
+version: "1"
+messages:
+  - role: system
+    content: "You are a helper. {{ .x }}"
+    cache_control: ephemeral
+  - role: user
+    content: "Hi"
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X string `json:"x"`
+	}{X: "ok"})
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+	require.Len(t, exec.Messages, 2)
+	require.Len(t, exec.Messages[0].Content, 1)
+	textPart, ok := exec.Messages[0].Content[0].(prompty.TextPart)
+	require.True(t, ok, "first message content should be TextPart")
+	assert.Equal(t, "ephemeral", textPart.CacheControl, "CacheControl from manifest must reach PromptExecution")
 }

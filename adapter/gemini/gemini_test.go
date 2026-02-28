@@ -327,3 +327,45 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	require.NotNil(t, req)
 	assert.Empty(t, req.Contents)
 }
+
+func TestTranslate_ResponseFormat(t *testing.T) {
+	t.Parallel()
+	a := New()
+	schema := map[string]any{"type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{Name: "out", Schema: schema},
+	}
+	req, err := a.TranslateTyped(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotEmpty(t, req.Config.ResponseMIMEType)
+	assert.Equal(t, "application/json", req.Config.ResponseMIMEType)
+	require.NotNil(t, req.Config.ResponseSchema)
+	assert.Equal(t, genai.TypeObject, req.Config.ResponseSchema.Type)
+}
+
+func TestParseStreamChunk_Text(t *testing.T) {
+	t.Parallel()
+	a := New()
+	chunk := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{
+				Parts: []*genai.Part{{Text: "Hi "}},
+			},
+		}},
+	}
+	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	assert.Equal(t, "Hi ", parts[0].(prompty.TextPart).Text)
+}
+
+func TestParseStreamChunk_InvalidType(t *testing.T) {
+	t.Parallel()
+	a := New()
+	_, err := a.ParseStreamChunk(context.Background(), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
+}
