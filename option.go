@@ -45,3 +45,10 @@ func WithRequiredVars(vars []string) ChatTemplateOption {
 		c.RequiredVars = vars
 	}
 }
+
+// WithResponseFormat sets the JSON Schema for structured response format (used by OpenAI, Gemini).
+func WithResponseFormat(schema *SchemaDefinition) ChatTemplateOption {
+	return func(c *ChatPromptTemplate) {
+		c.ResponseFormat = schema
+	}
+}

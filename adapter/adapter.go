@@ -23,13 +23,14 @@ type ProviderAdapter interface {
 
 // Sentinel errors for adapter implementations. Callers should use errors.Is.
 var (
-	ErrUnsupportedRole        = errors.New("adapter: unsupported message role for this provider")
-	ErrUnsupportedContentType = errors.New("adapter: unsupported ContentPart type for this provider")
-	ErrInvalidResponse        = errors.New("adapter: raw response has unexpected type")
-	ErrEmptyResponse          = errors.New("adapter: response contains no content")
-	ErrNilExecution           = errors.New("adapter: execution must not be nil")
-	ErrMalformedArgs          = errors.New("adapter: tool call args or tool parameters JSON is malformed")
-	ErrStreamNotImplemented   = errors.New("adapter: streaming not implemented for this provider")
+	ErrUnsupportedRole              = errors.New("adapter: unsupported message role for this provider")
+	ErrUnsupportedContentType       = errors.New("adapter: unsupported ContentPart type for this provider")
+	ErrInvalidResponse              = errors.New("adapter: raw response has unexpected type")
+	ErrEmptyResponse                = errors.New("adapter: response contains no content")
+	ErrNilExecution                 = errors.New("adapter: execution must not be nil")
+	ErrMalformedArgs                = errors.New("adapter: tool call args or tool parameters JSON is malformed")
+	ErrStreamNotImplemented         = errors.New("adapter: streaming not implemented for this provider")
+	ErrStructuredOutputNotSupported = errors.New("adapter: structured output (response_format) not supported by this provider")
 )
 
 // ModelParams holds well-known model config keys extracted from PromptExecution.ModelConfig.

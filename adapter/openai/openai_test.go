@@ -296,13 +296,69 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
 
-func TestParseStreamChunk_NotImplemented(t *testing.T) {
+func TestParseStreamChunk_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
 	parts, err := a.ParseStreamChunk(context.Background(), nil)
 	require.Error(t, err)
 	assert.Nil(t, parts)
-	assert.ErrorIs(t, err, adapter.ErrStreamNotImplemented)
+	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
+}
+
+func TestParseStreamChunk_TextDelta(t *testing.T) {
+	t.Parallel()
+	a := New()
+	chunk := &openai.ChatCompletionChunk{
+		Choices: []openai.ChatCompletionChunkChoice{{
+			Delta: openai.ChatCompletionChunkChoiceDelta{Content: "Hello "},
+		}},
+	}
+	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	assert.Equal(t, "Hello ", parts[0].(prompty.TextPart).Text)
+}
+
+func TestParseStreamChunk_ToolCallChunk(t *testing.T) {
+	t.Parallel()
+	a := New()
+	chunk := &openai.ChatCompletionChunk{
+		Choices: []openai.ChatCompletionChunkChoice{{
+			Delta: openai.ChatCompletionChunkChoiceDelta{
+				ToolCalls: []openai.ChatCompletionChunkChoiceDeltaToolCall{{
+					ID: "call_1",
+					Function: openai.ChatCompletionChunkChoiceDeltaToolCallFunction{
+						Name:      "get_weather",
+						Arguments: `{"loc":"NYC"}`,
+					},
+				}},
+			},
+		}},
+	}
+	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	require.NoError(t, err)
+	require.Len(t, parts, 1)
+	tc := parts[0].(prompty.ToolCallPart)
+	assert.Equal(t, "call_1", tc.ID)
+	assert.Equal(t, "get_weather", tc.Name)
+	assert.Equal(t, `{"loc":"NYC"}`, tc.ArgsChunk)
+}
+
+func TestTranslate_ResponseFormat(t *testing.T) {
+	t.Parallel()
+	a := New()
+	schema := map[string]any{"type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
+	}
+	params, err := a.TranslateTyped(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, params.ResponseFormat.OfJSONSchema)
+	assert.Equal(t, "reply_schema", params.ResponseFormat.OfJSONSchema.JSONSchema.Name)
+	assert.Equal(t, schema, params.ResponseFormat.OfJSONSchema.JSONSchema.Schema)
 }
 
 func TestTranslate_StopSequences(t *testing.T) {

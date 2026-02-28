@@ -21,8 +21,9 @@ type fileManifest struct {
 		Required []string       `yaml:"required"`
 		Partial  map[string]any `yaml:"partial"`
 	} `yaml:"variables"`
-	Tools    []prompty.ToolDefinition  `yaml:"tools"`
-	Messages []prompty.MessageTemplate `yaml:"messages"`
+	Tools          []prompty.ToolDefinition  `yaml:"tools"`
+	ResponseFormat *prompty.SchemaDefinition `yaml:"response_format"`
+	Messages       []prompty.MessageTemplate `yaml:"messages"`
 }
 
 // ParseBytes parses a YAML manifest and returns a ChatPromptTemplate.
@@ -89,6 +90,9 @@ func buildTemplate(m *fileManifest) (*prompty.ChatPromptTemplate, error) {
 	}
 	if len(m.ModelConfig) > 0 {
 		opts = append(opts, prompty.WithConfig(m.ModelConfig))
+	}
+	if m.ResponseFormat != nil {
+		opts = append(opts, prompty.WithResponseFormat(m.ResponseFormat))
 	}
 	return prompty.NewChatPromptTemplate(m.Messages, opts...)
 }

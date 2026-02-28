@@ -91,6 +91,20 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			}))
 		}
 	}
+	if exec.ResponseFormat != nil {
+		name := exec.ResponseFormat.Name
+		if name == "" {
+			name = "response_schema"
+		}
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   name,
+					Schema: exec.ResponseFormat.Schema,
+				},
+			},
+		}
+	}
 	return params, nil
 }
 
@@ -232,11 +246,29 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	return out, nil
 }
 
-// ParseStreamChunk is not implemented for OpenAI; use SSE handling in caller.
+// ParseStreamChunk parses a single OpenAI stream chunk (*openai.ChatCompletionChunk).
+// Emits one ContentPart per chunk (text delta or tool call delta); client glues ArgsChunk.
 func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
 	_ = ctx
-	_ = rawChunk
-	return nil, adapter.ErrStreamNotImplemented
+	chunk, ok := rawChunk.(*openai.ChatCompletionChunk)
+	if !ok {
+		return nil, adapter.ErrInvalidResponse
+	}
+	if len(chunk.Choices) == 0 {
+		return nil, nil
+	}
+	delta := chunk.Choices[0].Delta
+	var out []prompty.ContentPart
+	if delta.Content != "" {
+		out = append(out, prompty.TextPart{Text: delta.Content})
+	}
+	for _, tc := range delta.ToolCalls {
+		part := prompty.ToolCallPart{ID: tc.ID}
+		part.Name = tc.Function.Name
+		part.ArgsChunk = tc.Function.Arguments
+		out = append(out, part)
+	}
+	return out, nil
 }
 
 // Compile-time check that Adapter implements ProviderAdapter.

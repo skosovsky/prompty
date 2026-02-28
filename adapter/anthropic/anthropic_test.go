@@ -320,3 +320,25 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
+
+func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{Schema: map[string]any{"type": "object"}},
+	}
+	_, err := a.TranslateTyped(context.Background(), exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrStructuredOutputNotSupported)
+}
+
+func TestParseStreamChunk_NotImplemented(t *testing.T) {
+	t.Parallel()
+	a := New()
+	_, err := a.ParseStreamChunk(context.Background(), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrStreamNotImplemented)
+}

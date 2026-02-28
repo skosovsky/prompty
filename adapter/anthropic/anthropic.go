@@ -53,6 +53,9 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
+	if exec.ResponseFormat != nil {
+		return nil, adapter.ErrStructuredOutputNotSupported
+	}
 	params := &anthropic.MessageNewParams{
 		MaxTokens: defaultMaxTokens,
 		Model:     a.defaultModel,
@@ -155,7 +158,7 @@ func (a *Adapter) userMessage(ctx context.Context, parts []prompty.ContentPart) 
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, anthropic.NewTextBlock(x.Text))
+			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, x.CacheControl))
 		case prompty.MediaPart:
 			if x.MediaType != "image" {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
@@ -178,7 +181,7 @@ func (a *Adapter) userMessage(ctx context.Context, parts []prompty.ContentPart) 
 			if mime == "" {
 				mime = "image/png"
 			}
-			blocks = append(blocks, anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(data)))
+			blocks = append(blocks, a.imageBlockWithCacheControl(mime, base64.StdEncoding.EncodeToString(data), x.CacheControl))
 		default:
 			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 		}
@@ -191,7 +194,7 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (anthropic.Messa
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, anthropic.NewTextBlock(x.Text))
+			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, x.CacheControl))
 		case prompty.ToolCallPart:
 			if x.Args != "" && !json.Valid([]byte(x.Args)) {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
@@ -215,6 +218,20 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.Mess
 		}
 	}
 	return anthropic.MessageParam{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+}
+
+// textBlockWithCacheControl returns a text block. Pass-through of cacheControl "ephemeral" uses SDK block with CacheControl when supported.
+func (a *Adapter) textBlockWithCacheControl(text, cacheControl string) anthropic.ContentBlockParamUnion {
+	// TODO: when anthropic-sdk-go exposes ContentBlockParamUnion with TextBlock+CacheControl, set it for cacheControl == "ephemeral"
+	_ = cacheControl
+	return anthropic.NewTextBlock(text)
+}
+
+// imageBlockWithCacheControl returns an image block. Pass-through of cacheControl "ephemeral" uses SDK block with CacheControl when supported.
+func (a *Adapter) imageBlockWithCacheControl(mime, base64Data, cacheControl string) anthropic.ContentBlockParamUnion {
+	// TODO: when anthropic-sdk-go exposes ImageBlock with CacheControl, set it for cacheControl == "ephemeral"
+	_ = cacheControl
+	return anthropic.NewImageBlockBase64(mime, base64Data)
 }
 
 // ParseResponse converts *anthropic.Message into []prompty.ContentPart.
@@ -246,7 +263,10 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	return out, nil
 }
 
-// ParseStreamChunk is not implemented for Anthropic.
+// ParseStreamChunk parses a single Anthropic stream event. The SDK uses RawContentBlockDeltaUnion and
+// ContentBlockStartEventContentBlockUnion; exact field names depend on anthropic-sdk-go version.
+// Until the adapter is updated to match the SDK struct, callers can type-assert to *ContentBlockDeltaEvent
+// or *ContentBlockStartEvent and extract delta/block manually, or use this stub.
 func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
 	_ = ctx
 	_ = rawChunk

@@ -19,17 +19,19 @@ type ChatPromptTemplate struct {
 	Tools            []ToolDefinition
 	ModelConfig      map[string]any
 	Metadata         PromptMetadata
-	RequiredVars     []string // explicit required vars from manifest; merged with template-derived in FormatStruct
-	requiredFromAST  []string // pre-computed in constructor from non-optional message templates
+	ResponseFormat   *SchemaDefinition // JSON Schema for structured output (passed to PromptExecution)
+	RequiredVars     []string          // explicit required vars from manifest; merged with template-derived in FormatStruct
+	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter
 	parsedTemplates  []parsedMessage
 }
 
 type parsedMessage struct {
-	tpl      *template.Template
-	role     Role
-	optional bool
-	vars     []string // pre-computed from AST for optional-skip check
+	tpl          *template.Template
+	role         Role
+	optional     bool
+	cacheControl string
+	vars         []string // pre-computed from AST for optional-skip check
 }
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
@@ -66,7 +68,8 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
 			tpl: parsed, role: m.Role, optional: m.Optional,
-			vars: extractVarsFromTree(parsed.Tree),
+			cacheControl: m.CacheControl,
+			vars:         extractVarsFromTree(parsed.Tree),
 		})
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
@@ -82,6 +85,7 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	out := &ChatPromptTemplate{
 		Messages:        slices.Clone(c.Messages),
 		Tools:           slices.Clone(c.Tools),
+		ResponseFormat:  c.ResponseFormat,
 		RequiredVars:    slices.Clone(c.RequiredVars),
 		requiredFromAST: c.requiredFromAST,
 		Metadata:        c.Metadata,
@@ -135,16 +139,17 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 			return nil, fmt.Errorf("%w: %w", ErrTemplateRender, err)
 		}
 		text := buf.String()
-		out = append(out, ChatMessage{Role: pm.role, Content: []ContentPart{TextPart{Text: text}}})
+		out = append(out, ChatMessage{Role: pm.role, Content: []ContentPart{TextPart{Text: text, CacheControl: pm.cacheControl}}})
 	}
 	out = spliceHistory(out, history)
 	meta := c.Metadata
 	meta.Tags = slices.Clone(meta.Tags)
 	return &PromptExecution{
-		Messages:    out,
-		Tools:       slices.Clone(c.Tools),
-		ModelConfig: maps.Clone(c.ModelConfig),
-		Metadata:    meta,
+		Messages:       out,
+		Tools:          slices.Clone(c.Tools),
+		ModelConfig:    maps.Clone(c.ModelConfig),
+		Metadata:       meta,
+		ResponseFormat: c.ResponseFormat,
 	}, nil
 }
 
