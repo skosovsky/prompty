@@ -266,3 +266,95 @@ func TestFetcher_Fetch_InvalidNameRejected(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidName)
 }
+
+func TestFetcher_WithCloneDir_PersistentDirNotRemoved(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	initRepo(t, repoDir, map[string]string{"persist.yaml": "id: persist\nversion: \"1\"\nmessages:\n  - role: system\n    content: persistent\n"})
+	cloneDir := t.TempDir()
+	g, err := NewFetcher("file://"+repoDir, WithCloneDir(cloneDir))
+	require.NoError(t, err)
+	data, err := g.Fetch(context.Background(), "persist")
+	require.NoError(t, err)
+	require.Contains(t, string(data), "persistent")
+	require.NoError(t, g.Close())
+	// Directory must still exist and contain .git
+	_, err = os.Stat(filepath.Join(cloneDir, ".git"))
+	require.NoError(t, err)
+}
+
+func TestFetcher_WithCloneDir_ReuseOpensExistingClone(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	initRepo(t, repoDir, map[string]string{"reuse.yaml": "id: reuse\nversion: \"1\"\nmessages:\n  - role: system\n    content: first\n"})
+	cloneDir := t.TempDir()
+	g1, err := NewFetcher("file://"+repoDir, WithCloneDir(cloneDir))
+	require.NoError(t, err)
+	data1, err := g1.Fetch(context.Background(), "reuse")
+	require.NoError(t, err)
+	require.Contains(t, string(data1), "first")
+	require.NoError(t, g1.Close())
+	// Second Fetcher with same cloneDir should open existing repo (PlainOpen) and Fetch still works
+	g2, err := NewFetcher("file://"+repoDir, WithCloneDir(cloneDir))
+	require.NoError(t, err)
+	defer func() { _ = g2.Close() }()
+	data2, err := g2.Fetch(context.Background(), "reuse")
+	require.NoError(t, err)
+	require.Contains(t, string(data2), "first")
+}
+
+func TestFetcher_ListIDs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"a.yaml":       "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: A\n",
+		"b.yml":        "id: b\nversion: \"1\"\nmessages:\n  - role: system\n    content: B\n",
+		"sub/c.yaml":   "id: c\nversion: \"1\"\nmessages:\n  - role: system\n    content: C\n",
+		"sub/d.yml":   "id: d\nversion: \"1\"\nmessages:\n  - role: system\n    content: D\n",
+	})
+	g, err := NewFetcher("file://" + dir)
+	require.NoError(t, err)
+	defer func() { _ = g.Close() }()
+	ctx := context.Background()
+	ids, err := g.ListIDs(ctx)
+	require.NoError(t, err)
+	require.Len(t, ids, 4)
+	require.Contains(t, ids, "a")
+	require.Contains(t, ids, "b")
+	require.Contains(t, ids, "sub/c")
+	require.Contains(t, ids, "sub/d")
+	// IDs use forward slashes
+	for _, id := range ids {
+		require.NotContains(t, id, "\\")
+	}
+}
+
+func TestFetcher_Stat(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"stat_agent.yaml": "id: stat_agent\nversion: \"1\"\nmessages:\n  - role: system\n    content: Stat test\n",
+	})
+	g, err := NewFetcher("file://" + dir)
+	require.NoError(t, err)
+	defer func() { _ = g.Close() }()
+	ctx := context.Background()
+	info, err := g.Stat(ctx, "stat_agent")
+	require.NoError(t, err)
+	require.Equal(t, "stat_agent", info.ID)
+	require.NotEmpty(t, info.Version)
+	require.False(t, info.UpdatedAt.IsZero())
+}
+
+func TestFetcher_Stat_NotFound(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
+	g, err := NewFetcher("file://" + dir)
+	require.NoError(t, err)
+	defer func() { _ = g.Close() }()
+	ctx := context.Background()
+	_, err = g.Stat(ctx, "nonexistent")
+	require.Error(t, err)
+	require.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}

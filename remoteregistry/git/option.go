@@ -33,3 +33,12 @@ func WithAuth(token string) Option {
 		g.authToken = token
 	}
 }
+
+// WithCloneDir sets the directory to clone into (persistent cache). If the directory
+// already contains a clone (.git exists), PlainOpen is used and pull is run; otherwise
+// the repo is cloned into this dir. Close() does not remove the directory when using WithCloneDir.
+func WithCloneDir(dir string) Option {
+	return func(g *Fetcher) {
+		g.cloneDir = dir
+	}
+}
