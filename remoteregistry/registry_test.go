@@ -22,26 +22,22 @@ func TestMain(m *testing.M) {
 type mockFetcher struct {
 	mu     sync.Mutex
 	data   map[string][]byte
-	fetch  func(ctx context.Context, name, env string) ([]byte, error)
+	fetch  func(ctx context.Context, id string) ([]byte, error)
 	called int
 }
 
-func (m *mockFetcher) Fetch(ctx context.Context, name, env string) ([]byte, error) {
+func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	m.mu.Lock()
 	m.called++
 	m.mu.Unlock()
 	if m.fetch != nil {
-		data, err := m.fetch(ctx, name, env)
+		data, err := m.fetch(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 		}
 		return data, nil
 	}
-	key := name + ":" + env
-	if d, ok := m.data[key]; ok {
-		return d, nil
-	}
-	if d, ok := m.data[name+":"]; ok {
+	if d, ok := m.data[id]; ok {
 		return d, nil
 	}
 	return nil, fmt.Errorf("%w: not found", ErrFetchFailed)
@@ -56,17 +52,15 @@ messages:
   - role: system
     content: "Hello {{ .user_name }}"
 `
-	m := &mockFetcher{data: map[string][]byte{"support_agent:": []byte(manifestYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"support_agent": []byte(manifestYAML)}}
 	reg := New(m, WithTTL(time.Minute))
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent", "")
+	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
-	assert.Empty(t, tpl.Metadata.Environment)
 	assert.Equal(t, 1, m.called)
-	// Second call hits cache
-	tpl2, err := reg.GetTemplate(ctx, "support_agent", "")
+	tpl2, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	assert.Equal(t, "support_agent", tpl2.Metadata.ID)
 	assert.Equal(t, 1, m.called)
@@ -81,17 +75,16 @@ messages:
   - role: system
     content: "Production"
 `
-	m := &mockFetcher{data: map[string][]byte{"p:production": []byte(prodYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"p.production": []byte(prodYAML)}}
 	reg := New(m, WithTTL(time.Minute))
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p", "production")
+	tpl, err := reg.GetTemplate(ctx, "p.production")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "Production", tpl.Messages[0].Content)
-	assert.Equal(t, "production", tpl.Metadata.Environment)
 }
 
-func TestRegistry_GetTemplate_SetsEnvironment(t *testing.T) {
+func TestRegistry_GetTemplate_TwoIds(t *testing.T) {
 	t.Parallel()
 	manifestYAML := `
 id: env_test
@@ -101,29 +94,29 @@ messages:
     content: "Env"
 `
 	m := &mockFetcher{data: map[string][]byte{
-		"env_test:":        []byte(manifestYAML),
-		"env_test:staging": []byte(manifestYAML),
+		"env_test":         []byte(manifestYAML),
+		"env_test.staging": []byte(manifestYAML),
 	}}
 	reg := New(m, WithTTL(time.Minute))
 	ctx := context.Background()
-	tplEmpty, err := reg.GetTemplate(ctx, "env_test", "")
+	tplEmpty, err := reg.GetTemplate(ctx, "env_test")
 	require.NoError(t, err)
-	assert.Empty(t, tplEmpty.Metadata.Environment)
-	tplStaging, err := reg.GetTemplate(ctx, "env_test", "staging")
+	require.NotNil(t, tplEmpty)
+	tplStaging, err := reg.GetTemplate(ctx, "env_test.staging")
 	require.NoError(t, err)
-	assert.Equal(t, "staging", tplStaging.Metadata.Environment)
+	require.NotNil(t, tplStaging)
 }
 
 func TestRegistry_GetTemplate_FetchError(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{
-		fetch: func(context.Context, string, string) ([]byte, error) {
+		fetch: func(context.Context, string) ([]byte, error) {
 			return nil, errors.New("network error")
 		},
 	}
 	reg := New(m)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "x", "")
+	_, err := reg.GetTemplate(ctx, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
 }
@@ -131,23 +124,23 @@ func TestRegistry_GetTemplate_FetchError(t *testing.T) {
 func TestRegistry_GetTemplate_NotFoundWrapsErrTemplateNotFound(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{
-		fetch: func(context.Context, string, string) ([]byte, error) {
+		fetch: func(context.Context, string) ([]byte, error) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, "missing")
 		},
 	}
 	reg := New(m)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "missing", "")
+	_, err := reg.GetTemplate(ctx, "missing")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
 func TestRegistry_GetTemplate_InvalidManifest(t *testing.T) {
 	t.Parallel()
-	m := &mockFetcher{data: map[string][]byte{"bad:": []byte("id: bad\nmessages: [unclosed")}}
+	m := &mockFetcher{data: map[string][]byte{"bad": []byte("id: bad\nmessages: [unclosed")}}
 	reg := New(m)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "bad", "")
+	_, err := reg.GetTemplate(ctx, "bad")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -163,7 +156,7 @@ messages:
 `
 	called := 0
 	m := &mockFetcher{
-		fetch: func(context.Context, string, string) ([]byte, error) {
+		fetch: func(context.Context, string) ([]byte, error) {
 			called++
 			return []byte(manifestYAML), nil
 		},
@@ -171,13 +164,13 @@ messages:
 	reg := New(m, WithTTL(50*time.Millisecond))
 	ctx := context.Background()
 
-	tpl, err := reg.GetTemplate(ctx, "ttl_test", "")
+	tpl, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", tpl.Messages[0].Content)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(60 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "ttl_test", "")
+	tpl2, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content)
 	assert.Equal(t, 2, called)
@@ -194,7 +187,7 @@ messages:
 `
 	called := 0
 	m := &mockFetcher{
-		fetch: func(context.Context, string, string) ([]byte, error) {
+		fetch: func(context.Context, string) ([]byte, error) {
 			called++
 			return []byte(manifestYAML), nil
 		},
@@ -202,13 +195,13 @@ messages:
 	reg := New(m, WithTTL(0))
 	ctx := context.Background()
 
-	tpl, err := reg.GetTemplate(ctx, "infinite", "")
+	tpl, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
 	assert.Equal(t, "cached", tpl.Messages[0].Content)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(20 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "infinite", "")
+	tpl2, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
 	assert.Equal(t, "cached", tpl2.Messages[0].Content)
 	assert.Equal(t, 1, called, "TTL<=0: cache never expires, fetcher not called again")
@@ -225,18 +218,18 @@ messages:
 `
 	called := 0
 	m := &mockFetcher{
-		fetch: func(context.Context, string, string) ([]byte, error) {
+		fetch: func(context.Context, string) ([]byte, error) {
 			called++
 			return []byte(manifestYAML), nil
 		},
 	}
 	reg := New(m, WithTTL(-time.Hour))
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "neg_ttl", "")
+	tpl, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", tpl.Messages[0].Content)
 	time.Sleep(30 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "neg_ttl", "")
+	tpl2, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content)
 	assert.Equal(t, 1, called, "TTL<0: cache never expires")
@@ -254,15 +247,15 @@ tools:
   - name: only_tool
     description: "Only"
 `
-	m := &mockFetcher{data: map[string][]byte{"safe:": []byte(manifestYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"safe": []byte(manifestYAML)}}
 	reg := New(m)
 	ctx := context.Background()
-	tpl1, err := reg.GetTemplate(ctx, "safe", "")
+	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
 	tpl1.Messages[0].Content = "Mutated"
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
-	tpl2, err := reg.GetTemplate(ctx, "safe", "")
+	tpl2, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
 	assert.Equal(t, "Original", tpl2.Messages[0].Content)
@@ -273,7 +266,7 @@ tools:
 func TestRegistry_GetTemplate_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{
-		fetch: func(ctx context.Context, _, _ string) ([]byte, error) {
+		fetch: func(ctx context.Context, _ string) ([]byte, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		},
@@ -281,7 +274,7 @@ func TestRegistry_GetTemplate_ContextCancellation(t *testing.T) {
 	reg := New(m)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := reg.GetTemplate(ctx, "x", "")
+	_, err := reg.GetTemplate(ctx, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -295,7 +288,7 @@ messages:
   - role: system
     content: "x"
 `
-	m := &mockFetcher{data: map[string][]byte{"conc:": []byte(manifestYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"conc": []byte(manifestYAML)}}
 	reg := New(m)
 	ctx := context.Background()
 	type result struct {
@@ -305,7 +298,7 @@ messages:
 	results := make(chan result, 50)
 	for range 50 {
 		go func() {
-			tpl, err := reg.GetTemplate(ctx, "conc", "")
+			tpl, err := reg.GetTemplate(ctx, "conc")
 			results <- result{tpl: tpl, err: err}
 		}()
 	}
@@ -317,12 +310,12 @@ messages:
 	}
 }
 
-func TestRegistry_GetTemplate_InvalidName(t *testing.T) {
+func TestRegistry_GetTemplate_InvalidID(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
 	reg := New(m)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "invalid:name", "")
+	_, err := reg.GetTemplate(ctx, "invalid:name")
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidName)
 	assert.Contains(t, err.Error(), ":")
@@ -350,14 +343,14 @@ messages:
   - role: system
     content: "x"
 `
-	m := &mockFetcher{data: map[string][]byte{"evict_me:": []byte(manifestYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"evict_me": []byte(manifestYAML)}}
 	reg := New(m, WithTTL(time.Minute))
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "evict_me", "")
+	_, err := reg.GetTemplate(ctx, "evict_me")
 	require.NoError(t, err)
 	assert.Equal(t, 1, m.called)
-	reg.Evict("evict_me", "")
-	_, err = reg.GetTemplate(ctx, "evict_me", "")
+	reg.Evict("evict_me")
+	_, err = reg.GetTemplate(ctx, "evict_me")
 	require.NoError(t, err)
 	assert.Equal(t, 2, m.called, "after Evict, next GetTemplate should fetch again")
 }
@@ -371,13 +364,33 @@ messages:
   - role: system
     content: "x"
 `
-	m := &mockFetcher{data: map[string][]byte{"all:": []byte(manifestYAML)}}
+	m := &mockFetcher{data: map[string][]byte{"all": []byte(manifestYAML)}}
 	reg := New(m, WithTTL(time.Minute))
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "all", "")
+	_, err := reg.GetTemplate(ctx, "all")
 	require.NoError(t, err)
 	reg.EvictAll()
-	_, err = reg.GetTemplate(ctx, "all", "")
+	_, err = reg.GetTemplate(ctx, "all")
 	require.NoError(t, err)
 	assert.Equal(t, 2, m.called)
+}
+
+func TestRegistry_List_ReturnsNilWhenNoLister(t *testing.T) {
+	t.Parallel()
+	m := &mockFetcher{data: map[string][]byte{}}
+	reg := New(m)
+	ctx := context.Background()
+	ids, err := reg.List(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, ids)
+}
+
+func TestRegistry_Stat_ReturnsErrWhenNoStatter(t *testing.T) {
+	t.Parallel()
+	m := &mockFetcher{data: map[string][]byte{}}
+	reg := New(m)
+	ctx := context.Background()
+	_, err := reg.Stat(ctx, "any")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }

@@ -251,7 +251,7 @@ func (a *Adapter) textBlockWithCacheControl(text string, metadata map[string]any
 }
 
 // imageBlockWithCacheControl returns an image block. CacheControl is set only for text blocks (system/user/assistant); image block cache uses NewImageBlockBase64 without cache for SDK compatibility.
-func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string, metadata map[string]any) anthropic.ContentBlockParamUnion {
+func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string, _ map[string]any) anthropic.ContentBlockParamUnion {
 	return anthropic.NewImageBlockBase64(mime, base64Data)
 }
 

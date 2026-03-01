@@ -6,28 +6,32 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Ensures Registry implements prompty.PromptRegistry.
-var _ prompty.PromptRegistry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry.
+var _ prompty.Registry = (*Registry)(nil)
 
-// Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates.
+// Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates by id.
 type Registry struct {
 	cache           map[string]*prompty.ChatPromptTemplate
+	ids             []string // ordered list of ids for List()
 	root            string
-	partialsPattern string // e.g. "partials/*.tmpl"; relative to root, one shared partials dir for all manifests
+	partialsPattern string // e.g. "partials/*.tmpl"; relative to root
+	version         string // optional build/git version from WithVersion
 }
 
-// New walks fsys, parses every .yaml file under the given root, and returns a Registry.
-// Key format: "name" for "name.yaml", "name:env" for "name.env.yaml". Same name with different envs overwrite by last.
+// New walks fsys, parses every .yaml/.yml file under the given root, and returns a Registry.
+// id = basename without extension (e.g. "agent", "agent.prod").
 func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 	r := &Registry{cache: make(map[string]*prompty.ChatPromptTemplate), root: root}
 	for _, opt := range opts {
 		opt(r)
 	}
+	seen := make(map[string]bool)
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -46,15 +50,12 @@ func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		base := filepath.Base(path)
-		name := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
-		if idx := strings.LastIndex(name, "."); idx >= 0 {
-			env := name[idx+1:]
-			name = name[:idx]
-			tpl.Metadata.Environment = env
-			r.cache[name+":"+env] = tpl
-		} else {
-			tpl.Metadata.Environment = ""
-			r.cache[name+":"] = tpl
+		id := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		tpl.Metadata.Environment = ""
+		r.cache[id] = tpl
+		if !seen[id] {
+			seen[id] = true
+			r.ids = append(r.ids, id)
 		}
 		return nil
 	})
@@ -72,24 +73,50 @@ func WithPartials(pattern string) Option {
 	return func(r *Registry) { r.partialsPattern = pattern }
 }
 
-// GetTemplate returns a template by name and env. O(1) map lookup.
-// Prefer name:env key; if missing, fallback to name: (base file).
-// Check order: name validation, then context, then cache (aligned with other registries).
-func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.ChatPromptTemplate, error) {
-	if err := prompty.ValidateName(name, env); err != nil {
+// WithVersion sets a build or git version (e.g. from -ldflags). Stat returns it as TemplateInfo.Version.
+func WithVersion(version string) Option {
+	return func(r *Registry) { r.version = version }
+}
+
+// GetTemplate returns a template by id. O(1) map lookup. Enriches tpl.Metadata.Version from Stat if empty.
+func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	key := name + ":" + env
-	if tpl, ok := r.cache[key]; ok {
-		return prompty.CloneTemplate(tpl), nil
+	tpl, ok := r.cache[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 	}
-	if tpl, ok := r.cache[name+":"]; ok {
-		clone := prompty.CloneTemplate(tpl)
-		clone.Metadata.Environment = env
-		return clone, nil
+	clone := prompty.CloneTemplate(tpl)
+	info, _ := r.Stat(ctx, id)
+	if info.Version != "" && clone.Metadata.Version == "" {
+		clone.Metadata.Version = info.Version
 	}
-	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, name)
+	return clone, nil
+}
+
+// List returns all template ids (order from walk).
+func (r *Registry) List(ctx context.Context) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return append([]string(nil), r.ids...), nil
+}
+
+// Stat returns metadata for id without parsing. Version from WithVersion; UpdatedAt is zero for embed.
+func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := prompty.ValidateID(id); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
+	if _, ok := r.cache[id]; !ok {
+		return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+	}
+	return prompty.TemplateInfo{
+		ID:        id,
+		Version:   r.version,
+		UpdatedAt: time.Time{},
+	}, nil
 }

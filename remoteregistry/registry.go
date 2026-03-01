@@ -26,8 +26,8 @@ func detachCancel(parent context.Context) (context.Context, context.CancelFunc) 
 	return context.WithCancel(ctx) // no-op cancel when no deadline, but same signature
 }
 
-// Ensures Registry implements prompty.PromptRegistry.
-var _ prompty.PromptRegistry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry.
+var _ prompty.Registry = (*Registry)(nil)
 
 type cacheEntry struct {
 	tpl       *prompty.ChatPromptTemplate
@@ -40,7 +40,7 @@ func (r *Registry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 }
 
 // Registry loads prompt templates via a Fetcher and caches them with TTL.
-// Implements prompty.PromptRegistry. GetTemplate returns a cloned template.
+// Implements prompty.Registry. GetTemplate returns a cloned template.
 type Registry struct {
 	fetcher Fetcher
 	ttl     time.Duration
@@ -66,17 +66,16 @@ func New(fetcher Fetcher, opts ...Option) *Registry {
 	return r
 }
 
-// GetTemplate returns a template by name and env. Uses TTL cache; on miss or expiry, fetches via Fetcher.
-// Name and env must pass ValidateName. Returns a cloned template so callers cannot mutate the cache.
-func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.ChatPromptTemplate, error) {
-	if err := ValidateName(name, env); err != nil {
+// GetTemplate returns a template by id. Uses TTL cache; on miss or expiry, fetches via Fetcher.
+// id must pass ValidateID. Returns a cloned template; enriches tpl.Metadata.Version from Stat if Fetcher implements Statter.
+func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
-	key := name + ":" + env
 	now := time.Now()
 
 	r.mu.RLock()
-	ent, ok := r.cache[key]
+	ent, ok := r.cache[id]
 	if ok && r.cacheEntryValid(ent, now) {
 		tpl := prompty.CloneTemplate(ent.tpl)
 		r.mu.RUnlock()
@@ -85,8 +84,8 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 	r.mu.RUnlock()
 
 	r.mu.Lock()
-	now = time.Now() // re-read after acquiring lock to avoid stale TTL check
-	ent, ok = r.cache[key]
+	now = time.Now()
+	ent, ok = r.cache[id]
 	if ok && r.cacheEntryValid(ent, now) {
 		tpl := prompty.CloneTemplate(ent.tpl)
 		r.mu.Unlock()
@@ -98,12 +97,10 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 	}
 	r.mu.Unlock()
 
-	// Fetch without holding the lock so other keys are not blocked; singleflight deduplicates by key.
-	// Use detachCancel so one caller's context cancellation does not fail all waiters, but deadline is preserved.
-	v, err, _ := r.sf.Do(key, func() (any, error) {
+	v, err, _ := r.sf.Do(id, func() (any, error) {
 		fetchCtx, cancel := detachCancel(ctx)
 		defer cancel()
-		data, err := r.fetcher.Fetch(fetchCtx, name, env)
+		data, err := r.fetcher.Fetch(fetchCtx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -111,12 +108,17 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 		if err != nil {
 			return nil, err
 		}
-		tpl.Metadata.Environment = env
+		tpl.Metadata.Environment = ""
+		if statter, ok := r.fetcher.(Statter); ok {
+			if info, statErr := statter.Stat(fetchCtx, id); statErr == nil && info.Version != "" && tpl.Metadata.Version == "" {
+				tpl.Metadata.Version = info.Version
+			}
+		}
 		return tpl, nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s", prompty.ErrTemplateNotFound, name)
+			return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 		}
 		return nil, err
 	}
@@ -128,19 +130,43 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 	if r.ttl <= 0 {
 		expiresAt = time.Time{}
 	}
-	r.cache[key] = &cacheEntry{tpl: tpl, expiresAt: expiresAt}
+	r.cache[id] = &cacheEntry{tpl: tpl, expiresAt: expiresAt}
 	r.mu.Unlock()
 	return prompty.CloneTemplate(tpl), nil
 }
 
-// Evict removes one template from the cache by name and env. Safe for concurrent use.
-func (r *Registry) Evict(name, env string) {
-	if err := ValidateName(name, env); err != nil {
+// List returns template ids from the Fetcher if it implements Lister; otherwise returns nil, nil.
+func (r *Registry) List(ctx context.Context) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if lister, ok := r.fetcher.(Lister); ok {
+		return lister.ListIDs(ctx)
+	}
+	return nil, nil
+}
+
+// Stat returns template metadata from the Fetcher if it implements Statter; otherwise returns ErrTemplateNotFound.
+func (r *Registry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := ValidateID(id); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
+	if ctx.Err() != nil {
+		return prompty.TemplateInfo{}, ctx.Err()
+	}
+	if statter, ok := r.fetcher.(Statter); ok {
+		return statter.Stat(ctx, id)
+	}
+	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// Evict removes one template from the cache by id. Safe for concurrent use.
+func (r *Registry) Evict(id string) {
+	if err := ValidateID(id); err != nil {
 		return
 	}
-	key := name + ":" + env
 	r.mu.Lock()
-	delete(r.cache, key)
+	delete(r.cache, id)
 	r.mu.Unlock()
 }
 

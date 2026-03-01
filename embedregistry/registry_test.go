@@ -32,27 +32,24 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts")
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent", "")
+	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
-	assert.Empty(t, tpl.Metadata.Environment)
 	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
 }
 
-// TestEmbedRegistry_GetTemplate_BaseFallback ensures env="" returns base file (agent.yaml), not env-specific.
-func TestEmbedRegistry_GetTemplate_BaseFallback(t *testing.T) {
+// TestEmbedRegistry_GetTemplate_BaseId returns base file for id "agent".
+func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts")
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent", "")
+	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	// Base file has "Agent {{ .user_name }}"; agent.prod.yaml has "Agent prod"
 	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
 	assert.NotContains(t, tpl.Messages[0].Content, "Agent prod")
-	assert.Empty(t, tpl.Metadata.Environment)
 }
 
 func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
@@ -60,26 +57,21 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts")
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent", "prod")
+	tpl, err := reg.GetTemplate(ctx, "agent.prod")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Contains(t, tpl.Messages[0].Content, "Agent prod")
-	assert.Equal(t, "prod", tpl.Metadata.Environment)
 }
 
-// TestEmbedRegistry_GetTemplate_EnvFallback ensures that when env-specific file is missing,
-// fallback to base file still sets Metadata.Environment to the requested env.
-func TestEmbedRegistry_GetTemplate_EnvFallback(t *testing.T) {
+// TestEmbedRegistry_GetTemplate_NotFound ensures missing id returns ErrTemplateNotFound.
+func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts")
 	require.NoError(t, err)
 	ctx := context.Background()
-	// No agent.staging.yaml exists; fallback to agent.yaml
-	tpl, err := reg.GetTemplate(ctx, "agent", "staging")
-	require.NoError(t, err)
-	require.NotNil(t, tpl)
-	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}", "content from base file")
-	assert.Equal(t, "staging", tpl.Metadata.Environment, "Environment must be set to requested env on fallback")
+	_, err = reg.GetTemplate(ctx, "agent.staging")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
 func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
@@ -87,9 +79,48 @@ func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts")
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "nonexistent", "")
+	_, err = reg.GetTemplate(ctx, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestEmbedRegistry_List(t *testing.T) {
+	t.Parallel()
+	reg, err := New(promptsFS, "testdata/prompts")
+	require.NoError(t, err)
+	ctx := context.Background()
+	ids, err := reg.List(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, ids, "agent")
+	assert.Contains(t, ids, "agent.prod")
+}
+
+func TestEmbedRegistry_Stat(t *testing.T) {
+	t.Parallel()
+	reg, err := New(promptsFS, "testdata/prompts")
+	require.NoError(t, err)
+	ctx := context.Background()
+	info, err := reg.Stat(ctx, "agent")
+	require.NoError(t, err)
+	assert.Equal(t, "agent", info.ID)
+	_, err = reg.Stat(ctx, "nonexistent")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestEmbedRegistry_WithVersion(t *testing.T) {
+	t.Parallel()
+	mapFS := fstest.MapFS{"v/agent.yaml": &fstest.MapFile{Data: []byte("id: agent\nversion: \"\"\nmessages:\n  - role: system\n    content: Hi\n")}}
+	reg, err := New(mapFS, "v", WithVersion("abc123"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	info, err := reg.Stat(ctx, "agent")
+	require.NoError(t, err)
+	assert.Equal(t, "abc123", info.Version)
+	tpl, err := reg.GetTemplate(ctx, "agent")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, "abc123", tpl.Metadata.Version)
 }
 
 func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
@@ -117,7 +148,7 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "doctor", "")
+	tpl, err := reg.GetTemplate(ctx, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	exec, err := tpl.FormatStruct(ctx, &struct {

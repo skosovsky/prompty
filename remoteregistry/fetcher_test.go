@@ -9,32 +9,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateName(t *testing.T) {
+func TestValidateID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		env   string
+		id    string
 		valid bool
 	}{
-		{"", "", false},
-		{"", "prod", false},
-		{"x", "", true},
-		{"support_agent", "production", true},
-		{"agent", "staging", true},
-		{"name-with-dash", "prod", true},
-		{"x", "path/to/env", false},
-		{"name/with/slash", "", false},
-		{"name\\backslash", "", false},
-		{"..", "", false},
-		{"name:with:colon", "", false},
-		{"ok", "env:with:colon", false},
-		{"ok", "env/with/slash", false},
-		{"ok", "..", false},
+		{"", false},
+		{"x", true},
+		{"support_agent", true},
+		{"agent.prod", true},
+		{"name-with-dash", true},
+		{"name/with/slash", false},
+		{"name\\backslash", false},
+		{"..", false},
+		{"name:with:colon", false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name+":"+tt.env, func(t *testing.T) {
+		t.Run(tt.id, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateName(tt.name, tt.env)
+			err := ValidateID(tt.id)
 			if tt.valid {
 				require.NoError(t, err)
 				return
@@ -48,18 +42,17 @@ func TestValidateName(t *testing.T) {
 func TestCandidatePaths(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		env  string
+		id   string
 		want []string
 	}{
-		{"x", "", []string{"x.yaml", "x.yml"}},
-		{"x", "prod", []string{"x.prod.yaml", "x.prod.yml", "x.yaml", "x.yml"}},
-		{"support_agent", "staging", []string{"support_agent.staging.yaml", "support_agent.staging.yml", "support_agent.yaml", "support_agent.yml"}},
+		{"x", []string{"x.yaml", "x.yml"}},
+		{"support_agent", []string{"support_agent.yaml", "support_agent.yml"}},
+		{"agent.prod", []string{"agent.prod.yaml", "agent.prod.yml"}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name+":"+tt.env, func(t *testing.T) {
+		t.Run(tt.id, func(t *testing.T) {
 			t.Parallel()
-			got := CandidatePaths(tt.name, tt.env)
+			got := CandidatePaths(tt.id)
 			assert.Equal(t, tt.want, got)
 		})
 	}

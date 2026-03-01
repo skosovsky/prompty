@@ -116,6 +116,70 @@ func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrReservedVariable)
 }
 
+// TestFormatStruct_ResponseFormatClone verifies that mutating exec.ResponseFormat does not affect the template.
+// FormatStruct must return an execution that is an independent snapshot (thread-safety, no shared pointers).
+func TestFormatStruct_ResponseFormatClone(t *testing.T) {
+	t.Parallel()
+	schema := map[string]any{"type": "object", "remove_me": true}
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: "Hi"}},
+		WithResponseFormat(&SchemaDefinition{Name: "original", Description: "desc", Schema: schema}),
+	)
+	require.NoError(t, err)
+	ctx := context.Background()
+	type emptyPayload struct {
+		X string `prompt:"x"` // unused by template; needed for getPayloadFields
+	}
+	exec, err := tpl.FormatStruct(ctx, &emptyPayload{})
+	require.NoError(t, err)
+	require.NotNil(t, exec.ResponseFormat)
+	require.NotNil(t, tpl.ResponseFormat)
+
+	origName := tpl.ResponseFormat.Name
+	_, origHasKey := tpl.ResponseFormat.Schema["remove_me"]
+
+	// Mutate execution's ResponseFormat (e.g. middleware normalizing schema).
+	exec.ResponseFormat.Name = "other"
+	delete(exec.ResponseFormat.Schema, "remove_me")
+
+	// Template must be unchanged.
+	assert.Equal(t, origName, tpl.ResponseFormat.Name, "template ResponseFormat.Name must not be mutated")
+	assert.True(t, origHasKey, "template ResponseFormat.Schema must not be mutated")
+	_, stillHasKey := tpl.ResponseFormat.Schema["remove_me"]
+	assert.True(t, stillHasKey, "template ResponseFormat.Schema must not share map with execution")
+}
+
+// TestCloneTemplate_ResponseFormatDoesNotMutateOriginal verifies that mutating the clone's ResponseFormat
+// does not affect the original template. Registries rely on this so callers cannot mutate the cached template.
+func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
+	t.Parallel()
+	schema := map[string]any{"type": "object", "key": "v"}
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: "Hi"}},
+		WithResponseFormat(&SchemaDefinition{Name: "orig", Description: "d", Schema: schema}),
+	)
+	require.NoError(t, err)
+	clone := CloneTemplate(tpl)
+	require.NotNil(t, clone)
+	require.NotNil(t, clone.ResponseFormat)
+
+	origName := tpl.ResponseFormat.Name
+	_, origHasKey := tpl.ResponseFormat.Schema["key"]
+
+	// Mutate clone's ResponseFormat (and its Schema).
+	clone.ResponseFormat.Name = "mutated"
+	delete(clone.ResponseFormat.Schema, "key")
+	clone.ResponseFormat.Schema["new"] = "x"
+
+	// Original template must be unchanged.
+	assert.Equal(t, origName, tpl.ResponseFormat.Name, "original ResponseFormat.Name must not be mutated")
+	assert.True(t, origHasKey, "original ResponseFormat.Schema must not be mutated")
+	_, stillHasKey := tpl.ResponseFormat.Schema["key"]
+	assert.True(t, stillHasKey)
+	_, hasNew := tpl.ResponseFormat.Schema["new"]
+	assert.False(t, hasNew, "original Schema must not share map with clone")
+}
+
 func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -198,6 +262,27 @@ func TestFormatStruct_NonStructPayload(t *testing.T) {
 	_, err = tpl.FormatStruct(ctx, "string")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
+}
+
+func TestValidateVariables_Ok(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+	})
+	require.NoError(t, err)
+	err = tpl.ValidateVariables(map[string]any{"user_name": "Alice"})
+	require.NoError(t, err)
+}
+
+func TestValidateVariables_MissingVar(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+	})
+	require.NoError(t, err)
+	err = tpl.ValidateVariables(map[string]any{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTemplateRender)
 }
 
 func TestFormatStruct_CancelledContext(t *testing.T) {

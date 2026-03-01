@@ -67,14 +67,13 @@ func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 	return h, nil
 }
 
-// Fetch tries URLs in order: {base}/{name}.{env}.yaml, .yml, then {base}/{name}.yaml, .yml.
+// Fetch tries URLs in order: {base}/{id}.yaml, {base}/{id}.yml.
 // On 404 proceeds to next; on other non-2xx returns ErrHTTPStatus.
-func (h *HTTPFetcher) Fetch(ctx context.Context, name, env string) ([]byte, error) {
-	if err := ValidateName(name, env); err != nil {
+func (h *HTTPFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
+	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
-	candidates := CandidatePaths(name, env)
-	for _, path := range candidates {
+	for _, path := range CandidatePaths(id) {
 		data, err := h.fetchOne(ctx, path)
 		if err != nil {
 			if errors.Is(err, errNotFound) {
@@ -84,7 +83,7 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, name, env string) ([]byte, erro
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("%w: %q", ErrNotFound, name)
+	return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
 var errNotFound = errors.New("not found")

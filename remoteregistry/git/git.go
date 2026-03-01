@@ -53,9 +53,9 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 	return g, nil
 }
 
-// Fetch reads the manifest from the repo: {dir}/{name}.{env}.yaml (or .yml), fallback {dir}/{name}.yaml (or .yml).
-func (g *Fetcher) Fetch(ctx context.Context, name, env string) ([]byte, error) {
-	if err := remoteregistry.ValidateName(name, env); err != nil {
+// Fetch reads the manifest from the repo: {dir}/{id}.yaml or {dir}/{id}.yml.
+func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
+	if err := remoteregistry.ValidateID(id); err != nil {
 		return nil, err
 	}
 	g.mu.Lock()
@@ -64,13 +64,12 @@ func (g *Fetcher) Fetch(ctx context.Context, name, env string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", remoteregistry.ErrFetchFailed, err)
 	}
 	baseDir := filepath.Clean(filepath.Join(g.localDir, g.dir))
-	candidates := remoteregistry.CandidatePaths(name, env)
-	for _, rel := range candidates {
+	for _, rel := range remoteregistry.CandidatePaths(id) {
 		path := filepath.Join(g.localDir, g.dir, rel)
 		cleanPath := filepath.Clean(path)
 		relPath, relErr := filepath.Rel(baseDir, cleanPath)
 		if relErr != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
-			continue // path escaped base dir, skip this candidate
+			continue
 		}
 		data, err := os.ReadFile(cleanPath) // #nosec G304 -- cleanPath is validated via filepath.Rel to prevent path traversal
 		if err != nil {
@@ -81,7 +80,7 @@ func (g *Fetcher) Fetch(ctx context.Context, name, env string) ([]byte, error) {
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("%w: %q", remoteregistry.ErrNotFound, name)
+	return nil, fmt.Errorf("%w: %q", remoteregistry.ErrNotFound, id)
 }
 
 func (g *Fetcher) ensureClone(ctx context.Context) error {

@@ -73,7 +73,7 @@ messages:
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
 	ctx := context.Background()
-	data, err := g.Fetch(ctx, "support_agent", "")
+	data, err := g.Fetch(ctx, "support_agent")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "support_agent")
 	require.Contains(t, string(data), "Hello")
@@ -102,7 +102,7 @@ messages:
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
 	ctx := context.Background()
-	data, err := g.Fetch(ctx, "p", "production")
+	data, err := g.Fetch(ctx, "p.production")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "Production")
 }
@@ -123,7 +123,7 @@ messages:
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
 	ctx := context.Background()
-	data, err := g.Fetch(ctx, "agent", "")
+	data, err := g.Fetch(ctx, "agent")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "From subdir")
 }
@@ -145,7 +145,7 @@ messages:
 	defer func() { _ = g.Close() }()
 	reg := remoteregistry.New(g)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "integ", "")
+	tpl, err := reg.GetTemplate(ctx, "integ")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Equal(t, "integ", tpl.Metadata.ID)
@@ -163,7 +163,7 @@ func TestFetcher_Fetch_WithBranch(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
 	ctx := context.Background()
-	data, err := g.Fetch(ctx, "dev_only", "")
+	data, err := g.Fetch(ctx, "dev_only")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "FromDev")
 }
@@ -174,12 +174,12 @@ func TestFetcher_FetchAfterClose(t *testing.T) {
 	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
-	data, err := g.Fetch(context.Background(), "a", "")
+	data, err := g.Fetch(context.Background(), "a")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "id: a")
 	require.NoError(t, g.Close())
 	// After Close, Fetch re-clones and should still succeed.
-	data2, err := g.Fetch(context.Background(), "a", "")
+	data2, err := g.Fetch(context.Background(), "a")
 	require.NoError(t, err)
 	require.Contains(t, string(data2), "id: a")
 }
@@ -199,7 +199,7 @@ func TestFetcher_Concurrent(t *testing.T) {
 	results := make(chan result, 20)
 	for range 20 {
 		go func() {
-			data, err := g.Fetch(ctx, "c", "")
+			data, err := g.Fetch(ctx, "c")
 			results <- result{data: data, err: err}
 		}()
 	}
@@ -216,7 +216,7 @@ func TestFetcher_Close_Idempotent(t *testing.T) {
 	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
-	_, _ = g.Fetch(context.Background(), "a", "")
+	_, _ = g.Fetch(context.Background(), "a")
 	require.NoError(t, g.Close())
 	require.NoError(t, g.Close())
 }
@@ -236,7 +236,7 @@ func TestFetcher_WithDepth(t *testing.T) {
 	g, err := NewFetcher("file://"+dir, WithDepth(1))
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
-	data, err := g.Fetch(context.Background(), "d", "")
+	data, err := g.Fetch(context.Background(), "d")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "depth")
 }
@@ -249,7 +249,7 @@ func TestFetcher_WithAuth_OptionApplied(t *testing.T) {
 	g, err := NewFetcher("file://"+dir, WithAuth("token"))
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
-	data, err := g.Fetch(context.Background(), "auth_opt", "")
+	data, err := g.Fetch(context.Background(), "auth_opt")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "auth_opt")
 }
@@ -262,7 +262,7 @@ func TestFetcher_Fetch_InvalidNameRejected(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
 	ctx := context.Background()
-	_, err = g.Fetch(ctx, "../../etc/passwd", "")
+	_, err = g.Fetch(ctx, "../../etc/passwd")
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidName)
 }

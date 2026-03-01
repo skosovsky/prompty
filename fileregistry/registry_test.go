@@ -31,14 +31,13 @@ messages:
 	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent", "")
+	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
-	assert.Empty(t, tpl.Metadata.Environment)
 }
 
-func TestFileRegistry_GetTemplate_EnvFallback(t *testing.T) {
+func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "support_agent.yaml")
@@ -51,15 +50,13 @@ messages:
 `), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	// env "staging" -> try support_agent.staging.yaml (missing), then support_agent.yaml
-	tpl, err := reg.GetTemplate(ctx, "support_agent", "staging")
+	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Contains(t, tpl.Messages[0].Content, "Base")
-	assert.Equal(t, "staging", tpl.Metadata.Environment)
 }
 
-func TestFileRegistry_GetTemplate_EnvSpecific(t *testing.T) {
+func TestFileRegistry_GetTemplate_IdWithDot(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.yaml"), []byte(`
@@ -78,11 +75,10 @@ messages:
 `), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent", "production")
+	tpl, err := reg.GetTemplate(ctx, "support_agent.production")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "Production", tpl.Messages[0].Content)
-	assert.Equal(t, "production", tpl.Metadata.Environment)
 }
 
 func TestFileRegistry_GetTemplate_EnvSpecificInvalidYAML(t *testing.T) {
@@ -98,7 +94,7 @@ messages:
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.yaml"), []byte("id: p\nmessages: [unclosed"), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "p", "prod")
+	_, err := reg.GetTemplate(ctx, "p.prod")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -117,7 +113,7 @@ messages:
 	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent", "")
+	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
@@ -139,13 +135,12 @@ tools:
 `), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	tpl1, err := reg.GetTemplate(ctx, "safe", "")
+	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
-	// Mutate the returned copy: cache must not be affected.
 	tpl1.Messages[0].Content = "Mutated"
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
-	tpl2, err := reg.GetTemplate(ctx, "safe", "")
+	tpl2, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
 	assert.Equal(t, "Original", tpl2.Messages[0].Content, "cache must return unchanged template after caller mutated previous copy")
@@ -158,9 +153,36 @@ func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	reg := New(dir)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "nonexistent", "")
+	_, err := reg.GetTemplate(ctx, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestFileRegistry_List(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.yml"), []byte("id: b\nversion: \"1\"\nmessages:\n  - role: system\n    content: y\n"), 0600))
+	reg := New(dir)
+	ctx := context.Background()
+	ids, err := reg.List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, ids, 2)
+	assert.Contains(t, ids, "a")
+	assert.Contains(t, ids, "b")
+}
+
+func TestFileRegistry_Stat(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stat_test.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("id: stat_test\nversion: \"1\"\nmessages:\n  - role: system\n    content: z\n"), 0600))
+	reg := New(dir)
+	ctx := context.Background()
+	info, err := reg.Stat(ctx, "stat_test")
+	require.NoError(t, err)
+	assert.Equal(t, "stat_test", info.ID)
+	assert.False(t, info.UpdatedAt.IsZero())
 }
 
 func TestFileRegistry_Reload(t *testing.T) {
@@ -175,7 +197,7 @@ messages:
 `), 0600))
 	reg := New(dir)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p", "")
+	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", tpl.Messages[0].Content)
 	reg.Reload()
@@ -186,7 +208,7 @@ messages:
   - role: system
     content: "v2"
 `), 0600))
-	tpl2, err := reg.GetTemplate(ctx, "p", "")
+	tpl2, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", tpl2.Messages[0].Content)
 }
@@ -210,7 +232,7 @@ messages:
 	done := make(chan result, 50)
 	for range 50 {
 		go func() {
-			tpl, err := reg.GetTemplate(ctx, "p", "")
+			tpl, err := reg.GetTemplate(ctx, "p")
 			done <- result{tpl: tpl, err: err}
 		}()
 	}
@@ -241,7 +263,7 @@ messages:
 `), 0600))
 	reg := New(dir, WithPartials("partials/*.tmpl"))
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "doctor", "")
+	tpl, err := reg.GetTemplate(ctx, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	exec, err := tpl.FormatStruct(ctx, &struct {
@@ -272,7 +294,7 @@ messages:
 	done := make(chan struct{})
 	for range 30 {
 		go func() {
-			_, _ = reg.GetTemplate(ctx, "q", "")
+			_, _ = reg.GetTemplate(ctx, "q")
 			done <- struct{}{}
 		}()
 	}

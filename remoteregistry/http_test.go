@@ -34,7 +34,7 @@ messages:
 	require.NoError(t, err)
 	reg := New(h)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent", "")
+	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
@@ -57,12 +57,12 @@ messages:
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "p", "production")
+	data, err := h.Fetch(context.Background(), "p.production")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "Production")
 }
 
-func TestHTTPFetcher_Fetch_FallbackToBase(t *testing.T) {
+func TestHTTPFetcher_Fetch_IdResolution(t *testing.T) {
 	t.Parallel()
 	baseYAML := `
 id: fallback
@@ -77,23 +77,19 @@ messages:
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
-		if r.URL.Path == "/fallback.staging.yaml" || r.URL.Path == "/fallback.staging.yml" {
-			http.NotFound(w, r)
-			return
-		}
 		_, _ = w.Write([]byte(baseYAML))
 	}))
 	defer srv.Close()
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "fallback", "staging")
+	data, err := h.Fetch(context.Background(), "fallback")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "Base")
 	mu.Lock()
 	pathsCopy := append([]string(nil), paths...)
 	mu.Unlock()
-	assert.Equal(t, []string{"/fallback.staging.yaml", "/fallback.staging.yml", "/fallback.yaml"}, pathsCopy)
+	assert.Equal(t, []string{"/fallback.yaml"}, pathsCopy)
 }
 
 func TestHTTPFetcher_Fetch_BearerAuth(t *testing.T) {
@@ -116,7 +112,7 @@ messages:
 
 	h, err := NewHTTPFetcher(srv.URL, WithAuthToken("secret-token"))
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "auth", "")
+	data, err := h.Fetch(context.Background(), "auth")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "OK")
 }
@@ -130,7 +126,7 @@ func TestHTTPFetcher_Fetch_NotFound(t *testing.T) {
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	_, err = h.Fetch(context.Background(), "nonexistent", "")
+	_, err = h.Fetch(context.Background(), "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotFound)
 }
@@ -144,7 +140,7 @@ func TestHTTPFetcher_Fetch_HTTPError(t *testing.T) {
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	_, err = h.Fetch(context.Background(), "x", "")
+	_, err = h.Fetch(context.Background(), "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrHTTPStatus)
 }
@@ -173,13 +169,13 @@ func TestHTTPFetcher_Fetch_BodyTooLarge(t *testing.T) {
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	_, err = h.Fetch(context.Background(), "large", "")
+	_, err = h.Fetch(context.Background(), "large")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrFetchFailed)
 	assert.Contains(t, err.Error(), "exceeds")
 
 	reg := New(h)
-	_, err = reg.GetTemplate(context.Background(), "large", "")
+	_, err = reg.GetTemplate(context.Background(), "large")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
 }
@@ -202,7 +198,7 @@ messages:
 	require.NoError(t, err)
 	reg := New(h)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "integ", "")
+	tpl, err := reg.GetTemplate(ctx, "integ")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "integ", tpl.Metadata.ID)
@@ -226,14 +222,14 @@ messages:
 	customClient := &http.Client{Timeout: 5 * time.Second}
 	h, err := NewHTTPFetcher(srv.URL, WithHTTPClient(customClient))
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "client_test", "")
+	data, err := h.Fetch(context.Background(), "client_test")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "client_test")
 
 	// WithHTTPClient(nil) must not overwrite default client; Fetch must not panic.
 	h2, err := NewHTTPFetcher(srv.URL, WithHTTPClient(nil))
 	require.NoError(t, err)
-	data2, err := h2.Fetch(context.Background(), "client_test", "")
+	data2, err := h2.Fetch(context.Background(), "client_test")
 	require.NoError(t, err)
 	assert.Contains(t, string(data2), "client_test")
 }
@@ -254,7 +250,7 @@ messages:
 	defer srv.Close()
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	_, err = h.Fetch(context.Background(), "ua", "")
+	_, err = h.Fetch(context.Background(), "ua")
 	require.NoError(t, err)
 }
 
@@ -270,7 +266,7 @@ func TestHTTPFetcher_Fetch_ContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = h.Fetch(ctx, "x", "")
+	_, err = h.Fetch(ctx, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -291,7 +287,7 @@ messages:
 	defer srv.Close()
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "support.agent", "")
+	data, err := h.Fetch(context.Background(), "support.agent")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "support.agent")
 }

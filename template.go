@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"reflect"
@@ -85,7 +86,7 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
 	for i, m := range tpl.Messages {
 		name := fmt.Sprintf("msg_%d", i)
-		msgTmpl, err := root.New(name).Parse(m.Content)
+		msgTmpl, err := root.New(name).Option("missingkey=error").Parse(m.Content)
 		if err != nil {
 			return nil, fmt.Errorf("%w: message %d: %w", ErrTemplateParse, i, err)
 		}
@@ -112,7 +113,6 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	out := &ChatPromptTemplate{
 		Messages:        slices.Clone(c.Messages),
 		Tools:           slices.Clone(c.Tools),
-		ResponseFormat:  c.ResponseFormat,
 		RequiredVars:    slices.Clone(c.RequiredVars),
 		requiredFromAST: c.requiredFromAST,
 		Metadata:        c.Metadata,
@@ -120,6 +120,16 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		parsedTemplates: c.parsedTemplates,
 		partialsGlob:    c.partialsGlob,
 		partialsFS:      c.partialsFS,
+	}
+	if c.ResponseFormat != nil {
+		clonedFormat := &SchemaDefinition{
+			Name:        c.ResponseFormat.Name,
+			Description: c.ResponseFormat.Description,
+		}
+		if c.ResponseFormat.Schema != nil {
+			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
+		}
+		out.ResponseFormat = clonedFormat
 	}
 	if c.PartialVariables != nil {
 		out.PartialVariables = maps.Clone(c.PartialVariables)
@@ -178,13 +188,45 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 	out = spliceHistory(out, history)
 	meta := c.Metadata
 	meta.Tags = slices.Clone(meta.Tags)
+	var clonedFormat *SchemaDefinition
+	if c.ResponseFormat != nil {
+		clonedFormat = &SchemaDefinition{
+			Name:        c.ResponseFormat.Name,
+			Description: c.ResponseFormat.Description,
+		}
+		if c.ResponseFormat.Schema != nil {
+			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
+		}
+	}
 	return &PromptExecution{
 		Messages:       out,
 		Tools:          slices.Clone(c.Tools),
 		ModelConfig:    maps.Clone(c.ModelConfig),
 		Metadata:       meta,
-		ResponseFormat: c.ResponseFormat,
+		ResponseFormat: clonedFormat,
 	}, nil
+}
+
+// ValidateVariables runs a dry-run execute with the given data (same merge as FormatStruct: PartialVariables + data + Tools).
+// Returns an error with role/message index context if any template references a missing or invalid variable.
+func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
+	merged := maps.Clone(c.PartialVariables)
+	if merged == nil {
+		merged = make(map[string]any)
+	}
+	if data != nil {
+		maps.Copy(merged, data)
+	}
+	merged["Tools"] = c.Tools
+	for i, pm := range c.parsedTemplates {
+		if pm.tpl == nil {
+			return fmt.Errorf("%w: message %d", ErrTemplateParse, i)
+		}
+		if err := pm.tpl.Execute(io.Discard, merged); err != nil {
+			return fmt.Errorf("%w: message %d (role %s): %w", ErrTemplateRender, i, pm.role, err)
+		}
+	}
+	return nil
 }
 
 // mergeRequiredVars returns unique names from explicit and template-derived, preserving order (explicit first).

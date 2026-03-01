@@ -3,6 +3,8 @@ package prompty
 import (
 	"context"
 	"fmt"
+	"slices"
+	"time"
 )
 
 // Role is the message role in a chat (system, developer, user, assistant, tool).
@@ -110,6 +112,18 @@ type PromptExecution struct {
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
 }
 
+// WithHistory appends history messages after system/developer block. Clones Messages before append; returns e for chaining.
+func (e *PromptExecution) WithHistory(history []ChatMessage) *PromptExecution {
+	e.Messages = append(slices.Clone(e.Messages), history...)
+	return e
+}
+
+// AddMessage appends one message. Clones Messages before append; returns e for chaining.
+func (e *PromptExecution) AddMessage(msg ChatMessage) *PromptExecution {
+	e.Messages = append(slices.Clone(e.Messages), msg)
+	return e
+}
+
 // Fetcher defines how media URLs are resolved into raw bytes. Callers can use mediafetch.DefaultFetcher or provide a custom implementation (e.g. S3, local files).
 type Fetcher interface {
 	Fetch(ctx context.Context, url string) (data []byte, mimeType string, err error)
@@ -153,7 +167,20 @@ type MessageTemplate struct {
 	Metadata map[string]any `yaml:"metadata,omitempty"`
 }
 
-// PromptRegistry returns a chat prompt template by name and environment.
-type PromptRegistry interface {
-	GetTemplate(ctx context.Context, name, env string) (*ChatPromptTemplate, error)
+// TemplateInfo holds metadata about a template without parsing its body.
+type TemplateInfo struct {
+	ID        string
+	Version   string
+	UpdatedAt time.Time
 }
+
+// Registry returns a chat prompt template by id, lists ids, and returns template metadata.
+// id is a single identifier (e.g. "doctor", "doctor.prod"); environments are expressed via file layout.
+type Registry interface {
+	GetTemplate(ctx context.Context, id string) (*ChatPromptTemplate, error)
+	List(ctx context.Context) ([]string, error)
+	Stat(ctx context.Context, id string) (TemplateInfo, error)
+}
+
+// PromptRegistry is an alias for Registry for backward compatibility; prefer Registry.
+type PromptRegistry = Registry

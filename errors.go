@@ -53,3 +53,18 @@ func ValidateName(name, env string) error {
 	}
 	return nil
 }
+
+// ValidateID checks that id is safe for use in paths and cache keys.
+// Rejects empty id and ids containing '/', '\\', "..", or ':'. Call before registry GetTemplate/Stat or path resolution.
+func ValidateID(id string) error {
+	if id == "" {
+		return fmt.Errorf("%w: id must not be empty", ErrInvalidName)
+	}
+	invalid := []string{"/", "\\", "..", ":"}
+	for _, s := range invalid {
+		if strings.Contains(id, s) {
+			return fmt.Errorf("%w: id must not contain %q", ErrInvalidName, s)
+		}
+	}
+	return nil
+}

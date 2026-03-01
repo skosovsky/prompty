@@ -5,18 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Ensures Registry implements prompty.PromptRegistry.
-var _ prompty.PromptRegistry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry.
+var _ prompty.Registry = (*Registry)(nil)
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
-// Resolves name+env to {dir}/{name}.{env}.yaml with fallback to {dir}/{name}.yaml.
+// Resolves id to {dir}/{id}.yaml or {dir}/{id}.yml (id = basename without extension).
 type Registry struct {
 	dir             string
 	partialsPattern string // e.g. "_partials/*.tmpl"; resolved relative to manifest dir when loading
@@ -44,22 +48,28 @@ func WithPartials(relativePattern string) Option {
 	return func(r *Registry) { r.partialsPattern = relativePattern }
 }
 
-// GetTemplate returns a template by name and env. Lazy-loads and caches.
-// File resolution: {dir}/{name}.{env}.yaml or .yml, fallback {dir}/{name}.yaml or .yml.
-func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.ChatPromptTemplate, error) {
-	if err := prompty.ValidateName(name, env); err != nil {
+// idToPaths returns candidate paths for id in resolution order: id.yaml, id.yml.
+func idToPaths(dir, id string) []string {
+	return []string{
+		filepath.Join(dir, id+".yaml"),
+		filepath.Join(dir, id+".yml"),
+	}
+}
+
+// GetTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
+func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
 	}
-	key := name + ":" + env
 	r.mu.RLock()
-	tpl, ok := r.cache[key]
+	tpl, ok := r.cache[id]
 	r.mu.RUnlock()
 	if ok {
 		return prompty.CloneTemplate(tpl), nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tpl, ok = r.cache[key]
+	tpl, ok = r.cache[id]
 	if ok {
 		return prompty.CloneTemplate(tpl), nil
 	}
@@ -73,34 +83,76 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 		}
 		return manifest.ParseFile(path)
 	}
-	extensions := []string{".yaml", ".yml"}
-	if env != "" {
-		for _, ext := range extensions {
-			path := filepath.Join(r.dir, name+"."+env+ext)
-			tpl, err := parseFile(path)
-			if err == nil {
-				tpl.Metadata.Environment = env
-				r.cache[key] = tpl
-				return prompty.CloneTemplate(tpl), nil
-			}
-			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
-			}
-		}
-	}
-	for _, ext := range extensions {
-		path := filepath.Join(r.dir, name+ext)
+	for _, path := range idToPaths(r.dir, id) {
 		tpl, err := parseFile(path)
 		if err == nil {
-			tpl.Metadata.Environment = env
-			r.cache[key] = tpl
+			info, _ := r.Stat(ctx, id)
+			if info.Version != "" && tpl.Metadata.Version == "" {
+				tpl.Metadata.Version = info.Version
+			}
+			tpl.Metadata.Environment = "" // id-based; env expressed via id (e.g. doctor.prod)
+			r.cache[id] = tpl
 			return prompty.CloneTemplate(tpl), nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, name)
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// List returns all template ids (basename without .yaml/.yml) under r.dir, unique and sorted.
+func (r *Registry) List(ctx context.Context) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	seen := make(map[string]bool)
+	var ids []string
+	err := fs.WalkDir(os.DirFS(r.dir), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		id := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		if id == base {
+			return nil
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fileregistry list: %w", err)
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// Stat returns metadata for id without parsing the manifest body. Version is file ModTime in RFC3339; UpdatedAt is file ModTime.
+func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := prompty.ValidateID(id); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
+	for _, path := range idToPaths(r.dir, id) {
+		fi, err := os.Stat(path)
+		if err == nil {
+			mod := fi.ModTime()
+			return prompty.TemplateInfo{
+				ID:        id,
+				Version:   mod.Format(time.RFC3339),
+				UpdatedAt: mod,
+			}, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return prompty.TemplateInfo{}, err
+		}
+	}
+	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
 // Reload clears the cache (for hot-reload in development).
