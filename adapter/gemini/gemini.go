@@ -96,6 +96,16 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
+	// Metadata "safety hatch": only gemini_search_grounding (bool) is handled in Task 5; other keys ignored.
+	var wantGoogleSearch bool
+	for _, msg := range exec.Messages {
+		if msg.Metadata != nil {
+			if v, ok := msg.Metadata["gemini_search_grounding"].(bool); ok && v {
+				wantGoogleSearch = true
+				break
+			}
+		}
+	}
 	if len(exec.Tools) > 0 {
 		config.Tools = []*genai.Tool{{
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),
@@ -107,6 +117,14 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 				Parameters:           nil,
 				ParametersJsonSchema: t.Parameters,
 			})
+		}
+	}
+	if wantGoogleSearch {
+		searchTool := &genai.Tool{GoogleSearch: &genai.GoogleSearch{}}
+		if config.Tools == nil {
+			config.Tools = []*genai.Tool{searchTool}
+		} else {
+			config.Tools = append(config.Tools, searchTool)
 		}
 	}
 	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
@@ -188,7 +206,14 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content, error) {
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
-			part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": tr.Content})
+			// Fail-fast on MediaPart: FunctionResponse expects map[string]any (JSON), no native image support
+			for _, cp := range tr.Content {
+				if _, ok := cp.(prompty.MediaPart); ok {
+					return nil, adapter.ErrUnsupportedContentType
+				}
+			}
+			text := adapter.TextFromParts(tr.Content)
+			part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text})
 			return genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser), nil
 		}
 	}

@@ -22,7 +22,7 @@ func TestContentPart_RuntimeAssertions(t *testing.T) {
 		TextPart{Text: "hi"},
 		MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
 		ToolCallPart{ID: "1", Name: "foo", Args: "{}"},
-		ToolResultPart{ToolCallID: "1", Name: "foo", Content: "ok", IsError: false},
+		ToolResultPart{ToolCallID: "1", Name: "foo", Content: []ContentPart{TextPart{Text: "ok"}}, IsError: false},
 	}
 	for i, p := range parts {
 		require.NotNil(t, p, "part %d", i)

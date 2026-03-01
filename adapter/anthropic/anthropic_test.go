@@ -72,7 +72,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: "Sunny", IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
 			}},
 		},
 	}
@@ -83,6 +83,47 @@ func TestTranslate_ToolResult(t *testing.T) {
 	require.Len(t, params.Messages[0].Content, 1)
 	assert.NotNil(t, params.Messages[0].Content[0].OfToolResult)
 	assert.Equal(t, "call_1", params.Messages[0].Content[0].OfToolResult.ToolUseID)
+}
+
+func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "screenshot",
+					Content: []prompty.ContentPart{
+						prompty.TextPart{Text: "Chart"},
+						prompty.MediaPart{MediaType: "image", MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+					},
+					IsError: false,
+				},
+			}},
+		},
+	}
+	_, err := a.TranslateTyped(context.Background(), exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
+func TestTranslate_CacheControlOnMessage(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}, Metadata: map[string]any{"anthropic_cache": true}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+	}
+	params, err := a.TranslateTyped(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, params.System, 1)
+	assert.Equal(t, "You are a helper.", params.System[0].Text)
+	// metadata.anthropic_cache: true must set CacheControl on the system block in DTO.
+	assert.Equal(t, "ephemeral", string(params.System[0].CacheControl.Type))
+	require.Len(t, params.Messages, 1)
 }
 
 func TestTranslate_ModelConfig(t *testing.T) {

@@ -223,6 +223,40 @@ messages:
 	}
 }
 
+func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "doctor.yaml"), []byte(`
+id: doctor
+version: "1"
+messages:
+  - role: system
+    content: |
+      You are a doctor assistant.
+      {{ template "safety" }}
+  - role: user
+    content: "Hi"
+`), 0600))
+	reg := New(dir, WithPartials("partials/*.tmpl"))
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "doctor", "")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	exec, err := tpl.FormatStruct(ctx, &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+	require.Len(t, exec.Messages, 2)
+	require.Len(t, exec.Messages[0].Content, 1)
+	textPart, ok := exec.Messages[0].Content[0].(prompty.TextPart)
+	require.True(t, ok)
+	assert.Contains(t, textPart.Text, "Never give medical diagnoses.", "partial 'safety' must be rendered into message")
+	assert.Contains(t, textPart.Text, "You are a doctor assistant.")
+}
+
 func TestFileRegistry_ConcurrentReloadAndGet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

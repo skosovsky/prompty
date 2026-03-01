@@ -3,8 +3,6 @@ package prompty
 import (
 	"context"
 	"fmt"
-
-	"github.com/skosovsky/prompty/mediafetch"
 )
 
 // Role is the message role in a chat (system, developer, user, assistant, tool).
@@ -26,8 +24,7 @@ type ContentPart interface {
 
 // TextPart holds plain text content.
 type TextPart struct {
-	Text         string
-	CacheControl string // e.g. "ephemeral" for prompt caching (Anthropic)
+	Text string
 }
 
 func (TextPart) isContentPart() {}
@@ -35,11 +32,10 @@ func (TextPart) isContentPart() {}
 // MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
 // Adapters that do not accept URL natively may download the URL in Translate(ctx) and send inline data.
 type MediaPart struct {
-	MediaType    string // "image", "audio", "video", "document"
-	MIMEType     string // e.g. "application/pdf", "image/jpeg"
-	URL          string // Optional: link (adapters may fetch and convert to inline)
-	Data         []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
-	CacheControl string // e.g. "ephemeral" for prompt caching (Anthropic)
+	MediaType string // "image", "audio", "video", "document"
+	MIMEType  string // e.g. "application/pdf", "image/jpeg"
+	URL       string // Optional: link (adapters may fetch and convert to inline)
+	Data      []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
 }
 
 func (MediaPart) isContentPart() {}
@@ -63,19 +59,22 @@ type ToolCallPart struct {
 func (ToolCallPart) isContentPart() {}
 
 // ToolResultPart is the result of a tool call (in message with Role "tool").
+// Content is a slice of multimodal parts (text, images, etc.).
 type ToolResultPart struct {
 	ToolCallID string
 	Name       string
-	Content    string
+	Content    []ContentPart
 	IsError    bool
 }
 
 func (ToolResultPart) isContentPart() {}
 
 // ChatMessage is a single message with role and content parts (supports multimodal).
+// Provider-specific options (e.g. anthropic_cache, gemini_search_grounding) are passed only via Metadata; adapters may ignore unknown keys.
 type ChatMessage struct {
-	Role    Role
-	Content []ContentPart
+	Role     Role
+	Content  []ContentPart
+	Metadata map[string]any // Provider-specific flags; adapters read known keys (e.g. anthropic_cache, gemini_search_grounding)
 }
 
 // ToolDefinition is the universal tool schema.
@@ -111,9 +110,14 @@ type PromptExecution struct {
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
 }
 
-// ResolveMedia downloads content for all MediaParts that have a URL but no Data.
+// Fetcher defines how media URLs are resolved into raw bytes. Callers can use mediafetch.DefaultFetcher or provide a custom implementation (e.g. S3, local files).
+type Fetcher interface {
+	Fetch(ctx context.Context, url string) (data []byte, mimeType string, err error)
+}
+
+// ResolveMedia fills Data and MIMEType for all MediaParts that have a URL but no Data, using the provided Fetcher.
 // Only "image" media type is supported; other types with URL and empty Data return an error (fail-fast).
-func (e *PromptExecution) ResolveMedia(ctx context.Context) error {
+func (e *PromptExecution) ResolveMedia(ctx context.Context, fetcher Fetcher) error {
 	for i, msg := range e.Messages {
 		for j, part := range msg.Content {
 			mp, ok := part.(MediaPart)
@@ -126,7 +130,7 @@ func (e *PromptExecution) ResolveMedia(ctx context.Context) error {
 			if mp.MediaType != "image" {
 				return fmt.Errorf("resolve media %s: currently only 'image' media type is supported for downloading, got %q", mp.URL, mp.MediaType)
 			}
-			data, contentType, err := mediafetch.FetchImage(ctx, mp.URL, mediafetch.DefaultMaxBodySize)
+			data, contentType, err := fetcher.Fetch(ctx, mp.URL)
 			if err != nil {
 				return fmt.Errorf("resolve media %s: %w", mp.URL, err)
 			}
@@ -141,11 +145,12 @@ func (e *PromptExecution) ResolveMedia(ctx context.Context) error {
 // MessageTemplate is the raw template for one message before rendering.
 // After FormatStruct it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
+// Provider-specific options go in Metadata (e.g. anthropic_cache: true, gemini_search_grounding: true).
 type MessageTemplate struct {
-	Role         Role   // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
-	Content      string // Go text/template: e.g. "Hello, {{ .user_name }}"
-	Optional     bool   // true → skip if all referenced variables are zero-value
-	CacheControl string `yaml:"cache_control"` // e.g. "ephemeral" for prompt caching (Anthropic)
+	Role     Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
+	Content  string         // Go text/template: e.g. "Hello, {{ .user_name }}"
+	Optional bool           // true → skip if all referenced variables are zero-value
+	Metadata map[string]any `yaml:"metadata,omitempty"`
 }
 
 // PromptRegistry returns a chat prompt template by name and environment.

@@ -16,13 +16,18 @@ var _ prompty.PromptRegistry = (*Registry)(nil)
 
 // Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates.
 type Registry struct {
-	cache map[string]*prompty.ChatPromptTemplate
+	cache           map[string]*prompty.ChatPromptTemplate
+	root            string
+	partialsPattern string // e.g. "partials/*.tmpl"; relative to root, one shared partials dir for all manifests
 }
 
 // New walks fsys, parses every .yaml file under the given root, and returns a Registry.
 // Key format: "name" for "name.yaml", "name:env" for "name.env.yaml". Same name with different envs overwrite by last.
-func New(fsys fs.FS, root string, _ ...Option) (*Registry, error) {
-	r := &Registry{cache: make(map[string]*prompty.ChatPromptTemplate)}
+func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
+	r := &Registry{cache: make(map[string]*prompty.ChatPromptTemplate), root: root}
+	for _, opt := range opts {
+		opt(r)
+	}
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -30,7 +35,13 @@ func New(fsys fs.FS, root string, _ ...Option) (*Registry, error) {
 		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
 			return nil
 		}
-		tpl, err := manifest.ParseFS(fsys, path)
+		var tpl *prompty.ChatPromptTemplate
+		if r.partialsPattern != "" {
+			partialsPath := filepath.Join(r.root, r.partialsPattern)
+			tpl, err = manifest.ParseFSWithOptions(fsys, path, manifest.WithPartialsFS(fsys, partialsPath))
+		} else {
+			tpl, err = manifest.ParseFS(fsys, path)
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
@@ -53,8 +64,13 @@ func New(fsys fs.FS, root string, _ ...Option) (*Registry, error) {
 	return r, nil
 }
 
-// Option is a functional option for Registry (reserved for future use).
+// Option configures a Registry.
 type Option func(*Registry)
+
+// WithPartials sets a pattern relative to root for partials (e.g. "partials/*.tmpl"); one shared partials dir for all manifests.
+func WithPartials(pattern string) Option {
+	return func(r *Registry) { r.partialsPattern = pattern }
+}
 
 // GetTemplate returns a template by name and env. O(1) map lookup.
 // Prefer name:env key; if missing, fallback to name: (base file).

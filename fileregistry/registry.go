@@ -18,21 +18,31 @@ var _ prompty.PromptRegistry = (*Registry)(nil)
 // Registry loads prompt templates from the filesystem (lazy, cached).
 // Resolves name+env to {dir}/{name}.{env}.yaml with fallback to {dir}/{name}.yaml.
 type Registry struct {
-	dir   string
-	mu    sync.RWMutex
-	cache map[string]*prompty.ChatPromptTemplate
+	dir             string
+	partialsPattern string // e.g. "_partials/*.tmpl"; resolved relative to manifest dir when loading
+	mu              sync.RWMutex
+	cache           map[string]*prompty.ChatPromptTemplate
 }
 
 // New creates a Registry that reads YAML manifests from dir.
-func New(dir string, _ ...Option) *Registry {
-	return &Registry{
+func New(dir string, opts ...Option) *Registry {
+	r := &Registry{
 		dir:   dir,
 		cache: make(map[string]*prompty.ChatPromptTemplate),
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
-// Option is a functional option for Registry (reserved for future use).
+// Option configures a Registry.
 type Option func(*Registry)
+
+// WithPartials sets a relative pattern for partials (e.g. "_partials/*.tmpl"), resolved against the manifest directory when loading.
+func WithPartials(relativePattern string) Option {
+	return func(r *Registry) { r.partialsPattern = relativePattern }
+}
 
 // GetTemplate returns a template by name and env. Lazy-loads and caches.
 // File resolution: {dir}/{name}.{env}.yaml or .yml, fallback {dir}/{name}.yaml or .yml.
@@ -56,11 +66,18 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	parseFile := func(path string) (*prompty.ChatPromptTemplate, error) {
+		if r.partialsPattern != "" {
+			glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
+			return manifest.ParseFileWithOptions(path, manifest.WithPartialsGlob(glob))
+		}
+		return manifest.ParseFile(path)
+	}
 	extensions := []string{".yaml", ".yml"}
 	if env != "" {
 		for _, ext := range extensions {
 			path := filepath.Join(r.dir, name+"."+env+ext)
-			tpl, err := manifest.ParseFile(path)
+			tpl, err := parseFile(path)
 			if err == nil {
 				tpl.Metadata.Environment = env
 				r.cache[key] = tpl
@@ -73,7 +90,7 @@ func (r *Registry) GetTemplate(ctx context.Context, name, env string) (*prompty.
 	}
 	for _, ext := range extensions {
 		path := filepath.Join(r.dir, name+ext)
-		tpl, err := manifest.ParseFile(path)
+		tpl, err := parseFile(path)
 		if err == nil {
 			tpl.Metadata.Environment = env
 			r.cache[key] = tpl

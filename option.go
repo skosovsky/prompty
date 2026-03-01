@@ -1,5 +1,7 @@
 package prompty
 
+import "io/fs"
+
 // ChatTemplateOption configures ChatPromptTemplate (functional options pattern).
 type ChatTemplateOption func(*ChatPromptTemplate)
 
@@ -50,5 +52,22 @@ func WithRequiredVars(vars []string) ChatTemplateOption {
 func WithResponseFormat(schema *SchemaDefinition) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.ResponseFormat = schema
+	}
+}
+
+// WithPartialsGlob sets a glob pattern (e.g. "_partials/*.tmpl") to parse before message templates; enables {{ template "name" }}.
+func WithPartialsGlob(glob string) ChatTemplateOption {
+	return func(c *ChatPromptTemplate) {
+		c.partialsGlob = glob
+	}
+}
+
+// WithPartialsFS sets an fs.FS and pattern for partials (e.g. embed FS and "partials/*.tmpl"); enables {{ template "name" }}.
+func WithPartialsFS(fsys fs.FS, pattern string) ChatTemplateOption {
+	return func(c *ChatPromptTemplate) {
+		c.partialsFS = struct {
+			fsys    fs.FS
+			pattern string
+		}{fsys: fsys, pattern: pattern}
 	}
 }

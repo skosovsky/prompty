@@ -84,13 +84,34 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "Get weather", decls[0].Description)
 }
 
+func TestTranslate_GeminiSearchGroundingMetadata(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}}, Metadata: map[string]any{"gemini_search_grounding": true}},
+		},
+	}
+	req, err := a.TranslateTyped(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.Tools)
+	var hasGoogleSearch bool
+	for _, tool := range req.Config.Tools {
+		if tool.GoogleSearch != nil {
+			hasGoogleSearch = true
+			break
+		}
+	}
+	assert.True(t, hasGoogleSearch, "Metadata gemini_search_grounding: true must add Google Search tool")
+}
+
 func TestTranslate_ToolResult(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: "Sunny", IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
 			}},
 		},
 	}

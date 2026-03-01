@@ -2,17 +2,14 @@ package prompty
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-
-	"github.com/skosovsky/prompty/mediafetch"
 )
 
 func TestMain(m *testing.M) {
@@ -347,6 +344,31 @@ func TestWithTokenCounter_Nil(t *testing.T) {
 	assert.Equal(t, "12345678", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
+func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical advice.{{ end }}`), 0600))
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{
+			{Role: RoleSystem, Content: "You are a doctor.\n{{ template \"safety\" }}"},
+			{Role: RoleUser, Content: "Hi"},
+		},
+		WithPartialsGlob(filepath.Join(dir, "partials", "*.tmpl")),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 2)
+	require.Len(t, exec.Messages[0].Content, 1)
+	text := exec.Messages[0].Content[0].(TextPart).Text
+	assert.Contains(t, text, "Never give medical advice.")
+	assert.Contains(t, text, "You are a doctor.")
+}
+
 func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -378,31 +400,32 @@ func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	}
 }
 
+type mockFetcher struct {
+	data []byte
+	mime string
+	err  error
+}
+
+func (m mockFetcher) Fetch(_ context.Context, _ string) ([]byte, string, error) {
+	if m.err != nil {
+		return nil, "", m.err
+	}
+	return m.data, m.mime, nil
+}
+
 func TestPromptExecution_ResolveMedia(t *testing.T) {
 	t.Parallel()
 	imageBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a} // PNG magic
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(imageBytes)
-	}))
-	defer srv.Close()
-
-	oldClient := mediafetch.DefaultClient
-	mediafetch.DefaultClient = &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-	defer func() { mediafetch.DefaultClient = oldClient }()
+	fetcher := mockFetcher{data: imageBytes, mime: "image/png"}
 
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
 			{Role: RoleUser, Content: []ContentPart{
-				MediaPart{MediaType: "image", URL: srv.URL},
+				MediaPart{MediaType: "image", URL: "https://example.com/img.png"},
 			}},
 		},
 	}
-	err := exec.ResolveMedia(context.Background())
+	err := exec.ResolveMedia(context.Background(), fetcher)
 	require.NoError(t, err)
 	part := exec.Messages[0].Content[0].(MediaPart)
 	assert.Equal(t, imageBytes, part.Data)
@@ -418,7 +441,7 @@ func TestPromptExecution_ResolveMedia_NonImageFailFast(t *testing.T) {
 			}},
 		},
 	}
-	err := exec.ResolveMedia(context.Background())
+	err := exec.ResolveMedia(context.Background(), mockFetcher{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "currently only 'image' media type is supported")
 	assert.Contains(t, err.Error(), "audio")

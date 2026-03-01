@@ -32,8 +32,15 @@ var AllowedImagePrefixes = []string{"image/"}
 // DefaultClient is the HTTP client used for fetching. Override in tests to use a custom client (e.g. TLS with InsecureSkipVerify).
 var DefaultClient = http.DefaultClient
 
-// FetchImage downloads a URL with ctx, size limit, and optional MIME check. Only https is allowed.
-func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte, contentType string, err error) {
+// DefaultFetcher implements URL-to-bytes fetching using standard HTTP (HTTPS only, size limit, image MIME check).
+// It satisfies the Fetcher interface used by prompty.ResolveMedia; no import of prompty is required.
+type DefaultFetcher struct {
+	MaxBodySize int64
+}
+
+// Fetch downloads the URL and returns body and Content-Type. Only https is allowed; response is limited to MaxBodySize (or DefaultMaxBodySize if 0).
+func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) (data []byte, mimeType string, err error) {
+	maxBytes := f.MaxBodySize
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBodySize
 	}
@@ -56,19 +63,19 @@ func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("mediafetch: status %s", resp.Status)
 	}
-	contentType = resp.Header.Get("Content-Type")
-	if idx := strings.Index(contentType, ";"); idx >= 0 {
-		contentType = strings.TrimSpace(contentType[:idx])
+	mimeType = resp.Header.Get("Content-Type")
+	if idx := strings.Index(mimeType, ";"); idx >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:idx])
 	}
 	allowed := false
 	for _, prefix := range AllowedImagePrefixes {
-		if strings.HasPrefix(contentType, prefix) {
+		if strings.HasPrefix(mimeType, prefix) {
 			allowed = true
 			break
 		}
 	}
-	if contentType != "" && !allowed {
-		return nil, "", fmt.Errorf("%w: %s", ErrUnsupportedType, contentType)
+	if mimeType != "" && !allowed {
+		return nil, "", fmt.Errorf("%w: %s", ErrUnsupportedType, mimeType)
 	}
 	data, err = io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
@@ -77,5 +84,10 @@ func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte
 	if int64(len(data)) > maxBytes {
 		return nil, "", ErrBodyTooLarge
 	}
-	return data, contentType, nil
+	return data, mimeType, nil
+}
+
+// FetchImage downloads a URL with ctx, size limit, and optional MIME check. Only https is allowed.
+func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte, contentType string, err error) {
+	return DefaultFetcher{MaxBodySize: maxBytes}.Fetch(ctx, rawURL)
 }

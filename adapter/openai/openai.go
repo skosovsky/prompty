@@ -210,7 +210,14 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (openai.ChatCompletionMessageParamUnion, error) {
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
-			return openai.ToolMessage(tr.Content, tr.ToolCallID), nil
+			// SDK tool message content: string or array of text parts; fail-fast on MediaPart (SDK OfArrayOfContentParts type is text-only).
+			for _, cp := range tr.Content {
+				if _, ok := cp.(prompty.MediaPart); ok {
+					return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
+				}
+			}
+			text := adapter.TextFromParts(tr.Content)
+			return openai.ToolMessage(text, tr.ToolCallID), nil
 		}
 	}
 	return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)

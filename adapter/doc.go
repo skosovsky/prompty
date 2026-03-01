@@ -10,8 +10,11 @@
 //
 //  1. Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error)
 //     - Map exec.Messages ([]ChatMessage) to the provider's message format.
+//     - When mapping messages, read msg.Metadata for provider-specific options (e.g. anthropic_cache, gemini_search_grounding); ignore unknown keys.
 //     - For messages with RoleTool, each message SHOULD contain exactly one ToolResultPart;
-//     some adapters use only the first part when multiple are present.
+//     some adapters use only the first part when multiple are present. ToolResultPart.Content
+//     is []ContentPart (multimodal). Adapters that do not support media in tool results
+//     return ErrUnsupportedContentType when MediaPart is present.
 //     - Map exec.Tools ([]ToolDefinition) to the provider's tool schema.
 //     - Apply exec.ModelConfig (e.g. temperature, max_tokens) to the request.
 //     - Return the provider's request type; callers will type-assert (e.g. req.(*MySDK.ChatParams)).

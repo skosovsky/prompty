@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
@@ -77,20 +76,21 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			params.StopSequences = mp.Stop
 		}
 	}
-	var systemTexts []string
+	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
 	for _, msg := range exec.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			systemTexts = append(systemTexts, adapter.TextFromParts(msg.Content))
+			text := adapter.TextFromParts(msg.Content)
+			systemBlocks = append(systemBlocks, a.systemTextBlock(text, msg.Metadata))
 		case prompty.RoleUser:
-			m, err := a.userMessage(ctx, msg.Content)
+			m, err := a.userMessage(ctx, msg.Content, msg.Metadata)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, m)
 		case prompty.RoleAssistant:
-			m, err := a.assistantMessage(msg.Content)
+			m, err := a.assistantMessage(msg.Content, msg.Metadata)
 			if err != nil {
 				return nil, err
 			}
@@ -105,8 +105,8 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 		}
 	}
-	if len(systemTexts) > 0 {
-		params.System = []anthropic.TextBlockParam{{Text: strings.Join(systemTexts, "\n\n")}}
+	if len(systemBlocks) > 0 {
+		params.System = systemBlocks
 	}
 	params.Messages = messages
 	if len(exec.Tools) > 0 {
@@ -152,12 +152,12 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart, metadata map[string]any) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, x.CacheControl))
+			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, metadata))
 		case prompty.MediaPart:
 			if x.MediaType != "image" {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
@@ -173,7 +173,7 @@ func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart) (a
 			if mime == "" {
 				mime = "image/png"
 			}
-			blocks = append(blocks, a.imageBlockWithCacheControl(mime, base64.StdEncoding.EncodeToString(data), x.CacheControl))
+			blocks = append(blocks, a.imageBlockWithCacheControl(mime, base64.StdEncoding.EncodeToString(data), metadata))
 		default:
 			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 		}
@@ -181,12 +181,12 @@ func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart) (a
 	return anthropic.NewUserMessage(blocks...), nil
 }
 
-func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+func (a *Adapter) assistantMessage(parts []prompty.ContentPart, metadata map[string]any) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, x.CacheControl))
+			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, metadata))
 		case prompty.ToolCallPart:
 			if x.Args != "" && !json.Valid([]byte(x.Args)) {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
@@ -206,23 +206,52 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (anthropic.Messa
 func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
-			return anthropic.NewUserMessage(anthropic.NewToolResultBlock(tr.ToolCallID, tr.Content, tr.IsError)), nil
+			// SDK NewToolResultBlock(toolUseID, content string, isError). Build text from parts; fail on MediaPart.
+			for _, cp := range tr.Content {
+				if _, ok := cp.(prompty.MediaPart); ok {
+					return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+				}
+			}
+			text := adapter.TextFromParts(tr.Content)
+			return anthropic.NewUserMessage(anthropic.NewToolResultBlock(tr.ToolCallID, text, tr.IsError)), nil
 		}
 	}
 	return anthropic.MessageParam{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
 }
 
-// textBlockWithCacheControl returns a text block. Pass-through of cacheControl "ephemeral" uses SDK block with CacheControl when supported.
-func (a *Adapter) textBlockWithCacheControl(text, cacheControl string) anthropic.ContentBlockParamUnion {
-	// TODO: when anthropic-sdk-go exposes ContentBlockParamUnion with TextBlock+CacheControl, set it for cacheControl == "ephemeral"
-	_ = cacheControl
+// wantAnthropicCache returns true when metadata has anthropic_cache: true (prompt caching for Anthropic).
+func wantAnthropicCache(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	v, ok := metadata["anthropic_cache"].(bool)
+	return ok && v
+}
+
+// systemTextBlock returns a system text block; sets CacheControl when metadata["anthropic_cache"] is true.
+func (a *Adapter) systemTextBlock(text string, metadata map[string]any) anthropic.TextBlockParam {
+	block := anthropic.TextBlockParam{Text: text}
+	if wantAnthropicCache(metadata) {
+		block.CacheControl = anthropic.NewCacheControlEphemeralParam()
+	}
+	return block
+}
+
+// textBlockWithCacheControl returns a text block; sets CacheControl when metadata["anthropic_cache"] is true.
+func (a *Adapter) textBlockWithCacheControl(text string, metadata map[string]any) anthropic.ContentBlockParamUnion {
+	if wantAnthropicCache(metadata) {
+		return anthropic.ContentBlockParamUnion{
+			OfText: &anthropic.TextBlockParam{
+				Text:         text,
+				CacheControl: anthropic.NewCacheControlEphemeralParam(),
+			},
+		}
+	}
 	return anthropic.NewTextBlock(text)
 }
 
-// imageBlockWithCacheControl returns an image block. Pass-through of cacheControl "ephemeral" uses SDK block with CacheControl when supported.
-func (a *Adapter) imageBlockWithCacheControl(mime, base64Data, cacheControl string) anthropic.ContentBlockParamUnion {
-	// TODO: when anthropic-sdk-go exposes ImageBlock with CacheControl, set it for cacheControl == "ephemeral"
-	_ = cacheControl
+// imageBlockWithCacheControl returns an image block. CacheControl is set only for text blocks (system/user/assistant); image block cache uses NewImageBlockBase64 without cache for SDK compatibility.
+func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string, metadata map[string]any) anthropic.ContentBlockParamUnion {
 	return anthropic.NewImageBlockBase64(mime, base64Data)
 }
 

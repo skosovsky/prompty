@@ -146,15 +146,16 @@ response_format:
 	assert.Equal(t, "my_schema", exec.ResponseFormat.Name)
 }
 
-func TestParseBytes_CacheControl(t *testing.T) {
+func TestParseBytes_MetadataAnthropicCache(t *testing.T) {
 	t.Parallel()
 	data := []byte(`
-id: with_cache
+id: with_metadata_cache
 version: "1"
 messages:
   - role: system
     content: "You are a helper."
-    cache_control: ephemeral
+    metadata:
+      anthropic_cache: true
   - role: user
     content: "Hi"
 `)
@@ -162,19 +163,21 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
-	assert.Equal(t, "ephemeral", tpl.Messages[0].CacheControl)
-	assert.Empty(t, tpl.Messages[1].CacheControl)
+	require.NotNil(t, tpl.Messages[0].Metadata)
+	assert.Equal(t, true, tpl.Messages[0].Metadata["anthropic_cache"])
+	assert.Nil(t, tpl.Messages[1].Metadata)
 }
 
-func TestParseBytes_CacheControlPassThrough(t *testing.T) {
+func TestParseBytes_MetadataPassThrough(t *testing.T) {
 	t.Parallel()
 	data := []byte(`
-id: with_cache_pass
+id: with_metadata_pass
 version: "1"
 messages:
   - role: system
     content: "You are a helper. {{ .x }}"
-    cache_control: ephemeral
+    metadata:
+      anthropic_cache: true
   - role: user
     content: "Hi"
 `)
@@ -187,8 +190,39 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
-	require.Len(t, exec.Messages[0].Content, 1)
-	textPart, ok := exec.Messages[0].Content[0].(prompty.TextPart)
-	require.True(t, ok, "first message content should be TextPart")
-	assert.Equal(t, "ephemeral", textPart.CacheControl, "CacheControl from manifest must reach PromptExecution")
+	require.NotNil(t, exec.Messages[0].Metadata)
+	assert.Equal(t, true, exec.Messages[0].Metadata["anthropic_cache"], "metadata from manifest must reach PromptExecution")
+}
+
+func TestParseBytes_CacheTrueAndMetadata(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: with_cache_and_metadata
+version: "1"
+messages:
+  - role: system
+    content: "You are a helper."
+    cache: true
+    metadata:
+      gemini_search_grounding: true
+  - role: user
+    content: "Hi"
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages, 2)
+	// cache: true is converted to metadata["anthropic_cache"] for backward compatibility.
+	require.NotNil(t, tpl.Messages[0].Metadata)
+	assert.Equal(t, true, tpl.Messages[0].Metadata["anthropic_cache"])
+	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+	require.Len(t, exec.Messages, 2)
+	require.NotNil(t, exec.Messages[0].Metadata)
+	assert.Equal(t, true, exec.Messages[0].Metadata["anthropic_cache"])
+	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"])
 }

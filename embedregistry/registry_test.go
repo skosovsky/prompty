@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"testing"
+	"testing/fstest"
 
 	"github.com/skosovsky/prompty"
 
@@ -89,4 +90,45 @@ func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 	_, err = reg.GetTemplate(ctx, "nonexistent", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
+	t.Parallel()
+	// Use MapFS to simulate an embed with a manifest and partials; no real embed needed.
+	mapFS := fstest.MapFS{
+		"prompts/doctor.yaml": &fstest.MapFile{
+			Data: []byte(`
+id: doctor
+version: "1"
+messages:
+  - role: system
+    content: |
+      You are a doctor assistant.
+      {{ template "safety" }}
+  - role: user
+    content: "Hi"
+`),
+		},
+		"prompts/partials/safety.tmpl": &fstest.MapFile{
+			Data: []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`),
+		},
+	}
+	reg, err := New(mapFS, "prompts", WithPartials("partials/*.tmpl"))
+	require.NoError(t, err)
+	require.NotNil(t, reg)
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "doctor", "")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	exec, err := tpl.FormatStruct(ctx, &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+	require.Len(t, exec.Messages, 2)
+	require.Len(t, exec.Messages[0].Content, 1)
+	textPart, ok := exec.Messages[0].Content[0].(prompty.TextPart)
+	require.True(t, ok)
+	assert.Contains(t, textPart.Text, "Never give medical diagnoses.", "partial 'safety' must be rendered into message")
+	assert.Contains(t, textPart.Text, "You are a doctor assistant.")
 }

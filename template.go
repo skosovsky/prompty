@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"maps"
 	"reflect"
 	"slices"
@@ -24,14 +25,19 @@ type ChatPromptTemplate struct {
 	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter
 	parsedTemplates  []parsedMessage
+	partialsGlob     string   // e.g. "_partials/*.tmpl" for ParseGlob
+	partialsFS       struct { // for ParseFS (e.g. embed)
+		fsys    fs.FS
+		pattern string
+	}
 }
 
 type parsedMessage struct {
-	tpl          *template.Template
-	role         Role
-	optional     bool
-	cacheControl string
-	vars         []string // pre-computed from AST for optional-skip check
+	tpl      *template.Template
+	role     Role
+	optional bool
+	metadata map[string]any // provider-specific; copied to ChatMessage on render
+	vars     []string       // pre-computed from AST for optional-skip check
 }
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
@@ -60,16 +66,37 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 		tc = &CharFallbackCounter{}
 	}
 	funcMap := defaultFuncMap(tc)
+	root, err := template.New("root").Funcs(funcMap).Parse("")
+	if err != nil {
+		return nil, fmt.Errorf("%w: root: %w", ErrTemplateParse, err)
+	}
+	if tpl.partialsGlob != "" {
+		root, err = root.ParseGlob(tpl.partialsGlob)
+		if err != nil {
+			return nil, fmt.Errorf("%w: partials glob %q: %w", ErrTemplateParse, tpl.partialsGlob, err)
+		}
+	}
+	if tpl.partialsFS.fsys != nil {
+		root, err = root.ParseFS(tpl.partialsFS.fsys, tpl.partialsFS.pattern)
+		if err != nil {
+			return nil, fmt.Errorf("%w: partials fs %q: %w", ErrTemplateParse, tpl.partialsFS.pattern, err)
+		}
+	}
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
 	for i, m := range tpl.Messages {
-		parsed, err := template.New("").Funcs(funcMap).Parse(m.Content)
+		name := fmt.Sprintf("msg_%d", i)
+		msgTmpl, err := root.New(name).Parse(m.Content)
 		if err != nil {
 			return nil, fmt.Errorf("%w: message %d: %w", ErrTemplateParse, i, err)
 		}
+		var meta map[string]any
+		if len(m.Metadata) > 0 {
+			meta = maps.Clone(m.Metadata)
+		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
-			tpl: parsed, role: m.Role, optional: m.Optional,
-			cacheControl: m.CacheControl,
-			vars:         extractVarsFromTree(parsed.Tree),
+			tpl: msgTmpl, role: m.Role, optional: m.Optional,
+			metadata: meta,
+			vars:     extractVarsFromTree(msgTmpl.Tree),
 		})
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
@@ -91,6 +118,8 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		Metadata:        c.Metadata,
 		tokenCounter:    c.tokenCounter,
 		parsedTemplates: c.parsedTemplates,
+		partialsGlob:    c.partialsGlob,
+		partialsFS:      c.partialsFS,
 	}
 	if c.PartialVariables != nil {
 		out.PartialVariables = maps.Clone(c.PartialVariables)
@@ -139,7 +168,12 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 			return nil, fmt.Errorf("%w: %w", ErrTemplateRender, err)
 		}
 		text := buf.String()
-		out = append(out, ChatMessage{Role: pm.role, Content: []ContentPart{TextPart{Text: text, CacheControl: pm.cacheControl}}})
+		msgMeta := maps.Clone(pm.metadata)
+		out = append(out, ChatMessage{
+			Role:     pm.role,
+			Content:  []ContentPart{TextPart{Text: text}},
+			Metadata: msgMeta,
+		})
 	}
 	out = spliceHistory(out, history)
 	meta := c.Metadata

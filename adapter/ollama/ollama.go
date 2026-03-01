@@ -168,9 +168,16 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 			}
 		}
 		if foundToolResult {
+			// Fail-fast on MediaPart inside tool result content
+			for _, cp := range toolResult.Content {
+				if _, ok := cp.(prompty.MediaPart); ok {
+					return nil, fmt.Errorf("%w: Ollama does not support images in tool result content", adapter.ErrUnsupportedContentType)
+				}
+			}
+			text := adapter.TextFromParts(toolResult.Content)
 			return []api.Message{{
 				Role:       "tool",
-				Content:    toolResult.Content,
+				Content:    text,
 				ToolCallID: toolResult.ToolCallID,
 			}}, nil
 		}
