@@ -6,5 +6,8 @@ use (
 	./adapter/gemini
 	./adapter/ollama
 	./adapter/openai
+	./examples/basic_chat
+	./examples/funcmap_tools
+	./examples/git_prompts
 	./remoteregistry/git
 )

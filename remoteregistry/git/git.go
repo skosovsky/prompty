@@ -106,10 +106,9 @@ func (g *Fetcher) resolvePath(id string) (absPath, relPathFromRepoRoot string, e
 	return "", "", fmt.Errorf("%w: %q", remoteregistry.ErrNotFound, id)
 }
 
-// ListIDs returns all template ids (relative path without .yaml/.yml, forward slashes) under the manifest dir.
-// Implements remoteregistry.Lister.
 var _ remoteregistry.Lister = (*Fetcher)(nil)
 
+// ListIDs returns all template ids (relative path without .yaml/.yml, forward slashes) under the manifest dir.
 func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -153,10 +152,9 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// Stat returns template metadata without parsing the manifest body. Version is the commit hash; UpdatedAt is commit time.
-// Implements remoteregistry.Statter.
 var _ remoteregistry.Statter = (*Fetcher)(nil)
 
+// Stat returns template metadata without parsing the manifest body. Version is the commit hash; UpdatedAt is commit time.
 func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
 	if err := remoteregistry.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err

@@ -1,0 +1,20 @@
+id: tools_demo
+version: "1"
+tools:
+  - name: get_weather
+    description: Get current weather for a city
+    parameters:
+      type: object
+      properties:
+        city:
+          type: string
+          description: City name
+      required:
+        - city
+messages:
+  - role: system
+    content: |
+      You have these tools (as JSON): {{ render_tools_as_json .Tools }}
+      Use them when the user asks. Reply briefly.
+  - role: user
+    content: "{{ .query }}"

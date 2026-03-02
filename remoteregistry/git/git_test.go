@@ -307,10 +307,10 @@ func TestFetcher_ListIDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir, map[string]string{
-		"a.yaml":       "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: A\n",
-		"b.yml":        "id: b\nversion: \"1\"\nmessages:\n  - role: system\n    content: B\n",
-		"sub/c.yaml":   "id: c\nversion: \"1\"\nmessages:\n  - role: system\n    content: C\n",
-		"sub/d.yml":   "id: d\nversion: \"1\"\nmessages:\n  - role: system\n    content: D\n",
+		"a.yaml":     "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: A\n",
+		"b.yml":      "id: b\nversion: \"1\"\nmessages:\n  - role: system\n    content: B\n",
+		"sub/c.yaml": "id: c\nversion: \"1\"\nmessages:\n  - role: system\n    content: C\n",
+		"sub/d.yml":  "id: d\nversion: \"1\"\nmessages:\n  - role: system\n    content: D\n",
 	})
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)

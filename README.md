@@ -2,53 +2,98 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/skosovsky/prompty.svg)](https://pkg.go.dev/github.com/skosovsky/prompty)
 
-Prompt template management for Go LLM applications. Provider-agnostic: load templates, render with typed payloads, then map to OpenAI, Anthropic, Gemini, or Ollama via adapters.
+**TL;DR** — prompty is a library for prompt management, templating, and unified interaction with LLMs in Go. It supports loading prompts from files, Git, or HTTP and works with multiple backends (OpenAI, Anthropic, Gemini, Ollama) without locking you to a single vendor.
 
-## Features
+## Modules and installation
 
-- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** provider-specific options are passed only via `ChatMessage.Metadata` (e.g. `anthropic_cache` for prompt caching, `gemini_search_grounding` for Gemini).
-- **Media**: `exec.ResolveMedia(ctx, fetcher)` fills `MediaPart.Data` using a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use before `Translate` for adapters that require inline data (Anthropic, Ollama); OpenAI and Gemini accept URL natively
-- **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
-- **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection
-- **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`) with TTL cache
-- **Adapters**: map `PromptExecution` to provider request types (OpenAI, Anthropic, Gemini, Ollama); parse responses back to `[]ContentPart`. Tool result is multimodal: `ToolResultPart.Content` is `[]ContentPart` (text and/or images). Adapters that do not support media in tool results return `ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
-- **Observability**: `PromptMetadata` (ID, version, description, tags, environment) on every execution
+The project is split into multiple Go modules. Install only what you need:
+
+| Layer   | Package | Install |
+|---------|---------|---------|
+| Core    | prompty (templates, registries in-tree) | `go get github.com/skosovsky/prompty` |
+| Adapters | OpenAI  | `go get github.com/skosovsky/prompty/adapter/openai` |
+|         | Gemini  | `go get github.com/skosovsky/prompty/adapter/gemini` |
+|         | Anthropic | `go get github.com/skosovsky/prompty/adapter/anthropic` |
+|         | Ollama  | `go get github.com/skosovsky/prompty/adapter/ollama` |
+| Registries | Git (remote) | `go get github.com/skosovsky/prompty/remoteregistry/git` |
+
+`fileregistry` and `embedregistry` are part of the core module (`github.com/skosovsky/prompty`).
 
 ## Quick Start
+
+Copy-paste friendly example: load a prompt (in-memory here), format with a payload, then call the OpenAI API via the adapter. Requires `OPENAI_API_KEY` in the environment.
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
+	"log"
+	"os"
 
-    "github.com/skosovsky/prompty"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/adapter"
+	openaiadapter "github.com/skosovsky/prompty/adapter/openai"
 )
 
 func main() {
-    tpl, err := prompty.NewChatPromptTemplate(
-        []prompty.MessageTemplate{
-            {Role: prompty.RoleSystem, Content: "You are {{ .bot_name }}."},
-            {Role: prompty.RoleUser, Content: "{{ .query }}"},
-        },
-        prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
-    )
-    if err != nil {
-        panic(err)
-    }
-    type Payload struct {
-        Query string `prompt:"query"`
-    }
-    ctx := context.Background()
-    exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is 2+2?"})
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println(exec.Messages[0].Content[0].(prompty.TextPart).Text)
-    fmt.Println(exec.Messages[1].Content[0].(prompty.TextPart).Text)
+	tpl, err := prompty.NewChatPromptTemplate(
+		[]prompty.MessageTemplate{
+			{Role: prompty.RoleSystem, Content: "You are {{ .bot_name }}."},
+			{Role: prompty.RoleUser, Content: "{{ .query }}"},
+		},
+		prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	type Payload struct {
+		Query string `prompt:"query"`
+	}
+	ctx := context.Background()
+	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is 2+2?"})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	adp := openaiadapter.New()
+	params, err := adp.TranslateTyped(ctx, exec)
+	if err != nil {
+		log.Fatal(err)
+	}
+	client := openai.NewClient(option.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
+	resp, err := client.Chat.Completions.New(ctx, *params)
+	if err != nil {
+		log.Fatal(err)
+	}
+	parts, err := adp.ParseResponse(ctx, resp)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(adapter.TextFromParts(parts))
 }
 ```
+
+## Main abstractions
+
+- **Registry** — supplies `ChatPromptTemplate` by id (from files, embed, or remote). Interface: `GetTemplate(ctx, id) (*ChatPromptTemplate, error)`.
+- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Interface: `Translate(ctx, exec) (any, error)`, `ParseResponse(ctx, raw) ([]ContentPart, error)`, and optionally `ParseStreamChunk` (or `ErrStreamNotImplemented`).
+- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(ctx, payload)` to get a `PromptExecution`. Registries can load manifests (YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`.
+
+Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **Adapter** → provider API. HTTP/transport is the caller’s responsibility.
+
+## Features
+
+- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** provider-specific options are passed only via `ChatMessage.Metadata` (e.g. `anthropic_cache` for prompt caching, `gemini_search_grounding` for Gemini).
+- **Media**: `exec.ResolveMedia(ctx, fetcher)` fills `MediaPart.Data` using a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use before `Translate` for adapters that require inline data (Anthropic, Ollama); OpenAI and Gemini accept URL natively.
+- **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
+- **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection.
+- **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`) with TTL cache.
+- **Adapters**: map `PromptExecution` to provider request types (OpenAI, Anthropic, Gemini, Ollama); parse responses back to `[]ContentPart`. Tool result is multimodal: `ToolResultPart.Content` is `[]ContentPart` (text and/or images). Adapters that do not support media in tool results return `ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
+- **Observability**: `PromptMetadata` (ID, version, description, tags, environment) on every execution.
 
 ## Registries
 
@@ -103,19 +148,22 @@ Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validati
 
 This repo uses **Go Workspaces** (`go.work`). The root and all adapter/registry submodules must be listed there so that changes to the core `prompty` package and adapters compile together in one PR without publishing intermediate versions.
 
-**Pre-check:** Before changing interfaces in the root module, run from repo root:
+**Build and test** (from repo root):
 
 ```bash
 go work sync
 go build ./...
-cd adapter/openai && go build . && cd ../..
-cd adapter/anthropic && go build . && cd ../..
-cd adapter/gemini && go build . && cd ../..
-cd adapter/ollama && go build . && cd ../..
-cd remoteregistry/git && go build . && cd ../..
+go test ./...
+cd adapter/openai && go build . && go test . && cd ../..
+cd adapter/anthropic && go build . && go test . && cd ../..
+cd adapter/gemini && go build . && go test . && cd ../..
+cd adapter/ollama && go build . && go test . && cd ../..
+cd remoteregistry/git && go build . && go test . && cd ../..
 ```
 
 Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./adapter/gemini`, `./adapter/ollama`, `./remoteregistry/git`.
+
+**Running examples locally:** `go.work` already includes `./examples/basic_chat`, `./examples/git_prompts`, and `./examples/funcmap_tools`. From the repo root run `go run ./examples/basic_chat` (or cd into an example dir and `go run .`). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.
 
 ## License
 

@@ -1,0 +1,7 @@
+id: demo
+version: "1"
+messages:
+  - role: system
+    content: "You answer briefly. Topic: {{ .topic }}."
+  - role: user
+    content: "{{ .question }}"

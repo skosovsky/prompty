@@ -1,0 +1,7 @@
+id: support_agent
+version: "1"
+messages:
+  - role: system
+    content: "You are a support agent. Be concise. User: {{ .user_name }}."
+  - role: user
+    content: "{{ .query }}"
