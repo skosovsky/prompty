@@ -36,7 +36,8 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 	return a.TranslateTyped(ctx, exec)
 }
 
-// TranslateTyped returns the concrete type so callers avoid type assertion.
+// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
+// it populates model_config from YAML and returns *Request, ready to pass to the Gemini SDK (optionally after adjusting Config.Tools).
 func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*Request, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution

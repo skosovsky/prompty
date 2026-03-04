@@ -13,11 +13,14 @@ import (
 // and parses the provider response back to []ContentPart. No implementations in this package.
 type ProviderAdapter interface {
 	// Translate converts PromptExecution into the provider request payload (e.g. OpenAI chat params).
-	// Callers must type-assert the result to the provider-specific type. ctx is used for timeouts and cancellation.
+	// This method exists for the generic interface; when using a concrete adapter (e.g. gemini.Adapter) directly,
+	// prefer calling TranslateTyped to avoid type assertion and get the typed request struct with model_config and provider-specific options.
 	Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error)
 	// ParseResponse converts the raw provider (unary) response into canonical content parts.
+	// Implementations MUST return a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
 	ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error)
 	// ParseStreamChunk parses a single stream chunk (e.g. SSE). Return ErrStreamNotImplemented if not supported.
+	// Implementations MUST return a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
 	ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error)
 }
 

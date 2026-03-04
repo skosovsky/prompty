@@ -42,7 +42,8 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 	return a.TranslateTyped(ctx, exec)
 }
 
-// TranslateTyped returns the concrete type so callers avoid type assertion.
+// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
+// it populates model_config from YAML and returns *api.ChatRequest, ready to pass to the Ollama API.
 func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*api.ChatRequest, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution

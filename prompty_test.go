@@ -9,7 +9,8 @@ import (
 
 func TestContentPart_Implementations(t *testing.T) {
 	t.Parallel()
-	// Compile-time: only our types implement ContentPart
+	// Compile-time: only our types implement ContentPart.
+	// Note: While pointers satisfy the interface, ProviderAdapters MUST return slices of value-types only.
 	var _ ContentPart = (*TextPart)(nil)
 	var _ ContentPart = (*MediaPart)(nil)
 	var _ ContentPart = (*ToolCallPart)(nil)

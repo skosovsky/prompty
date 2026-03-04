@@ -46,7 +46,8 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 	return a.TranslateTyped(ctx, exec)
 }
 
-// TranslateTyped returns the concrete type so callers avoid type assertion.
+// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
+// it populates model_config from YAML and returns *openai.ChatCompletionNewParams, ready to pass to the OpenAI SDK.
 func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) { //nolint:revive // ctx required by ProviderAdapter
 	if exec == nil {
 		return nil, adapter.ErrNilExecution

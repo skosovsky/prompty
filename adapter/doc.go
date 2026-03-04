@@ -34,6 +34,8 @@
 //     - Type-assert rawChunk to the provider's streaming chunk type; return incremental content parts.
 //     - Return (nil, adapter.ErrStreamNotImplemented) if streaming is not supported.
 //
+//     ParseResponse and ParseStreamChunk must return slices containing only value types (e.g. prompty.TextPart, not *prompty.TextPart); see prompty.ContentPart.
+//
 // Example minimal stub:
 //
 //	type MyAdapter struct{}

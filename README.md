@@ -103,6 +103,8 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 | `github.com/skosovsky/prompty/embedregistry` | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials |
 | `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); TTL cache; `Evict`/`EvictAll`; `Close()` for resource cleanup |
 
+All three registries also implement optional `prompty.Lister` (`List(ctx)`) and `prompty.Statter` (`Stat(ctx, id)`). When you have a variable of type `prompty.Registry` and need to list IDs or get template metadata, use a type assertion: `if l, ok := reg.(prompty.Lister); ok { ids, err := l.List(ctx); ... }`.
+
 Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.yaml`. Name must not contain `':'`.
 
 ## Adapters

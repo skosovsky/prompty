@@ -20,6 +20,10 @@ const (
 )
 
 // ContentPart is a sealed interface for message parts. Only package types implement it via isContentPart().
+//
+// Contract: All ProviderAdapter implementations of ParseResponse and ParseStreamChunk MUST return
+// a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
+// Consumers can rely on this and need no defensive checks for pointer vs value.
 type ContentPart interface {
 	isContentPart()
 }
@@ -174,11 +178,19 @@ type TemplateInfo struct {
 	UpdatedAt time.Time
 }
 
-// Registry returns a chat prompt template by id, lists ids, and returns template metadata.
+// Registry returns a chat prompt template by id.
 // id is a single identifier (e.g. "doctor", "doctor.prod"); environments are expressed via file layout.
 type Registry interface {
 	GetTemplate(ctx context.Context, id string) (*ChatPromptTemplate, error)
+}
+
+// Lister is optional. When implemented by a registry, List returns available template ids.
+type Lister interface {
 	List(ctx context.Context) ([]string, error)
+}
+
+// Statter is optional. When implemented by a registry, Stat returns template metadata without parsing the body.
+type Statter interface {
 	Stat(ctx context.Context, id string) (TemplateInfo, error)
 }
 

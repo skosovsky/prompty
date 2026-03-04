@@ -16,8 +16,12 @@ import (
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Ensures Registry implements prompty.Registry.
-var _ prompty.Registry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry, Lister, and Statter.
+var (
+	_ prompty.Registry = (*Registry)(nil)
+	_ prompty.Lister   = (*Registry)(nil)
+	_ prompty.Statter  = (*Registry)(nil)
+)
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
 // Resolves id to {dir}/{id}.yaml or {dir}/{id}.yml (id = basename without extension).

@@ -12,8 +12,12 @@ import (
 	"github.com/skosovsky/prompty/manifest"
 )
 
-// Ensures Registry implements prompty.Registry.
-var _ prompty.Registry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry, Lister, and Statter.
+var (
+	_ prompty.Registry = (*Registry)(nil)
+	_ prompty.Lister   = (*Registry)(nil)
+	_ prompty.Statter  = (*Registry)(nil)
+)
 
 // Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates by id.
 type Registry struct {

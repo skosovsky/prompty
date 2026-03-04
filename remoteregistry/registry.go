@@ -26,8 +26,12 @@ func detachCancel(parent context.Context) (context.Context, context.CancelFunc) 
 	return context.WithCancel(ctx) // no-op cancel when no deadline, but same signature
 }
 
-// Ensures Registry implements prompty.Registry.
-var _ prompty.Registry = (*Registry)(nil)
+// Ensures Registry implements prompty.Registry, Lister, and Statter.
+var (
+	_ prompty.Registry = (*Registry)(nil)
+	_ prompty.Lister   = (*Registry)(nil)
+	_ prompty.Statter  = (*Registry)(nil)
+)
 
 type cacheEntry struct {
 	tpl       *prompty.ChatPromptTemplate
@@ -40,7 +44,8 @@ func (r *Registry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 }
 
 // Registry loads prompt templates via a Fetcher and caches them with TTL.
-// Implements prompty.Registry. GetTemplate returns a cloned template.
+// It implements prompty.Registry; GetTemplate returns a cloned template.
+// When the Fetcher also implements Lister and Statter, Registry implements prompty.Lister and prompty.Statter and proxies List and Stat calls to the Fetcher.
 type Registry struct {
 	fetcher Fetcher
 	ttl     time.Duration
