@@ -53,7 +53,9 @@ messages:
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	assert.Contains(t, tpl.Messages[0].Content, "Base")
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Base")
 }
 
 func TestFileRegistry_GetTemplate_IdWithDot(t *testing.T) {
@@ -78,7 +80,8 @@ messages:
 	tpl, err := reg.GetTemplate(ctx, "support_agent.production")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	assert.Equal(t, "Production", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text)
 }
 
 func TestFileRegistry_GetTemplate_EnvSpecificInvalidYAML(t *testing.T) {
@@ -117,7 +120,8 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
-	assert.Equal(t, "From .yml file", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "From .yml file", tpl.Messages[0].Content[0].Text)
 }
 
 func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
@@ -138,12 +142,13 @@ tools:
 	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
-	tpl1.Messages[0].Content = "Mutated"
+	tpl1.Messages[0].Content = []prompty.TemplatePart{{Type: "text", Text: "Mutated"}}
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
 	tpl2, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
-	assert.Equal(t, "Original", tpl2.Messages[0].Content, "cache must return unchanged template after caller mutated previous copy")
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "Original", tpl2.Messages[0].Content[0].Text, "cache must return unchanged template after caller mutated previous copy")
 	assert.Len(t, tpl2.Tools, 1)
 	assert.Equal(t, "only_tool", tpl2.Tools[0].Name)
 }
@@ -199,7 +204,8 @@ messages:
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	reg.Reload()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.yaml"), []byte(`
 id: p
@@ -210,7 +216,8 @@ messages:
 `), 0600))
 	tpl2, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
-	assert.Equal(t, "v2", tpl2.Messages[0].Content)
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "v2", tpl2.Messages[0].Content[0].Text)
 }
 
 func TestFileRegistry_Concurrent(t *testing.T) {
@@ -241,7 +248,8 @@ messages:
 		require.NoError(t, r.err)
 		require.NotNil(t, r.tpl)
 		assert.Equal(t, "p", r.tpl.Metadata.ID)
-		assert.Equal(t, "x", r.tpl.Messages[0].Content)
+		require.Len(t, r.tpl.Messages[0].Content, 1)
+		assert.Equal(t, "x", r.tpl.Messages[0].Content[0].Text)
 	}
 }
 

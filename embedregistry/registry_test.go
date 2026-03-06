@@ -36,7 +36,8 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
-	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .user_name }}")
 }
 
 // TestEmbedRegistry_GetTemplate_BaseId returns base file for id "agent".
@@ -48,8 +49,9 @@ func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	assert.Contains(t, tpl.Messages[0].Content, "Agent {{ .user_name }}")
-	assert.NotContains(t, tpl.Messages[0].Content, "Agent prod")
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .user_name }}")
+	assert.NotContains(t, tpl.Messages[0].Content[0].Text, "Agent prod")
 }
 
 func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
@@ -60,7 +62,8 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	tpl, err := reg.GetTemplate(ctx, "agent.prod")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	assert.Contains(t, tpl.Messages[0].Content, "Agent prod")
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent prod")
 }
 
 // TestEmbedRegistry_GetTemplate_NotFound ensures missing id returns ErrTemplateNotFound.

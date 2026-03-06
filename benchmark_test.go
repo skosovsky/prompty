@@ -5,10 +5,11 @@ import (
 	"testing"
 )
 
+// Run with: go test -bench=BenchmarkFormatStruct -benchmem to verify allocs/op and B/op (sync.Pool reduces allocations).
 func BenchmarkFormatStruct(b *testing.B) {
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: "You are {{ .bot_name }}."},
-		{Role: RoleUser, Content: "{{ .query }}"},
+		{Role: RoleSystem, Content: TextContent("You are {{ .bot_name }}.")},
+		{Role: RoleUser, Content: TextContent("{{ .query }}")},
 	}, WithPartialVariables(map[string]any{"bot_name": "Helper"}))
 	if err != nil {
 		b.Fatal(err)

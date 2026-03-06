@@ -55,7 +55,9 @@ messages:
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(tpl.Messages[0].Content)
+	if len(tpl.Messages[0].Content) > 0 && tpl.Messages[0].Content[0].Type == "text" {
+		fmt.Println(tpl.Messages[0].Content[0].Text)
+	}
 	// Output:
 	// Hi
 }

@@ -81,7 +81,8 @@ messages:
 	tpl, err := reg.GetTemplate(ctx, "p.production")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	assert.Equal(t, "Production", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text)
 }
 
 func TestRegistry_GetTemplate_TwoIds(t *testing.T) {
@@ -166,13 +167,15 @@ messages:
 
 	tpl, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(60 * time.Millisecond)
 	tpl2, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", tpl2.Messages[0].Content)
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
 	assert.Equal(t, 2, called)
 }
 
@@ -197,13 +200,15 @@ messages:
 
 	tpl, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
-	assert.Equal(t, "cached", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "cached", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(20 * time.Millisecond)
 	tpl2, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
-	assert.Equal(t, "cached", tpl2.Messages[0].Content)
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "cached", tpl2.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called, "TTL<=0: cache never expires, fetcher not called again")
 }
 
@@ -227,11 +232,13 @@ messages:
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	time.Sleep(30 * time.Millisecond)
 	tpl2, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", tpl2.Messages[0].Content)
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called, "TTL<0: cache never expires")
 }
 
@@ -253,12 +260,13 @@ tools:
 	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
-	tpl1.Messages[0].Content = "Mutated"
+	tpl1.Messages[0].Content = []prompty.TemplatePart{{Type: "text", Text: "Mutated"}}
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
 	tpl2, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
-	assert.Equal(t, "Original", tpl2.Messages[0].Content)
+	require.Len(t, tpl2.Messages[0].Content, 1)
+	assert.Equal(t, "Original", tpl2.Messages[0].Content[0].Text)
 	assert.Len(t, tpl2.Tools, 1)
 	assert.Equal(t, "only_tool", tpl2.Tools[0].Name)
 }

@@ -9,8 +9,16 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"sync"
 	"text/template"
 )
+
+// maxRenderBufferCap is the maximum buffer capacity to return to the pool; larger buffers are dropped to avoid pool poisoning (OOM).
+const maxRenderBufferCap = 64 * 1024
+
+var renderPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // ChatPromptTemplate holds message templates and options for rendering.
 // Use NewChatPromptTemplate to construct; options are applied via ChatTemplateOption.
@@ -33,12 +41,18 @@ type ChatPromptTemplate struct {
 	}
 }
 
+type parsedPart struct {
+	kind string // "text" or "image_url"
+	tpl  *template.Template
+}
+
 type parsedMessage struct {
-	tpl      *template.Template
-	role     Role
-	optional bool
-	metadata map[string]any // provider-specific; copied to ChatMessage on render
-	vars     []string       // pre-computed from AST for optional-skip check
+	parts      []parsedPart
+	role       Role
+	optional   bool
+	cachePoint bool
+	metadata   map[string]any // provider-specific; copied to ChatMessage on render
+	vars       []string       // pre-computed from all parts for optional-skip check
 }
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
@@ -85,19 +99,41 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 	}
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
 	for i, m := range tpl.Messages {
-		name := fmt.Sprintf("msg_%d", i)
-		msgTmpl, err := root.New(name).Option("missingkey=error").Parse(m.Content)
-		if err != nil {
-			return nil, fmt.Errorf("%w: message %d: %w", ErrTemplateParse, i, err)
+		var allVars []string
+		parsedParts := make([]parsedPart, 0, len(m.Content))
+		for j, part := range m.Content {
+			name := fmt.Sprintf("msg_%d_part_%d", i, j)
+			var src string
+			switch part.Type {
+			case "text":
+				src = part.Text
+			case "image_url":
+				src = part.URL
+			default:
+				return nil, fmt.Errorf("%w: message %d part %d: unknown type %q", ErrTemplateParse, i, j, part.Type)
+			}
+			msgTmpl, err := root.New(name).Option("missingkey=error").Parse(src)
+			if err != nil {
+				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateParse, i, j, err)
+			}
+			kind := part.Type
+			if kind == "" {
+				kind = "text"
+			}
+			parsedParts = append(parsedParts, parsedPart{kind: kind, tpl: msgTmpl})
+			allVars = append(allVars, extractVarsFromTree(msgTmpl.Tree)...)
 		}
 		var meta map[string]any
 		if len(m.Metadata) > 0 {
 			meta = maps.Clone(m.Metadata)
 		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
-			tpl: msgTmpl, role: m.Role, optional: m.Optional,
-			metadata: meta,
-			vars:     extractVarsFromTree(msgTmpl.Tree),
+			parts:      parsedParts,
+			role:       m.Role,
+			optional:   m.Optional,
+			cachePoint: m.CachePoint,
+			metadata:   meta,
+			vars:       allVars,
 		})
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
@@ -110,8 +146,12 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	if c == nil {
 		return nil
 	}
+	clonedMessages := slices.Clone(c.Messages)
+	for i := range clonedMessages {
+		clonedMessages[i].Content = slices.Clone(clonedMessages[i].Content)
+	}
 	out := &ChatPromptTemplate{
-		Messages:        slices.Clone(c.Messages),
+		Messages:        clonedMessages,
 		Tools:           slices.Clone(c.Tools),
 		RequiredVars:    slices.Clone(c.RequiredVars),
 		requiredFromAST: c.requiredFromAST,
@@ -166,23 +206,40 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if pm.tpl == nil {
-			return nil, fmt.Errorf("%w: message %d", ErrTemplateParse, i)
-		}
 		optionalSkip := pm.optional && allVarsZeroForMessage(merged, pm.vars)
 		if optionalSkip {
 			continue
 		}
-		var buf bytes.Buffer
-		if err := pm.tpl.Execute(&buf, merged); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrTemplateRender, err)
+		var contentParts []ContentPart
+		for j, part := range pm.parts {
+			buf := renderPool.Get().(*bytes.Buffer)
+			if err := part.tpl.Execute(buf, merged); err != nil {
+				if buf.Cap() <= maxRenderBufferCap {
+					buf.Reset()
+					renderPool.Put(buf)
+				}
+				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
+			}
+			rendered := buf.String()
+			if buf.Cap() <= maxRenderBufferCap {
+				buf.Reset()
+				renderPool.Put(buf)
+			}
+			switch part.kind {
+			case "text":
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			case "image_url":
+				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
+			default:
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			}
 		}
-		text := buf.String()
 		msgMeta := maps.Clone(pm.metadata)
 		out = append(out, ChatMessage{
-			Role:     pm.role,
-			Content:  []ContentPart{TextPart{Text: text}},
-			Metadata: msgMeta,
+			Role:       pm.role,
+			Content:    contentParts,
+			CachePoint: pm.cachePoint,
+			Metadata:   msgMeta,
 		})
 	}
 	out = spliceHistory(out, history)
@@ -219,11 +276,10 @@ func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
 	}
 	merged["Tools"] = c.Tools
 	for i, pm := range c.parsedTemplates {
-		if pm.tpl == nil {
-			return fmt.Errorf("%w: message %d", ErrTemplateParse, i)
-		}
-		if err := pm.tpl.Execute(io.Discard, merged); err != nil {
-			return fmt.Errorf("%w: message %d (role %s): %w", ErrTemplateRender, i, pm.role, err)
+		for j, part := range pm.parts {
+			if err := part.tpl.Execute(io.Discard, merged); err != nil {
+				return fmt.Errorf("%w: message %d part %d (role %s): %w", ErrTemplateRender, i, j, pm.role, err)
+			}
 		}
 	}
 	return nil

@@ -53,6 +53,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 		return nil, adapter.ErrNilExecution
 	}
 	_ = ctx // interface requirement; OpenAI accepts image URL natively, no I/O in Translate
+	// CachePoint is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(exec.Messages)),
 		Model:    a.defaultModel,

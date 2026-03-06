@@ -97,7 +97,8 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	// Metadata "safety hatch": only gemini_search_grounding (bool) is handled in Task 5; other keys ignored.
+	// CachePoint is ignored: Context Caching requires out-of-band orchestration (Context Caching API). Callers may pass cache hint via Metadata for external agents.
+	// Metadata "safety hatch": only gemini_search_grounding (bool) is handled; other keys ignored.
 	var wantGoogleSearch bool
 	for _, msg := range exec.Messages {
 		if msg.Metadata != nil {

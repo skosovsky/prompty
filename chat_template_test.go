@@ -18,16 +18,17 @@ func TestMain(m *testing.M) {
 
 func TestNewChatPromptTemplate_DefensiveCopy(t *testing.T) {
 	t.Parallel()
-	msgs := []MessageTemplate{{Role: "system", Content: "Hi {{ .name }}"}}
+	msgs := []MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .name }}")}}
 	tpl, err := NewChatPromptTemplate(msgs)
 	require.NoError(t, err)
-	msgs[0].Content = "mutated"
-	assert.Equal(t, "Hi {{ .name }}", tpl.Messages[0].Content)
+	msgs[0].Content = []TemplatePart{{Type: "text", Text: "mutated"}}
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Hi {{ .name }}", tpl.Messages[0].Content[0].Text)
 }
 
 func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 	t.Parallel()
-	msgs := []MessageTemplate{{Role: "system", Content: "Hi {{ .name }}"}, {Role: "user", Content: "{{ end }}"}}
+	msgs := []MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .name }}")}, {Role: "user", Content: TextContent("{{ end }}")}}
 	_, err := NewChatPromptTemplate(msgs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTemplateParse)
@@ -36,7 +37,7 @@ func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 func TestFormatStruct_SimpleVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -54,7 +55,7 @@ func TestFormatStruct_SimpleVars(t *testing.T) {
 func TestFormatStruct_PartialVariables(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "{{ .bot_name }}: {{ .msg }}"},
+		{Role: "system", Content: TextContent("{{ .bot_name }}: {{ .msg }}")},
 	}, WithPartialVariables(map[string]any{"bot_name": "Bot", "msg": "default"}))
 	require.NoError(t, err)
 	type Payload struct {
@@ -72,7 +73,7 @@ func TestFormatStruct_PartialVariables(t *testing.T) {
 func TestFormatStruct_MissingRequired(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "user", Content: "{{ .user_name }}"},
+		{Role: "user", Content: TextContent("{{ .user_name }}")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -91,7 +92,7 @@ func TestFormatStruct_MissingRequired(t *testing.T) {
 func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
-		[]MessageTemplate{{Role: RoleSystem, Content: "Hi"}},
+		[]MessageTemplate{{Role: RoleSystem, Content: TextContent("Hi")}},
 		WithRequiredVars([]string{"must_have"}),
 	)
 	require.NoError(t, err)
@@ -105,7 +106,7 @@ func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 
 func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
 	type PayloadWithTools struct {
 		Tools string `prompt:"Tools"` // reserved
@@ -122,7 +123,7 @@ func TestFormatStruct_ResponseFormatClone(t *testing.T) {
 	t.Parallel()
 	schema := map[string]any{"type": "object", "remove_me": true}
 	tpl, err := NewChatPromptTemplate(
-		[]MessageTemplate{{Role: "system", Content: "Hi"}},
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 		WithResponseFormat(&SchemaDefinition{Name: "original", Description: "desc", Schema: schema}),
 	)
 	require.NoError(t, err)
@@ -155,7 +156,7 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 	t.Parallel()
 	schema := map[string]any{"type": "object", "key": "v"}
 	tpl, err := NewChatPromptTemplate(
-		[]MessageTemplate{{Role: "system", Content: "Hi"}},
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 		WithResponseFormat(&SchemaDefinition{Name: "orig", Description: "d", Schema: schema}),
 	)
 	require.NoError(t, err)
@@ -183,7 +184,7 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -202,7 +203,7 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 	type NoTags struct {
 		X string
 	}
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, &NoTags{X: "y"})
@@ -214,7 +215,7 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 func TestFormatStruct_JsonTagFallback(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: "Hello, {{ .user_name }}!"},
+		{Role: RoleSystem, Content: TextContent("Hello, {{ .user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -229,7 +230,7 @@ func TestFormatStruct_JsonTagFallback(t *testing.T) {
 
 func TestFormatStruct_NilPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, nil)
@@ -239,7 +240,7 @@ func TestFormatStruct_NilPayload(t *testing.T) {
 
 func TestFormatStruct_NilPointerPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi {{ .x }}"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .x }}")}})
 	require.NoError(t, err)
 	type P struct {
 		X string `prompt:"x"`
@@ -253,7 +254,7 @@ func TestFormatStruct_NilPointerPayload(t *testing.T) {
 
 func TestFormatStruct_NonStructPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = tpl.FormatStruct(ctx, 42)
@@ -267,7 +268,7 @@ func TestFormatStruct_NonStructPayload(t *testing.T) {
 func TestValidateVariables_Ok(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
 	})
 	require.NoError(t, err)
 	err = tpl.ValidateVariables(map[string]any{"user_name": "Alice"})
@@ -277,7 +278,7 @@ func TestValidateVariables_Ok(t *testing.T) {
 func TestValidateVariables_MissingVar(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "Hello, {{ .user_name }}!"},
+		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
 	})
 	require.NoError(t, err)
 	err = tpl.ValidateVariables(map[string]any{})
@@ -287,7 +288,7 @@ func TestValidateVariables_MissingVar(t *testing.T) {
 
 func TestFormatStruct_CancelledContext(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: "Hi"}})
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
 	type P struct {
 		X string `prompt:"x"`
@@ -302,8 +303,8 @@ func TestFormatStruct_CancelledContext(t *testing.T) {
 func TestFormatStruct_OptionalMessage(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "System"},
-		{Role: "user", Content: "{{ .extra }}", Optional: true},
+		{Role: "system", Content: TextContent("System")},
+		{Role: "user", Content: TextContent("{{ .extra }}"), Optional: true},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -319,8 +320,8 @@ func TestFormatStruct_OptionalMessage(t *testing.T) {
 func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "You are a helper."},
-		{Role: "user", Content: "{{ .query }}"},
+		{Role: "system", Content: TextContent("You are a helper.")},
+		{Role: "user", Content: TextContent("{{ .query }}")},
 	})
 	require.NoError(t, err)
 	history := []ChatMessage{
@@ -346,9 +347,9 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "System."},
-		{Role: "developer", Content: "Developer."},
-		{Role: "user", Content: "{{ .query }}"},
+		{Role: "system", Content: TextContent("System.")},
+		{Role: "developer", Content: TextContent("Developer.")},
+		{Role: "user", Content: TextContent("{{ .query }}")},
 	})
 	require.NoError(t, err)
 	history := []ChatMessage{
@@ -374,7 +375,7 @@ func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 func TestFormatStruct_ToolsInjection(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "Tools: {{ render_tools_as_json .Tools }}"},
+		{Role: "system", Content: TextContent("Tools: {{ render_tools_as_json .Tools }}")},
 	}, WithTools([]ToolDefinition{{Name: "foo", Description: "bar", Parameters: nil}}))
 	require.NoError(t, err)
 	type Payload struct {
@@ -400,7 +401,7 @@ func TestFormatStruct_ErrTemplateRender(t *testing.T) {
 	t.Parallel()
 	// Template parses but Execute fails because truncate_tokens uses a TokenCounter that returns error.
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "{{ truncate_tokens .text 10 }}"},
+		{Role: "system", Content: TextContent("{{ truncate_tokens .text 10 }}")},
 	}, WithTokenCounter(failingTokenCounter{}))
 	require.NoError(t, err)
 	type P struct {
@@ -416,7 +417,7 @@ func TestWithTokenCounter_Nil(t *testing.T) {
 	t.Parallel()
 	// WithTokenCounter(nil) should fall back to CharFallbackCounter in truncate_tokens.
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "{{ truncate_tokens .text 2 }}"}, // 2 tokens, default ~4 chars/token
+		{Role: "system", Content: TextContent("{{ truncate_tokens .text 2 }}")}, // 2 tokens, default ~4 chars/token
 	}, WithTokenCounter(nil))
 	require.NoError(t, err)
 	type P struct {
@@ -436,8 +437,8 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical advice.{{ end }}`), 0600))
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{
-			{Role: RoleSystem, Content: "You are a doctor.\n{{ template \"safety\" }}"},
-			{Role: RoleUser, Content: "Hi"},
+			{Role: RoleSystem, Content: TextContent("You are a doctor.\n{{ template \"safety\" }}")},
+			{Role: RoleUser, Content: TextContent("Hi")},
 		},
 		WithPartialsGlob(filepath.Join(dir, "partials", "*.tmpl")),
 	)
@@ -457,7 +458,7 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: "{{ .x }}"},
+		{Role: "system", Content: TextContent("{{ .x }}")},
 	})
 	require.NoError(t, err)
 	type P struct {
@@ -530,4 +531,22 @@ func TestPromptExecution_ResolveMedia_NonImageFailFast(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "currently only 'image' media type is supported")
 	assert.Contains(t, err.Error(), "audio")
+}
+
+func TestPromptExecution_Normalize(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleSystem, Content: []ContentPart{TextPart{Text: "First system."}}},
+			{Role: RoleSystem, Content: []ContentPart{TextPart{Text: "Second system."}}},
+			{Role: RoleUser, Content: []ContentPart{TextPart{Text: "User query"}}},
+		},
+	}
+	out := exec.Normalize()
+	require.Len(t, out.Messages, 2, "two consecutive system messages must merge into one")
+	assert.Equal(t, RoleSystem, out.Messages[0].Role)
+	assert.Equal(t, RoleUser, out.Messages[1].Role)
+	text := out.Messages[0].Content[0].(TextPart).Text
+	assert.Equal(t, "First system.\n\nSecond system.", text)
+	assert.Equal(t, "User query", out.Messages[1].Content[0].(TextPart).Text)
 }

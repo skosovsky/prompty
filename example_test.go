@@ -9,8 +9,8 @@ import (
 
 func ExampleNewChatPromptTemplate() {
 	msgs := []prompty.MessageTemplate{
-		{Role: prompty.RoleSystem, Content: "You are a helpful assistant."},
-		{Role: prompty.RoleUser, Content: "Hello, {{ .user_name }}!"},
+		{Role: prompty.RoleSystem, Content: prompty.TextContent("You are a helpful assistant.")},
+		{Role: prompty.RoleUser, Content: prompty.TextContent("Hello, {{ .user_name }}!")},
 	}
 	tpl, err := prompty.NewChatPromptTemplate(msgs)
 	if err != nil {
@@ -22,7 +22,7 @@ func ExampleNewChatPromptTemplate() {
 
 func ExampleChatPromptTemplate_FormatStruct() {
 	tpl, _ := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
-		{Role: prompty.RoleSystem, Content: "Hello, {{ .name }}!"},
+		{Role: prompty.RoleSystem, Content: prompty.TextContent("Hello, {{ .name }}!")},
 	})
 	type Payload struct {
 		Name string `prompt:"name"`
@@ -40,7 +40,7 @@ func ExampleChatPromptTemplate_FormatStruct() {
 func ExampleWithTools() {
 	tpl, _ := prompty.NewChatPromptTemplate(
 		[]prompty.MessageTemplate{
-			{Role: prompty.RoleSystem, Content: "Tools: {{ render_tools_as_json .Tools }}"},
+			{Role: prompty.RoleSystem, Content: prompty.TextContent("Tools: {{ render_tools_as_json .Tools }}")},
 		},
 		prompty.WithTools([]prompty.ToolDefinition{
 			{Name: "get_weather", Description: "Get weather", Parameters: nil},
@@ -53,8 +53,8 @@ func ExampleWithTools() {
 func Example() {
 	tpl, err := prompty.NewChatPromptTemplate(
 		[]prompty.MessageTemplate{
-			{Role: prompty.RoleSystem, Content: "You are {{ .bot_name }}."},
-			{Role: prompty.RoleUser, Content: "{{ .query }}"},
+			{Role: prompty.RoleSystem, Content: prompty.TextContent("You are {{ .bot_name }}.")},
+			{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .query }}")},
 		},
 		prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
 	)

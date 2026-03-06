@@ -87,7 +87,7 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 
 ## Features
 
-- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** provider-specific options are passed only via `ChatMessage.Metadata` (e.g. `anthropic_cache` for prompt caching, `gemini_search_grounding` for Gemini).
+- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** prompt caching uses `ChatMessage.CachePoint` (or `cache: true` per message in YAML); other provider options via `ChatMessage.Metadata` (e.g. `gemini_search_grounding` for Gemini).
 - **Media**: `exec.ResolveMedia(ctx, fetcher)` fills `MediaPart.Data` using a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use before `Translate` for adapters that require inline data (Anthropic, Ollama); OpenAI and Gemini accept URL natively.
 - **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
 - **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection.
@@ -164,6 +164,12 @@ cd remoteregistry/git && go build . && go test . && cd ../..
 ```
 
 Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./adapter/gemini`, `./adapter/ollama`, `./remoteregistry/git`.
+
+**Benchmarks:** the library is optimized for zero-allocation rendering (sync.Pool). To check allocs/op and B/op (and ensure PRs do not regress them), run:
+
+```bash
+go test -bench=BenchmarkFormatStruct -benchmem ./...
+```
 
 **Running examples locally:** `go.work` already includes `./examples/basic_chat`, `./examples/git_prompts`, and `./examples/funcmap_tools`. From the repo root run `go run ./examples/basic_chat` (or cd into an example dir and `go run .`). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.
 

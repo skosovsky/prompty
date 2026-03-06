@@ -33,13 +33,43 @@ func WithPartialsFS(fsys fs.FS, pattern string) ParseOption {
 	}
 }
 
-// rawMessage is the YAML shape for one message; cache: true is converted to metadata["anthropic_cache"] for backward compatibility.
+// rawContentPart is one content part in YAML (type + text or url).
+type rawContentPart struct {
+	Type string `yaml:"type"`
+	Text string `yaml:"text,omitempty"`
+	URL  string `yaml:"url,omitempty"`
+}
+
+type rawContentSlice []rawContentPart
+
+// UnmarshalYAML decodes content as either a scalar string (one text part) or a sequence of parts.
+func (r *rawContentSlice) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		*r = rawContentSlice{{Type: "text", Text: value.Value}}
+		return nil
+	}
+	if value.Kind == yaml.SequenceNode {
+		var parts []rawContentPart
+		for _, n := range value.Content {
+			var p rawContentPart
+			if err := n.Decode(&p); err != nil {
+				return err
+			}
+			parts = append(parts, p)
+		}
+		*r = parts
+		return nil
+	}
+	return fmt.Errorf("%w: content must be a string or array of parts", prompty.ErrInvalidManifest)
+}
+
+// rawMessage is the YAML shape for one message; cache: true maps to CachePoint.
 type rawMessage struct {
-	Role     string         `yaml:"role"`
-	Content  string         `yaml:"content"`
-	Optional bool           `yaml:"optional"`
-	Cache    bool           `yaml:"cache,omitempty"`
-	Metadata map[string]any `yaml:"metadata,omitempty"`
+	Role     string          `yaml:"role"`
+	Content  rawContentSlice `yaml:"content"`
+	Optional bool            `yaml:"optional"`
+	Cache    bool            `yaml:"cache,omitempty"`
+	Metadata map[string]any  `yaml:"metadata,omitempty"`
 }
 
 // fileManifest is the YAML manifest shape.
@@ -126,22 +156,20 @@ func buildTemplate(m *fileManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	if len(m.Messages) == 0 {
 		return nil, fmt.Errorf("%w: missing messages", prompty.ErrInvalidManifest)
 	}
-	// Convert raw messages to domain MessageTemplate; cache: true → metadata["anthropic_cache"] for backward compatibility.
+	// Convert raw messages to domain MessageTemplate; cache: true → CachePoint (no metadata key).
 	messages := make([]prompty.MessageTemplate, len(m.Messages))
 	for i := range m.Messages {
 		raw := &m.Messages[i]
-		meta := maps.Clone(raw.Metadata)
-		if raw.Cache {
-			if meta == nil {
-				meta = make(map[string]any)
-			}
-			meta["anthropic_cache"] = true
+		content := make([]prompty.TemplatePart, len(raw.Content))
+		for j, p := range raw.Content {
+			content[j] = prompty.TemplatePart{Type: p.Type, Text: p.Text, URL: p.URL}
 		}
 		messages[i] = prompty.MessageTemplate{
-			Role:     prompty.Role(raw.Role),
-			Content:  raw.Content,
-			Optional: raw.Optional,
-			Metadata: meta,
+			Role:       prompty.Role(raw.Role),
+			Content:    content,
+			Optional:   raw.Optional,
+			CachePoint: raw.Cache,
+			Metadata:   maps.Clone(raw.Metadata),
 		}
 	}
 	opts := []prompty.ChatTemplateOption{

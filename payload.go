@@ -163,13 +163,18 @@ func extractRequiredVarsFromParsed(parsed []parsedMessage) []string {
 	seen := make(map[string]bool)
 	var out []string
 	for _, pm := range parsed {
-		if pm.optional || pm.tpl == nil {
+		if pm.optional {
 			continue
 		}
-		for _, name := range extractVarsFromTree(pm.tpl.Tree) {
-			if !seen[name] {
-				seen[name] = true
-				out = append(out, name)
+		for _, part := range pm.parts {
+			if part.tpl == nil {
+				continue
+			}
+			for _, name := range extractVarsFromTree(part.tpl.Tree) {
+				if !seen[name] {
+					seen[name] = true
+					out = append(out, name)
+				}
 			}
 		}
 	}

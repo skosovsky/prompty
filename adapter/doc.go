@@ -10,7 +10,7 @@
 //
 //  1. Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error)
 //     - Map exec.Messages ([]ChatMessage) to the provider's message format.
-//     - When mapping messages, read msg.Metadata for provider-specific options (e.g. anthropic_cache, gemini_search_grounding); ignore unknown keys.
+//     - For prompt caching use msg.CachePoint; for other provider-specific options read msg.Metadata (e.g. gemini_search_grounding); ignore unknown keys.
 //     - For messages with RoleTool, each message SHOULD contain exactly one ToolResultPart;
 //     some adapters use only the first part when multiple are present. ToolResultPart.Content
 //     is []ContentPart (multimodal). Adapters that do not support media in tool results

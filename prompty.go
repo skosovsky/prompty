@@ -76,11 +76,12 @@ type ToolResultPart struct {
 func (ToolResultPart) isContentPart() {}
 
 // ChatMessage is a single message with role and content parts (supports multimodal).
-// Provider-specific options (e.g. anthropic_cache, gemini_search_grounding) are passed only via Metadata; adapters may ignore unknown keys.
+// CachePoint hints providers to cache this message (e.g. Anthropic ephemeral). Other provider-specific options go in Metadata.
 type ChatMessage struct {
-	Role     Role
-	Content  []ContentPart
-	Metadata map[string]any // Provider-specific flags; adapters read known keys (e.g. anthropic_cache, gemini_search_grounding)
+	Role       Role
+	Content    []ContentPart
+	CachePoint bool           // When true, adapters may set cache_control / use context caching per provider
+	Metadata   map[string]any // Provider-specific flags; adapters read known keys (e.g. gemini_search_grounding)
 }
 
 // ToolDefinition is the universal tool schema.
@@ -128,6 +129,80 @@ func (e *PromptExecution) AddMessage(msg ChatMessage) *PromptExecution {
 	return e
 }
 
+// Normalize returns a new PromptExecution with consecutive system/developer messages merged into one.
+// Content is merged: TextPart texts are concatenated with "\n\n"; other parts (e.g. MediaPart) are preserved in order.
+// Call explicitly when history may have produced adjacent system messages (e.g. to avoid provider 400).
+func (e *PromptExecution) Normalize() *PromptExecution {
+	if e == nil || len(e.Messages) == 0 {
+		return e
+	}
+	var out []ChatMessage
+	for i := 0; i < len(e.Messages); i++ {
+		cur := e.Messages[i]
+		if cur.Role != RoleSystem && cur.Role != RoleDeveloper {
+			out = append(out, cur)
+			continue
+		}
+		// Merge all consecutive system/developer messages into one.
+		merged := cur
+		for j := i + 1; j < len(e.Messages) && (e.Messages[j].Role == RoleSystem || e.Messages[j].Role == RoleDeveloper); j++ {
+			merged = mergeSystemMessages(merged, e.Messages[j])
+			i = j
+		}
+		out = append(out, merged)
+	}
+	return &PromptExecution{
+		Messages:       out,
+		Tools:          e.Tools,
+		ModelConfig:    e.ModelConfig,
+		Metadata:       e.Metadata,
+		ResponseFormat: e.ResponseFormat,
+	}
+}
+
+// mergeSystemMessages merges two system/developer messages: text parts concatenated with "\n\n", other parts appended.
+func mergeSystemMessages(a, b ChatMessage) ChatMessage {
+	texts := textFromParts(a.Content)
+	texts = append(texts, textFromParts(b.Content)...)
+	mergedText := ""
+	for i, t := range texts {
+		if i > 0 {
+			mergedText += "\n\n"
+		}
+		mergedText += t
+	}
+	content := make([]ContentPart, 0, 1+len(a.Content)+len(b.Content))
+	if mergedText != "" {
+		content = append(content, TextPart{Text: mergedText})
+	}
+	for _, p := range a.Content {
+		if _, ok := p.(TextPart); !ok {
+			content = append(content, p)
+		}
+	}
+	for _, p := range b.Content {
+		if _, ok := p.(TextPart); !ok {
+			content = append(content, p)
+		}
+	}
+	return ChatMessage{
+		Role:       a.Role,
+		Content:    content,
+		CachePoint: a.CachePoint || b.CachePoint,
+		Metadata:   a.Metadata,
+	}
+}
+
+func textFromParts(parts []ContentPart) []string {
+	var out []string
+	for _, p := range parts {
+		if t, ok := p.(TextPart); ok {
+			out = append(out, t.Text)
+		}
+	}
+	return out
+}
+
 // Fetcher defines how media URLs are resolved into raw bytes. Callers can use mediafetch.DefaultFetcher or provide a custom implementation (e.g. S3, local files).
 type Fetcher interface {
 	Fetch(ctx context.Context, url string) (data []byte, mimeType string, err error)
@@ -160,15 +235,28 @@ func (e *PromptExecution) ResolveMedia(ctx context.Context, fetcher Fetcher) err
 	return nil
 }
 
+// TemplatePart is one part of a message template (text or image_url). Type determines which field (Text or URL) is the template source.
+type TemplatePart struct {
+	Type string // "text" or "image_url"
+	Text string // Go text/template for type "text"
+	URL  string // Go text/template for type "image_url"
+}
+
+// TextContent returns a single text TemplatePart slice for convenience.
+func TextContent(text string) []TemplatePart {
+	return []TemplatePart{{Type: "text", Text: text}}
+}
+
 // MessageTemplate is the raw template for one message before rendering.
 // After FormatStruct it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
-// Provider-specific options go in Metadata (e.g. anthropic_cache: true, gemini_search_grounding: true).
+// CachePoint maps from YAML cache: true; adapters use it for prompt caching (e.g. Anthropic ephemeral).
 type MessageTemplate struct {
-	Role     Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
-	Content  string         // Go text/template: e.g. "Hello, {{ .user_name }}"
-	Optional bool           // true → skip if all referenced variables are zero-value
-	Metadata map[string]any `yaml:"metadata,omitempty"`
+	Role       Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
+	Content    []TemplatePart // Parts to render (text and/or image_url); each part is a Go text/template
+	Optional   bool           // true → skip if all referenced variables are zero-value
+	CachePoint bool           // When true, request caching for this message where supported
+	Metadata   map[string]any `yaml:"metadata,omitempty"`
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.

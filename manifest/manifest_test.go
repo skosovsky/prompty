@@ -35,7 +35,9 @@ messages:
 	assert.Equal(t, "1", tpl.Metadata.Version)
 	require.Len(t, tpl.Messages, 1)
 	assert.Equal(t, prompty.RoleSystem, tpl.Messages[0].Role)
-	assert.Equal(t, "Hello, {{ .user_name }}.", tpl.Messages[0].Content)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
+	assert.Equal(t, "Hello, {{ .user_name }}.", tpl.Messages[0].Content[0].Text)
 }
 
 func TestParseBytes_ValidFull(t *testing.T) {
@@ -98,6 +100,64 @@ messages:
 	assert.Equal(t, prompty.Role("custom_alien"), tpl.Messages[0].Role)
 }
 
+// TestParseBytes_ContentScalarErgonomics ensures scalar content in YAML is parsed as one text part.
+func TestParseBytes_ContentScalarErgonomics(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: scalar_content
+version: "1"
+messages:
+  - role: system
+    content: "Ты ассистент"
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.Len(t, tpl.Messages, 1)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
+	assert.Equal(t, "Ты ассистент", tpl.Messages[0].Content[0].Text)
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X string `json:"x"`
+	}{})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages[0].Content, 1)
+	assert.Equal(t, "Ты ассистент", exec.Messages[0].Content[0].(prompty.TextPart).Text)
+}
+
+// TestParseBytes_ContentMultimodalArray ensures array content with text and image_url renders to TextPart and MediaPart.
+func TestParseBytes_ContentMultimodalArray(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: multimodal
+version: "1"
+messages:
+  - role: user
+    content:
+      - type: text
+        text: "Look: {{ .x }}"
+      - type: image_url
+        url: "{{ .img }}"
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.Len(t, tpl.Messages, 1)
+	require.Len(t, tpl.Messages[0].Content, 2)
+	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
+	assert.Equal(t, "Look: {{ .x }}", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "image_url", tpl.Messages[0].Content[1].Type)
+	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		X   string `json:"x"`
+		Img string `json:"img"`
+	}{X: "done", Img: "https://example.com/photo.png"})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages[0].Content, 2)
+	assert.Equal(t, "Look: done", exec.Messages[0].Content[0].(prompty.TextPart).Text)
+	mp := exec.Messages[0].Content[1].(prompty.MediaPart)
+	assert.Equal(t, "image", mp.MediaType)
+	assert.Equal(t, "https://example.com/photo.png", mp.URL)
+}
+
 func TestParseFile(t *testing.T) {
 	t.Parallel()
 	tpl, err := ParseFile("testdata/valid_simple.yaml")
@@ -146,16 +206,17 @@ response_format:
 	assert.Equal(t, "my_schema", exec.ResponseFormat.Name)
 }
 
-func TestParseBytes_MetadataAnthropicCache(t *testing.T) {
+// TestParseBytes_MetadataPassThrough_ArbitraryKeys ensures arbitrary metadata keys from YAML are passed through to MessageTemplate.Metadata.
+func TestParseBytes_MetadataPassThrough_ArbitraryKeys(t *testing.T) {
 	t.Parallel()
 	data := []byte(`
-id: with_metadata_cache
+id: with_metadata_arbitrary
 version: "1"
 messages:
   - role: system
     content: "You are a helper."
     metadata:
-      anthropic_cache: true
+      custom_user_id: "u-123"
   - role: user
     content: "Hi"
 `)
@@ -164,10 +225,11 @@ messages:
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
 	require.NotNil(t, tpl.Messages[0].Metadata)
-	assert.Equal(t, true, tpl.Messages[0].Metadata["anthropic_cache"])
+	assert.Equal(t, "u-123", tpl.Messages[0].Metadata["custom_user_id"])
 	assert.Nil(t, tpl.Messages[1].Metadata)
 }
 
+// TestParseBytes_MetadataPassThrough ensures metadata from manifest reaches PromptExecution after FormatStruct.
 func TestParseBytes_MetadataPassThrough(t *testing.T) {
 	t.Parallel()
 	data := []byte(`
@@ -177,7 +239,7 @@ messages:
   - role: system
     content: "You are a helper. {{ .x }}"
     metadata:
-      anthropic_cache: true
+      gemini_search_grounding: true
   - role: user
     content: "Hi"
 `)
@@ -191,7 +253,7 @@ messages:
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
 	require.NotNil(t, exec.Messages[0].Metadata)
-	assert.Equal(t, true, exec.Messages[0].Metadata["anthropic_cache"], "metadata from manifest must reach PromptExecution")
+	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"], "metadata from manifest must reach PromptExecution")
 }
 
 func TestParseBytes_CacheTrueAndMetadata(t *testing.T) {
@@ -212,9 +274,9 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
-	// cache: true is converted to metadata["anthropic_cache"] for backward compatibility.
+	// cache: true maps to CachePoint; metadata is preserved separately.
+	assert.True(t, tpl.Messages[0].CachePoint)
 	require.NotNil(t, tpl.Messages[0].Metadata)
-	assert.Equal(t, true, tpl.Messages[0].Metadata["anthropic_cache"])
 	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
 	exec, err := tpl.FormatStruct(context.Background(), &struct {
 		X string `json:"x"`
@@ -222,7 +284,7 @@ messages:
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
+	assert.True(t, exec.Messages[0].CachePoint)
 	require.NotNil(t, exec.Messages[0].Metadata)
-	assert.Equal(t, true, exec.Messages[0].Metadata["anthropic_cache"])
 	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"])
 }

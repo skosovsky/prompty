@@ -113,7 +113,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}, Metadata: map[string]any{"anthropic_cache": true}},
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}, CachePoint: true},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
@@ -121,7 +121,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
-	// metadata.anthropic_cache: true must set CacheControl on the system block in DTO.
+	// CachePoint: true must set CacheControl on the system block in DTO.
 	assert.Equal(t, "ephemeral", string(params.System[0].CacheControl.Type))
 	require.Len(t, params.Messages, 1)
 }
