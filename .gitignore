@@ -8,3 +8,6 @@ coverage.out
 
 # IDE / OS
 .DS_Store
+
+# Example binaries (local build artifacts)
+examples/secure_prompt/secure_prompt

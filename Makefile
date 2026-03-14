@@ -1,11 +1,15 @@
-.PHONY: test test-all lint lint-all bench bench-all cover cover-all
+.PHONY: test test-all lint lint-all bench bench-all cover cover-all examples-build
 
 SUBMODULES := remoteregistry/git adapter/openai adapter/anthropic adapter/gemini adapter/ollama
 
 test:
 	@go test -race -count=1 ./...
 
-test-all: test
+examples-build:
+	@echo "=== build example examples/secure_prompt ==="
+	@go build -o /tmp/prompty-secure_prompt ./examples/secure_prompt
+
+test-all: test examples-build
 	@for dir in $(SUBMODULES); do echo "=== test $$dir ===" && (cd $$dir && go test -race -count=1 ./...) || exit 1; done
 
 lint:

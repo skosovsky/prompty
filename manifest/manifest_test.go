@@ -3,6 +3,8 @@ package manifest
 import (
 	"context"
 	"embed"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/skosovsky/prompty"
@@ -287,4 +289,38 @@ messages:
 	assert.True(t, exec.Messages[0].CachePoint)
 	require.NotNil(t, exec.Messages[0].Metadata)
 	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"])
+}
+
+// TestParseBytes_FuncMapHelpersManifestPath verifies escapeXML and randomHex through manifest-driven parsing path.
+func TestParseBytes_FuncMapHelpersManifestPath(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+id: secure
+version: "1"
+messages:
+  - role: system
+    content: |
+      {{ $d := randomHex 8 }}
+      <data_{{ $d }}>{{ .user_input | escapeXML }}</data_{{ $d }}>
+`)
+	tpl, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	exec, err := tpl.FormatStruct(context.Background(), &struct {
+		UserInput string `prompt:"user_input"`
+	}{UserInput: "</patient_input>"})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	text := exec.Messages[0].Content[0].(prompty.TextPart).Text
+	assert.Contains(t, text, "&lt;/patient_input&gt;", "escapeXML must work for manifest-driven templates")
+	assert.NotContains(t, text, "</patient_input>")
+
+	openIdx := strings.Index(text, "<data_")
+	closeIdx := strings.Index(text, "</data_")
+	require.Greater(t, openIdx, -1)
+	require.Greater(t, closeIdx, openIdx)
+	delimOpen := text[openIdx+6 : openIdx+6+16]
+	delimClose := text[closeIdx+7 : closeIdx+7+16]
+	assert.Equal(t, delimOpen, delimClose, "same randomHex value must appear in both tags")
+	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{16}$`), delimOpen)
 }

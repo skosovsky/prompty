@@ -1,9 +1,12 @@
 package prompty
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"strings"
 	"text/template"
 	"unicode/utf8"
@@ -19,7 +22,31 @@ func defaultFuncMap(tc TokenCounter) template.FuncMap {
 		"truncate_tokens":      makeTruncateTokens(tc),
 		"render_tools_as_xml":  renderToolsAsXML,
 		"render_tools_as_json": renderToolsAsJSON,
+		"escapeXML":            escapeXML,
+		"randomHex":            randomHex,
 	}
+}
+
+// escapeXML escapes text so that XML/HTML tags are not interpreted (e.g. for isolating user input in prompts).
+// Uses html.EscapeString: <, >, &, ", ' are replaced so the LLM does not treat the text as markup.
+func escapeXML(text string) string {
+	return html.EscapeString(text)
+}
+
+// randRead is used by randomHex so tests can inject a failing reader to verify error path.
+var randRead = rand.Read
+
+// randomHex returns a cryptographically random hex string of length*2 characters (length bytes).
+// Used for randomized delimiters in prompts (e.g. <data_a8f9c2>). On error returns empty string.
+func randomHex(length int) string {
+	if length <= 0 {
+		return ""
+	}
+	b := make([]byte, length)
+	if _, err := randRead(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 // truncateChars truncates text to at most maxChars runes.

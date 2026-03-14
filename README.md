@@ -81,7 +81,7 @@ func main() {
 
 - **Registry** — supplies `ChatPromptTemplate` by id (from files, embed, or remote). Interface: `GetTemplate(ctx, id) (*ChatPromptTemplate, error)`.
 - **Adapter** — maps `PromptExecution` to a provider request and parses the response. Interface: `Translate(ctx, exec) (any, error)`, `ParseResponse(ctx, raw) ([]ContentPart, error)`, and optionally `ParseStreamChunk` (or `ErrStreamNotImplemented`).
-- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(ctx, payload)` to get a `PromptExecution`. Registries can load manifests (YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`.
+- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(ctx, payload)` to get a `PromptExecution`. Registries can load manifests (YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
 Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **Adapter** → provider API. HTTP/transport is the caller’s responsibility.
 
@@ -145,6 +145,24 @@ Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validati
 - `truncate_chars .text 4000` — trim by rune count
 - `truncate_tokens .text 2000` — trim by token count (uses `TokenCounter` from template options; default `CharFallbackCounter`)
 - `render_tools_as_xml .Tools` / `render_tools_as_json .Tools` — inject tool definitions into the prompt (e.g. for local Llama)
+- `escapeXML` — escape `<`, `>`, `&`, `"`, `'` so user input does not break XML structure (see Prompt Security)
+- `randomHex N` — cryptographically random hex string of N bytes (2N chars); for randomized delimiters
+
+## Prompt Security (Data Isolation)
+
+To prevent prompt injection (e.g. user input closing a `<patient_input>` tag), escape user content and use randomized delimiters so the model cannot guess them. Example in a message template:
+
+```yaml
+{{ $delim := randomHex 8 }}
+<data_{{ $delim }}>
+{{ .UserInput | escapeXML }}
+</data_{{ $delim }}>
+```
+
+- **escapeXML** — uses `html.EscapeString`; keeps user text from being interpreted as markup.
+- **randomHex** — e.g. `randomHex 8` yields a 16-character hex string; use in opening and closing tags so the delimiter is unpredictable.
+
+See `examples/secure_prompt` for a runnable example.
 
 ## Development
 
@@ -171,7 +189,7 @@ Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./ad
 go test -bench=BenchmarkFormatStruct -benchmem ./...
 ```
 
-**Running examples locally:** `go.work` already includes `./examples/basic_chat`, `./examples/git_prompts`, and `./examples/funcmap_tools`. From the repo root run `go run ./examples/basic_chat` (or cd into an example dir and `go run .`). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.
+**Running examples locally:** `go.work` includes `./examples/basic_chat`, `./examples/git_prompts`, `./examples/funcmap_tools`, and `./examples/secure_prompt`. From the repo root run `go run ./examples/basic_chat` (or `go run ./examples/secure_prompt` for the data-isolation example). Or `cd` into an example dir and `go run .`. The secure_prompt example embeds its manifest and works from any working directory; it demonstrates both escapeXML and randomHex (randomized delimiters). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.
 
 ## License
 

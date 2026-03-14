@@ -9,5 +9,6 @@ use (
 	./examples/basic_chat
 	./examples/funcmap_tools
 	./examples/git_prompts
+	./examples/secure_prompt
 	./remoteregistry/git
 )
