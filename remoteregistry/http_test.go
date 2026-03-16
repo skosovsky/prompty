@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,23 +17,18 @@ import (
 
 func TestHTTPFetcher_Fetch_Success(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Hello {{ .user_name }}"
-`
+	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/support_agent.yaml", r.URL.Path)
-		w.Header().Set("Content-Type", "application/yaml")
-		_, _ = w.Write([]byte(manifestYAML))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestJSON))
 	}))
 	defer srv.Close()
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	reg := New(h)
+	reg, err := New(h, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
@@ -174,7 +170,8 @@ func TestHTTPFetcher_Fetch_BodyTooLarge(t *testing.T) {
 	require.ErrorIs(t, err, ErrFetchFailed)
 	assert.Contains(t, err.Error(), "exceeds")
 
-	reg := New(h)
+	reg, err := New(h, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	_, err = reg.GetTemplate(context.Background(), "large")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
@@ -182,21 +179,16 @@ func TestHTTPFetcher_Fetch_BodyTooLarge(t *testing.T) {
 
 func TestHTTPFetcher_IntegrationWithRegistry(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: integ
-version: "1"
-messages:
-  - role: system
-    content: "Integrated"
-`
+	manifestJSON := `{"id":"integ","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Integrated"}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(manifestYAML))
+		_, _ = w.Write([]byte(manifestJSON))
 	}))
 	defer srv.Close()
 
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	reg := New(h)
+	reg, err := New(h, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "integ")
 	require.NoError(t, err)

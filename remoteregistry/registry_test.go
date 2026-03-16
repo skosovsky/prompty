@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,15 +46,10 @@ func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 
 func TestRegistry_GetTemplate_Success(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Hello {{ .user_name }}"
-`
-	m := &mockFetcher{data: map[string][]byte{"support_agent": []byte(manifestYAML)}}
-	reg := New(m, WithTTL(time.Minute))
+	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"support_agent": []byte(manifestJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
@@ -68,15 +64,10 @@ messages:
 
 func TestRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	t.Parallel()
-	prodYAML := `
-id: p
-version: "1"
-messages:
-  - role: system
-    content: "Production"
-`
-	m := &mockFetcher{data: map[string][]byte{"p.production": []byte(prodYAML)}}
-	reg := New(m, WithTTL(time.Minute))
+	prodJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"p.production": []byte(prodJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p.production")
 	require.NoError(t, err)
@@ -87,18 +78,13 @@ messages:
 
 func TestRegistry_GetTemplate_TwoIds(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: env_test
-version: "1"
-messages:
-  - role: system
-    content: "Env"
-`
+	manifestJSON := `{"id":"env_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Env"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{
-		"env_test":         []byte(manifestYAML),
-		"env_test.staging": []byte(manifestYAML),
+		"env_test":         []byte(manifestJSON),
+		"env_test.staging": []byte(manifestJSON),
 	}}
-	reg := New(m, WithTTL(time.Minute))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tplEmpty, err := reg.GetTemplate(ctx, "env_test")
 	require.NoError(t, err)
@@ -115,9 +101,10 @@ func TestRegistry_GetTemplate_FetchError(t *testing.T) {
 			return nil, errors.New("network error")
 		},
 	}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "x")
+	_, err = reg.GetTemplate(ctx, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
 }
@@ -129,9 +116,10 @@ func TestRegistry_GetTemplate_NotFoundWrapsErrTemplateNotFound(t *testing.T) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, "missing")
 		},
 	}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "missing")
+	_, err = reg.GetTemplate(ctx, "missing")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -139,32 +127,27 @@ func TestRegistry_GetTemplate_NotFoundWrapsErrTemplateNotFound(t *testing.T) {
 func TestRegistry_GetTemplate_InvalidManifest(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{"bad": []byte("id: bad\nmessages: [unclosed")}}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "bad")
+	_, err = reg.GetTemplate(ctx, "bad")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
 func TestRegistry_GetTemplate_TTLExpiry(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: ttl_test
-version: "1"
-messages:
-  - role: system
-    content: "v1"
-`
+	manifestJSON := `{"id":"ttl_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v1"}]}]}`
 	called := 0
 	m := &mockFetcher{
 		fetch: func(context.Context, string) ([]byte, error) {
 			called++
-			return []byte(manifestYAML), nil
+			return []byte(manifestJSON), nil
 		},
 	}
-	reg := New(m, WithTTL(50*time.Millisecond))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(50*time.Millisecond))
+	require.NoError(t, err)
 	ctx := context.Background()
-
 	tpl, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -181,23 +164,17 @@ messages:
 
 func TestRegistry_GetTemplate_InfiniteTTL(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: infinite
-version: "1"
-messages:
-  - role: system
-    content: "cached"
-`
+	manifestJSON := `{"id":"infinite","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"cached"}]}]}`
 	called := 0
 	m := &mockFetcher{
 		fetch: func(context.Context, string) ([]byte, error) {
 			called++
-			return []byte(manifestYAML), nil
+			return []byte(manifestJSON), nil
 		},
 	}
-	reg := New(m, WithTTL(0))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(0))
+	require.NoError(t, err)
 	ctx := context.Background()
-
 	tpl, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -214,21 +191,16 @@ messages:
 
 func TestRegistry_GetTemplate_NegativeTTLNeverExpires(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: neg_ttl
-version: "1"
-messages:
-  - role: system
-    content: "v1"
-`
+	manifestJSON := `{"id":"neg_ttl","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v1"}]}]}`
 	called := 0
 	m := &mockFetcher{
 		fetch: func(context.Context, string) ([]byte, error) {
 			called++
-			return []byte(manifestYAML), nil
+			return []byte(manifestJSON), nil
 		},
 	}
-	reg := New(m, WithTTL(-time.Hour))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(-time.Hour))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
@@ -244,18 +216,10 @@ messages:
 
 func TestRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: safe
-version: "1"
-messages:
-  - role: system
-    content: "Original"
-tools:
-  - name: only_tool
-    description: "Only"
-`
-	m := &mockFetcher{data: map[string][]byte{"safe": []byte(manifestYAML)}}
-	reg := New(m)
+	manifestJSON := `{"id":"safe","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Original"}]}],"tools":[{"name":"only_tool","description":"Only","parameters":{}}]}`
+	m := &mockFetcher{data: map[string][]byte{"safe": []byte(manifestJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
@@ -279,25 +243,21 @@ func TestRegistry_GetTemplate_ContextCancellation(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := reg.GetTemplate(ctx, "x")
+	_, err = reg.GetTemplate(ctx, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRegistry_GetTemplate_Concurrent(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: conc
-version: "1"
-messages:
-  - role: system
-    content: "x"
-`
-	m := &mockFetcher{data: map[string][]byte{"conc": []byte(manifestYAML)}}
-	reg := New(m)
+	manifestJSON := `{"id":"conc","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"conc": []byte(manifestJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	type result struct {
 		tpl *prompty.ChatPromptTemplate
@@ -321,9 +281,10 @@ messages:
 func TestRegistry_GetTemplate_InvalidID(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "invalid:name")
+	_, err = reg.GetTemplate(ctx, "invalid:name")
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidName)
 	assert.Contains(t, err.Error(), ":")
@@ -332,29 +293,25 @@ func TestRegistry_GetTemplate_InvalidID(t *testing.T) {
 func TestRegistry_Close(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
-	reg := New(m)
-	err := reg.Close()
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	err = reg.Close()
 	require.NoError(t, err)
 }
 
 func TestRegistry_New_NilFetcherPanics(t *testing.T) {
 	t.Parallel()
-	require.Panics(t, func() { New(nil) })
+	require.Panics(t, func() { _, _ = New(nil) })
 }
 
 func TestRegistry_Evict(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: evict_me
-version: "1"
-messages:
-  - role: system
-    content: "x"
-`
-	m := &mockFetcher{data: map[string][]byte{"evict_me": []byte(manifestYAML)}}
-	reg := New(m, WithTTL(time.Minute))
+	manifestJSON := `{"id":"evict_me","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"evict_me": []byte(manifestJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "evict_me")
+	_, err = reg.GetTemplate(ctx, "evict_me")
 	require.NoError(t, err)
 	assert.Equal(t, 1, m.called)
 	reg.Evict("evict_me")
@@ -365,17 +322,12 @@ messages:
 
 func TestRegistry_EvictAll(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: all
-version: "1"
-messages:
-  - role: system
-    content: "x"
-`
-	m := &mockFetcher{data: map[string][]byte{"all": []byte(manifestYAML)}}
-	reg := New(m, WithTTL(time.Minute))
+	manifestJSON := `{"id":"all","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"all": []byte(manifestJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "all")
+	_, err = reg.GetTemplate(ctx, "all")
 	require.NoError(t, err)
 	reg.EvictAll()
 	_, err = reg.GetTemplate(ctx, "all")
@@ -386,7 +338,8 @@ messages:
 func TestRegistry_List_ReturnsNilWhenNoLister(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	ids, err := reg.List(ctx)
 	require.NoError(t, err)
@@ -396,9 +349,10 @@ func TestRegistry_List_ReturnsNilWhenNoLister(t *testing.T) {
 func TestRegistry_Stat_ReturnsErrWhenNoStatter(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
-	reg := New(m)
+	reg, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.Stat(ctx, "any")
+	_, err = reg.Stat(ctx, "any")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }

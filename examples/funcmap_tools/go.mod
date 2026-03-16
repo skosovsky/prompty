@@ -6,6 +6,7 @@ require (
 	github.com/openai/openai-go/v3 v3.24.0
 	github.com/skosovsky/prompty v0.0.0
 	github.com/skosovsky/prompty/adapter/openai v0.0.0
+	github.com/skosovsky/prompty/parser/yaml v0.0.0
 )
 
 require (
@@ -19,4 +20,5 @@ require (
 replace (
 	github.com/skosovsky/prompty => ../..
 	github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
+	github.com/skosovsky/prompty/parser/yaml => ../../parser/yaml
 )

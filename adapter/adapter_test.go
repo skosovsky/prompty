@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"testing"
 
 	"github.com/skosovsky/prompty"
@@ -42,7 +43,7 @@ func TestTextFromParts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := TextFromParts(tt.parts)
+			got := prompty.TextFromParts(tt.parts)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -130,6 +131,85 @@ func TestExtractModelConfig(t *testing.T) {
 			tt.check(t, got)
 		})
 	}
+}
+
+func TestNewClient_Generate(t *testing.T) {
+	t.Parallel()
+	type mockReq struct{ text string }
+	type mockResp struct{ text string }
+	mock := &mockAdapter[mockReq, mockResp]{
+		translate: func(_ context.Context, _ *prompty.PromptExecution) (mockReq, error) {
+			return mockReq{text: "req"}, nil
+		},
+		execute: func(_ context.Context, req mockReq) (mockResp, error) {
+			return mockResp{text: "resp-" + req.text}, nil
+		},
+		parseResponse: func(_ context.Context, raw mockResp) (*prompty.Response, error) {
+			return &prompty.Response{
+				Content: []prompty.ContentPart{prompty.TextPart{Text: raw.text}},
+			}, nil
+		},
+	}
+	client := NewClient(mock)
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
+		},
+	}
+	resp, err := client.Generate(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "resp-req", resp.Text())
+}
+
+func TestNewClient_GenerateStream_Polyfill(t *testing.T) {
+	t.Parallel()
+	type mockReq struct{}
+	type mockResp struct{}
+	mock := &mockAdapter[mockReq, mockResp]{
+		translate: func(_ context.Context, _ *prompty.PromptExecution) (mockReq, error) {
+			return mockReq{}, nil
+		},
+		execute: func(_ context.Context, _ mockReq) (mockResp, error) {
+			return mockResp{}, nil
+		},
+		parseResponse: func(_ context.Context, _ mockResp) (*prompty.Response, error) {
+			return &prompty.Response{
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "chunk"}},
+			}, nil
+		},
+	}
+	client := NewClient(mock)
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
+		},
+	}
+	seq := client.GenerateStream(context.Background(), exec)
+	var chunks []*prompty.ResponseChunk
+	for chunk, err := range seq {
+		require.NoError(t, err)
+		chunks = append(chunks, chunk)
+	}
+	require.Len(t, chunks, 1)
+	assert.True(t, chunks[0].IsFinished)
+	assert.Equal(t, "chunk", prompty.TextFromParts(chunks[0].Content))
+}
+
+type mockAdapter[Req, Resp any] struct {
+	translate     func(context.Context, *prompty.PromptExecution) (Req, error)
+	execute       func(context.Context, Req) (Resp, error)
+	parseResponse func(context.Context, Resp) (*prompty.Response, error)
+}
+
+func (m *mockAdapter[Req, Resp]) Translate(ctx context.Context, exec *prompty.PromptExecution) (Req, error) {
+	return m.translate(ctx, exec)
+}
+func (m *mockAdapter[Req, Resp]) Execute(ctx context.Context, req Req) (Resp, error) {
+	return m.execute(ctx, req)
+}
+func (m *mockAdapter[Req, Resp]) ParseResponse(ctx context.Context, raw Resp) (*prompty.Response, error) {
+	return m.parseResponse(ctx, raw)
 }
 
 // Cast helpers are tested in internal/cast.

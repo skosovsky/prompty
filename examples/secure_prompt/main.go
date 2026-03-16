@@ -14,13 +14,14 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
+	"github.com/skosovsky/prompty/parser/yaml"
 )
 
 //go:embed prompt.yaml
 var promptFS embed.FS
 
 func main() {
-	tpl, err := manifest.ParseFS(promptFS, "prompt.yaml")
+	tpl, err := manifest.ParseFS(promptFS, "prompt.yaml", yaml.New())
 	if err != nil {
 		log.Fatalf("ParseFS: %v", err)
 	}

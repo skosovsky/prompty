@@ -12,17 +12,23 @@ import (
 )
 
 // Adapter implements adapter.ProviderAdapter for the Ollama Chat API.
-// Translate returns *api.ChatRequest; ParseResponse expects *api.ChatResponse.
+// Req = *api.ChatRequest, Resp = *api.ChatResponse.
 type Adapter struct {
 	defaultModel string
+	client       *api.Client
 }
 
-// Option configures an Adapter (e.g. WithModel).
+// Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
 // WithModel sets the default model used when exec.ModelConfig does not contain "model".
 func WithModel(m string) Option {
 	return func(a *Adapter) { a.defaultModel = m }
+}
+
+// WithClient injects the Ollama SDK client for Execute. Required for Execute/LLMClient flow.
+func WithClient(c *api.Client) Option {
+	return func(a *Adapter) { a.client = c }
 }
 
 // New returns an Adapter with default model set to "llama3.2". Options can override the default model.
@@ -35,16 +41,7 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *api.ChatRequest.
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
-	}
-	return a.TranslateTyped(ctx, exec)
-}
-
-// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
-// it populates model_config from YAML and returns *api.ChatRequest, ready to pass to the Ollama API.
-func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*api.ChatRequest, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*api.ChatRequest, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -99,6 +96,26 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	return req, nil
 }
 
+// Execute performs the API call. Requires WithClient. Uses Stream: false for a single response.
+func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatResponse, error) {
+	if a.client == nil {
+		return nil, adapter.ErrNoClient
+	}
+	reqStream := req.Stream
+	streamOff := false
+	req.Stream = &streamOff
+	var lastResp api.ChatResponse
+	err := a.client.Chat(ctx, req, func(r api.ChatResponse) error {
+		lastResp = r
+		return nil
+	})
+	req.Stream = reqStream
+	if err != nil {
+		return nil, err
+	}
+	return &lastResp, nil
+}
+
 func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) ([]api.Message, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
@@ -107,7 +124,7 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 				return nil, fmt.Errorf("%w: Ollama does not support images in system messages", adapter.ErrUnsupportedContentType)
 			}
 		}
-		text := adapter.TextFromParts(msg.Content)
+		text := prompty.TextFromParts(msg.Content)
 		return []api.Message{{Role: "system", Content: text}}, nil
 	case prompty.RoleUser:
 		var images []api.ImageData
@@ -123,7 +140,7 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 				images = append(images, api.ImageData(data))
 			}
 		}
-		text := adapter.TextFromParts(msg.Content)
+		text := prompty.TextFromParts(msg.Content)
 		return []api.Message{{Role: "user", Content: text, Images: images}}, nil
 	case prompty.RoleAssistant:
 		for _, p := range msg.Content {
@@ -152,7 +169,7 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 				tcIndex++
 			}
 		}
-		text := adapter.TextFromParts(msg.Content)
+		text := prompty.TextFromParts(msg.Content)
 		return []api.Message{{Role: "assistant", Content: text, ToolCalls: toolCalls}}, nil
 	case prompty.RoleTool:
 		var toolResult prompty.ToolResultPart
@@ -175,7 +192,7 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 					return nil, fmt.Errorf("%w: Ollama does not support images in tool result content", adapter.ErrUnsupportedContentType)
 				}
 			}
-			text := adapter.TextFromParts(toolResult.Content)
+			text := prompty.TextFromParts(toolResult.Content)
 			return []api.Message{{
 				Role:       "tool",
 				Content:    text,
@@ -215,11 +232,10 @@ func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
 	}, nil
 }
 
-// ParseResponse converts *api.ChatResponse into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+// ParseResponse converts *api.ChatResponse into *prompty.Response.
+func (a *Adapter) ParseResponse(ctx context.Context, resp *api.ChatResponse) (*prompty.Response, error) {
 	_ = ctx
-	resp, ok := raw.(*api.ChatResponse)
-	if !ok {
+	if resp == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
 	msg := &resp.Message
@@ -244,7 +260,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return out, nil
+	return prompty.NewResponse(out), nil
 }
 
 // ParseStreamChunk parses a single Ollama stream chunk (*api.ChatResponse, Done: false).
@@ -274,4 +290,4 @@ func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty
 	return out, nil
 }
 
-var _ adapter.ProviderAdapter = (*Adapter)(nil)
+var _ adapter.ProviderAdapter[*api.ChatRequest, *api.ChatResponse] = (*Adapter)(nil)

@@ -21,7 +21,7 @@ The project is split into multiple Go modules. Install only what you need:
 
 ## Quick Start
 
-Copy-paste friendly example: load a prompt (in-memory here), format with a payload, then call the OpenAI API via the adapter. Requires `OPENAI_API_KEY` in the environment.
+Minimal example: create an LLM client from an adapter, format a prompt, call `Generate`, and read the response text. Requires `OPENAI_API_KEY` in the environment.
 
 ```go
 package main
@@ -40,48 +40,25 @@ import (
 )
 
 func main() {
-	tpl, err := prompty.NewChatPromptTemplate(
-		[]prompty.MessageTemplate{
-			{Role: prompty.RoleSystem, Content: "You are {{ .bot_name }}."},
-			{Role: prompty.RoleUser, Content: "{{ .query }}"},
-		},
-		prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
+	adp := openaiadapter.New(openaiadapter.WithClient(
+		openai.NewClient(option.WithAPIKey(os.Getenv("OPENAI_API_KEY")))),
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	type Payload struct {
-		Query string `prompt:"query"`
-	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is 2+2?"})
-	if err != nil {
-		log.Fatal(err)
-	}
+	client := adapter.NewClient(adp)
 
-	adp := openaiadapter.New()
-	params, err := adp.TranslateTyped(ctx, exec)
+	exec := prompty.SimpleChat("You are a helpful assistant.", "What is 2+2?")
+	resp, err := client.Generate(context.Background(), exec)
 	if err != nil {
 		log.Fatal(err)
 	}
-	client := openai.NewClient(option.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
-	resp, err := client.Chat.Completions.New(ctx, *params)
-	if err != nil {
-		log.Fatal(err)
-	}
-	parts, err := adp.ParseResponse(ctx, resp)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(adapter.TextFromParts(parts))
+	fmt.Println(resp.Text())
 }
 ```
 
 ## Main abstractions
 
 - **Registry** — supplies `ChatPromptTemplate` by id (from files, embed, or remote). Interface: `GetTemplate(ctx, id) (*ChatPromptTemplate, error)`.
-- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Interface: `Translate(ctx, exec) (any, error)`, `ParseResponse(ctx, raw) ([]ContentPart, error)`, and optionally `ParseStreamChunk` (or `ErrStreamNotImplemented`).
-- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(ctx, payload)` to get a `PromptExecution`. Registries can load manifests (YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
+- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Generate(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `GenerateStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
+- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(ctx, payload)` to get a `PromptExecution`. Registries can load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
 Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **Adapter** → provider API. HTTP/transport is the caller’s responsibility.
 
@@ -99,13 +76,13 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 
 | Package | Description |
 |---------|-------------|
-| `github.com/skosovsky/prompty/fileregistry` | Load YAML manifests from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
+| `github.com/skosovsky/prompty/fileregistry` | Load manifests (JSON or YAML via WithParser) from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
 | `github.com/skosovsky/prompty/embedregistry` | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials |
 | `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); TTL cache; `Evict`/`EvictAll`; `Close()` for resource cleanup |
 
 All three registries also implement optional `prompty.Lister` (`List(ctx)`) and `prompty.Statter` (`Stat(ctx, id)`). When you have a variable of type `prompty.Registry` and need to list IDs or get template metadata, use a type assertion: `if l, ok := reg.(prompty.Lister); ok { ids, err := l.List(ctx); ... }`.
 
-Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.yaml`. Name must not contain `':'`.
+Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.json`, `{name}.yaml`. Name must not contain `':'`.
 
 ## Adapters
 
@@ -116,7 +93,7 @@ Template name and environment resolve to `{name}.{env}.yaml` (or `.yml`), with f
 | `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Model set at call site |
 | `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
 
-Each adapter implements `Translate(ctx, exec) (any, error)` and `TranslateTyped(ctx, exec)` for the concrete type; `ParseResponse(ctx, raw)` returns `[]prompty.ContentPart`; `ParseStreamChunk(ctx, rawChunk)` returns stream parts or `ErrStreamNotImplemented`. Use `adapter.TextFromParts` and `adapter.ExtractModelConfig` for helpers. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini accept image URL in `MediaPart` natively. For Anthropic and Ollama (base64 only), call `exec.ResolveMedia(ctx, fetcher)` before `Translate` when using image URLs; pass a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}` or a custom implementation). Otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
+Each adapter implements `Translate(ctx, exec) (Req, error)` where Req is the provider request type; `ParseResponse(ctx, raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. Use `prompty.TextFromParts` and `adapter.ExtractModelConfig` for helpers. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini accept image URL in `MediaPart` natively. For Anthropic and Ollama (base64 only), call `exec.ResolveMedia(ctx, fetcher)` before `Translate` when using image URLs; pass a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}` or a custom implementation). Otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
 
 ## Architecture
 
@@ -135,7 +112,7 @@ flowchart LR
     Exec -->|Translate| Adapter
     Adapter -->|request| API
     API -->|raw response| Adapter
-    Adapter -->|ParseResponse| ContentParts[ContentPart]
+    Adapter -->|ParseResponse| Response["*Response"]
 ```
 
 Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validation** → **Rendering** (with tool injection) → **PromptExecution** → **Adapter** → LLM API. HTTP/transport is the caller’s responsibility.

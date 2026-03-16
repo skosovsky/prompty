@@ -18,6 +18,8 @@ var (
 	ErrReservedVariable = errors.New("prompty: reserved variable name in payload (use a different prompt tag than Tools)")
 	// ErrInvalidName indicates template name or env contains invalid characters (e.g. ':', path separators).
 	ErrInvalidName = errors.New("prompty: invalid template name")
+	// ErrNoParser indicates that a registry was created without a manifest parser (use WithParser when creating the registry).
+	ErrNoParser = errors.New("prompty: parser is required but not provided")
 )
 
 // VariableError wraps a sentinel error with variable and template context.

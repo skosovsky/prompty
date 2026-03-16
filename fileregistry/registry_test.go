@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,16 +21,11 @@ func TestMain(m *testing.M) {
 func TestFileRegistry_GetTemplate_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	dest := filepath.Join(dir, "support_agent.yaml")
-	data := []byte(`
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Hello {{ .user_name }}"
-`)
+	dest := filepath.Join(dir, "support_agent.json")
+	data := []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`)
 	require.NoError(t, os.WriteFile(dest, data, 0600))
-	reg := New(dir)
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
@@ -40,15 +36,10 @@ messages:
 func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	basePath := filepath.Join(dir, "support_agent.yaml")
-	require.NoError(t, os.WriteFile(basePath, []byte(`
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Base {{ .user_name }}"
-`), 0600))
-	reg := New(dir)
+	basePath := filepath.Join(dir, "support_agent.json")
+	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base {{ .user_name }}"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
@@ -61,21 +52,10 @@ messages:
 func TestFileRegistry_GetTemplate_IdWithDot(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.yaml"), []byte(`
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Base"
-`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.production.yaml"), []byte(`
-id: support_agent
-version: "1"
-messages:
-  - role: system
-    content: "Production"
-`), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.production.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent.production")
 	require.NoError(t, err)
@@ -84,60 +64,42 @@ messages:
 	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text)
 }
 
-func TestFileRegistry_GetTemplate_EnvSpecificInvalidYAML(t *testing.T) {
+func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.yaml"), []byte(`
-id: p
-version: "1"
-messages:
-  - role: system
-    content: "Base"
-`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.yaml"), []byte("id: p\nmessages: [unclosed"), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.json"), []byte(`{"id":"p","messages":[unclosed`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "p.prod")
+	_, err = reg.GetTemplate(ctx, "p.prod")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
-func TestFileRegistry_GetTemplate_YmlExtension(t *testing.T) {
+func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	dest := filepath.Join(dir, "agent.yml")
-	data := []byte(`
-id: agent
-version: "1"
-messages:
-  - role: system
-    content: "From .yml file"
-`)
+	dest := filepath.Join(dir, "agent.json")
+	data := []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"From .json file"}]}]}`)
 	require.NoError(t, os.WriteFile(dest, data, 0600))
-	reg := New(dir)
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "From .yml file", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "From .json file", tpl.Messages[0].Content[0].Text)
 }
 
 func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "safe.yaml"), []byte(`
-id: safe
-version: "1"
-messages:
-  - role: system
-    content: "Original"
-tools:
-  - name: only_tool
-    description: "Only"
-`), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "safe.json"), []byte(`{"id":"safe","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Original"}]}],"tools":[{"name":"only_tool","description":"Only","parameters":{}}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl1, err := reg.GetTemplate(ctx, "safe")
 	require.NoError(t, err)
@@ -156,9 +118,10 @@ tools:
 func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	reg := New(dir)
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
-	_, err := reg.GetTemplate(ctx, "nonexistent")
+	_, err = reg.GetTemplate(ctx, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -166,9 +129,10 @@ func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 func TestFileRegistry_List(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.yml"), []byte("id: b\nversion: \"1\"\nmessages:\n  - role: system\n    content: y\n"), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.json"), []byte(`{"id":"a","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.json"), []byte(`{"id":"b","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	ids, err := reg.List(ctx)
 	require.NoError(t, err)
@@ -180,9 +144,10 @@ func TestFileRegistry_List(t *testing.T) {
 func TestFileRegistry_Stat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "stat_test.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("id: stat_test\nversion: \"1\"\nmessages:\n  - role: system\n    content: z\n"), 0600))
-	reg := New(dir)
+	path := filepath.Join(dir, "stat_test.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"id":"stat_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"z"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	info, err := reg.Stat(ctx, "stat_test")
 	require.NoError(t, err)
@@ -193,27 +158,16 @@ func TestFileRegistry_Stat(t *testing.T) {
 func TestFileRegistry_Reload(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.yaml"), []byte(`
-id: p
-version: "1"
-messages:
-  - role: system
-    content: "v1"
-`), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v1"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	reg.Reload()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.yaml"), []byte(`
-id: p
-version: "1"
-messages:
-  - role: system
-    content: "v2"
-`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v2"}]}]}`), 0600))
 	tpl2, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
@@ -223,14 +177,9 @@ messages:
 func TestFileRegistry_Concurrent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.yaml"), []byte(`
-id: p
-version: "1"
-messages:
-  - role: system
-    content: "x"
-`), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	type result struct {
 		tpl *prompty.ChatPromptTemplate
@@ -258,18 +207,9 @@ func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "doctor.yaml"), []byte(`
-id: doctor
-version: "1"
-messages:
-  - role: system
-    content: |
-      You are a doctor assistant.
-      {{ template "safety" }}
-  - role: user
-    content: "Hi"
-`), 0600))
-	reg := New(dir, WithPartials("partials/*.tmpl"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "doctor.json"), []byte(`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`), 0600))
+	reg, err := New(dir, WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "doctor")
 	require.NoError(t, err)
@@ -290,14 +230,9 @@ messages:
 func TestFileRegistry_ConcurrentReloadAndGet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "q.yaml"), []byte(`
-id: q
-version: "1"
-messages:
-  - role: system
-    content: "q"
-`), 0600))
-	reg := New(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "q.json"), []byte(`{"id":"q","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"q"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	done := make(chan struct{})
 	for range 30 {

@@ -3,25 +3,29 @@ package adapter
 import (
 	"context"
 	"errors"
-	"strings"
+	"iter"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/internal/cast"
 )
 
-// ProviderAdapter maps the canonical PromptExecution to a provider-specific request type
-// and parses the provider response back to []ContentPart. No implementations in this package.
-type ProviderAdapter interface {
-	// Translate converts PromptExecution into the provider request payload (e.g. OpenAI chat params).
-	// This method exists for the generic interface; when using a concrete adapter (e.g. gemini.Adapter) directly,
-	// prefer calling TranslateTyped to avoid type assertion and get the typed request struct with model_config and provider-specific options.
-	Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error)
-	// ParseResponse converts the raw provider (unary) response into canonical content parts.
-	// Implementations MUST return a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
-	ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error)
-	// ParseStreamChunk parses a single stream chunk (e.g. SSE). Return ErrStreamNotImplemented if not supported.
-	// Implementations MUST return a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
-	ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error)
+// ProviderAdapter maps the canonical PromptExecution to a provider-specific request type,
+// executes the request via the provider API, and parses the response.
+// Req and Resp are the provider SDK types (e.g. *openai.ChatCompletionNewParams, *openai.ChatCompletion).
+// Implementations inject the SDK client via provider-specific options (e.g. adapter/openai.WithClient).
+type ProviderAdapter[Req any, Resp any] interface {
+	// Translate converts PromptExecution into the provider request payload.
+	Translate(ctx context.Context, exec *prompty.PromptExecution) (Req, error)
+	// Execute performs the API call. The adapter must hold the SDK client (injected via provider options).
+	Execute(ctx context.Context, req Req) (Resp, error)
+	// ParseResponse converts the raw provider response into canonical *prompty.Response.
+	ParseResponse(ctx context.Context, raw Resp) (*prompty.Response, error)
+}
+
+// StreamerAdapter is an optional capability for adapters that support native streaming.
+// When implemented, LLMClient.GenerateStream uses it; otherwise a polyfill runs Generate and yields one chunk.
+type StreamerAdapter[Req any] interface {
+	ExecuteStream(ctx context.Context, req Req) iter.Seq2[*prompty.ResponseChunk, error]
 }
 
 // Sentinel errors for adapter implementations. Callers should use errors.Is.
@@ -35,6 +39,7 @@ var (
 	ErrStreamNotImplemented         = errors.New("adapter: streaming not implemented for this provider")
 	ErrStructuredOutputNotSupported = errors.New("adapter: structured output (response_format) not supported by this provider")
 	ErrMediaNotResolved             = errors.New("adapter: media URL not resolved (call ResolveMedia first)")
+	ErrNoClient                     = errors.New("adapter: SDK client not set (use WithClient)")
 )
 
 // ModelParams holds well-known model config keys extracted from PromptExecution.ModelConfig.
@@ -44,17 +49,6 @@ type ModelParams struct {
 	MaxTokens   *int64
 	TopP        *float64
 	Stop        []string
-}
-
-// TextFromParts extracts concatenated text from []ContentPart, ignoring non-text parts.
-func TextFromParts(parts []prompty.ContentPart) string {
-	var b strings.Builder
-	for _, p := range parts {
-		if t, ok := p.(prompty.TextPart); ok {
-			b.WriteString(t.Text)
-		}
-	}
-	return b.String()
 }
 
 // ExtractModelConfig reads well-known keys from ModelConfig and returns typed ModelParams.

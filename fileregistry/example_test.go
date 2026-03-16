@@ -6,11 +6,15 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/fileregistry"
+	"github.com/skosovsky/prompty/manifest"
 )
 
 func ExampleRegistry_GetTemplate() {
 	dir := "testdata/prompts"
-	reg := fileregistry.New(dir)
+	reg, err := fileregistry.New(dir, fileregistry.WithParser(manifest.NewJSONParser()))
+	if err != nil {
+		panic(err)
+	}
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	if err != nil {
@@ -25,7 +29,10 @@ func ExampleRegistry_GetTemplate() {
 
 func ExampleNew() {
 	dir := "testdata/prompts"
-	reg := fileregistry.New(dir)
+	reg, err := fileregistry.New(dir, fileregistry.WithParser(manifest.NewJSONParser()))
+	if err != nil {
+		panic(err)
+	}
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	if err != nil {

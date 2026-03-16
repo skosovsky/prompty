@@ -26,7 +26,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	req, _ := a.TranslateTyped(context.Background(), exec)
+	req, _ := a.Translate(context.Background(), exec)
 	fmt.Println(req.Messages[0].Content)
 	// Output: Hello
 }
@@ -39,7 +39,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "user", req.Messages[0].Role)
@@ -55,7 +55,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 2)
 	assert.Equal(t, "system", req.Messages[0].Role)
@@ -75,7 +75,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object", "properties": map[string]any{}}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Tools, 1)
 	assert.Equal(t, "function", req.Tools[0].Type)
@@ -93,7 +93,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "tool", req.Messages[0].Role)
@@ -113,7 +113,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 			"max_tokens":  int64(100),
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Options)
 	assert.InDelta(t, 0.5, req.Options["temperature"], 1e-9)
@@ -131,7 +131,7 @@ func TestTranslate_ImagePartData(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 1)
 	assert.Len(t, req.Messages[0].Images, 1)
@@ -148,7 +148,7 @@ func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
 }
@@ -163,7 +163,7 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
@@ -190,7 +190,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "assistant", req.Messages[0].Role)
@@ -211,7 +211,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 }
@@ -222,10 +222,10 @@ func TestParseResponse_TextOnly(t *testing.T) {
 	resp := &api.ChatResponse{
 		Message: api.Message{Role: "assistant", Content: "Hello back"},
 	}
-	parts, err := a.ParseResponse(context.Background(), resp)
+	pResp, err := a.ParseResponse(context.Background(), resp)
 	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	assert.Equal(t, "Hello back", parts[0].(prompty.TextPart).Text)
+	require.Len(t, pResp.Content, 1)
+	assert.Equal(t, "Hello back", pResp.Content[0].(prompty.TextPart).Text)
 }
 
 func TestParseResponse_ToolCalls(t *testing.T) {
@@ -247,10 +247,10 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	parts, err := a.ParseResponse(context.Background(), resp)
+	pResp, err := a.ParseResponse(context.Background(), resp)
 	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	tc := parts[0].(prompty.ToolCallPart)
+	require.Len(t, pResp.Content, 1)
+	tc := pResp.Content[0].(prompty.ToolCallPart)
 	assert.Equal(t, "call_1", tc.ID)
 	assert.Equal(t, "get_weather", tc.Name)
 	assert.Contains(t, tc.Args, "NYC")
@@ -259,7 +259,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 func TestParseResponse_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(context.Background(), "not a response")
+	_, err := a.ParseResponse(context.Background(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -284,7 +284,7 @@ func TestTranslate_StopSequences(t *testing.T) {
 		},
 		ModelConfig: map[string]any{"stop": []string{"STOP", "END"}},
 	}
-	req, err := a.TranslateTyped(context.Background(), exec)
+	req, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Options)
 	assert.Equal(t, []string{"STOP", "END"}, req.Options["stop"])
@@ -300,7 +300,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
@@ -314,7 +314,7 @@ func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Schema: map[string]any{"type": "object"}},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrStructuredOutputNotSupported)
 }

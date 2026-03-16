@@ -7,13 +7,14 @@ import (
 	"testing/fstest"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
-//go:embed testdata/prompts/*.yaml
+//go:embed testdata/prompts/*.json
 var promptsFS embed.FS
 
 func TestMain(m *testing.M) {
@@ -22,14 +23,14 @@ func TestMain(m *testing.M) {
 
 func TestEmbedRegistry_New(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 }
 
 func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "agent")
@@ -43,7 +44,7 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 // TestEmbedRegistry_GetTemplate_BaseId returns base file for id "agent".
 func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "agent")
@@ -56,7 +57,7 @@ func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 
 func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "agent.prod")
@@ -69,7 +70,7 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 // TestEmbedRegistry_GetTemplate_NotFound ensures missing id returns ErrTemplateNotFound.
 func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = reg.GetTemplate(ctx, "agent.staging")
@@ -79,7 +80,7 @@ func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 
 func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = reg.GetTemplate(ctx, "nonexistent")
@@ -89,7 +90,7 @@ func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 
 func TestEmbedRegistry_List(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	ids, err := reg.List(ctx)
@@ -100,7 +101,7 @@ func TestEmbedRegistry_List(t *testing.T) {
 
 func TestEmbedRegistry_Stat(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts")
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	info, err := reg.Stat(ctx, "agent")
@@ -113,8 +114,8 @@ func TestEmbedRegistry_Stat(t *testing.T) {
 
 func TestEmbedRegistry_WithVersion(t *testing.T) {
 	t.Parallel()
-	mapFS := fstest.MapFS{"v/agent.yaml": &fstest.MapFile{Data: []byte("id: agent\nversion: \"\"\nmessages:\n  - role: system\n    content: Hi\n")}}
-	reg, err := New(mapFS, "v", WithVersion("abc123"))
+	mapFS := fstest.MapFS{"v/agent.json": &fstest.MapFile{Data: []byte(`{"id":"agent","version":"","messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)}}
+	reg, err := New(mapFS, "v", WithVersion("abc123"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	info, err := reg.Stat(ctx, "agent")
@@ -130,24 +131,14 @@ func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
 	t.Parallel()
 	// Use MapFS to simulate an embed with a manifest and partials; no real embed needed.
 	mapFS := fstest.MapFS{
-		"prompts/doctor.yaml": &fstest.MapFile{
-			Data: []byte(`
-id: doctor
-version: "1"
-messages:
-  - role: system
-    content: |
-      You are a doctor assistant.
-      {{ template "safety" }}
-  - role: user
-    content: "Hi"
-`),
+		"prompts/doctor.json": &fstest.MapFile{
+			Data: []byte(`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`),
 		},
 		"prompts/partials/safety.tmpl": &fstest.MapFile{
 			Data: []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`),
 		},
 	}
-	reg, err := New(mapFS, "prompts", WithPartials("partials/*.tmpl"))
+	reg, err := New(mapFS, "prompts", WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 	ctx := context.Background()

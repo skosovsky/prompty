@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/skosovsky/prompty v0.0.0
 	github.com/skosovsky/prompty/adapter/gemini v0.0.0
+	github.com/skosovsky/prompty/parser/yaml v0.0.0
 	github.com/skosovsky/prompty/remoteregistry/git v0.0.0
 	google.golang.org/genai v1.48.0
 )
@@ -49,5 +50,6 @@ require (
 replace (
 	github.com/skosovsky/prompty => ../..
 	github.com/skosovsky/prompty/adapter/gemini => ../../adapter/gemini
+	github.com/skosovsky/prompty/parser/yaml => ../../parser/yaml
 	github.com/skosovsky/prompty/remoteregistry/git => ../../remoteregistry/git
 )

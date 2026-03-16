@@ -46,17 +46,19 @@ func (r *Registry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 // Registry loads prompt templates via a Fetcher and caches them with TTL.
 // It implements prompty.Registry; GetTemplate returns a cloned template.
 // When the Fetcher also implements Lister and Statter, Registry implements prompty.Lister and prompty.Statter and proxies List and Stat calls to the Fetcher.
+// Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	fetcher Fetcher
+	parser  manifest.Unmarshaler
 	ttl     time.Duration
 	mu      sync.RWMutex
 	cache   map[string]*cacheEntry
 	sf      singleflight.Group
 }
 
-// New creates a Registry that uses the given Fetcher. Options (e.g. WithTTL) configure cache behavior.
-// Panics if fetcher is nil.
-func New(fetcher Fetcher, opts ...Option) *Registry {
+// New creates a Registry that uses the given Fetcher. Parser is required (use WithParser). Options (e.g. WithTTL) configure cache behavior.
+// Panics if fetcher is nil. Returns error if parser is not set.
+func New(fetcher Fetcher, opts ...Option) (*Registry, error) {
 	if fetcher == nil {
 		panic("remoteregistry: Fetcher must not be nil")
 	}
@@ -68,7 +70,10 @@ func New(fetcher Fetcher, opts ...Option) *Registry {
 	for _, opt := range opts {
 		opt(r)
 	}
-	return r
+	if r.parser == nil {
+		return nil, prompty.ErrNoParser
+	}
+	return r, nil
 }
 
 // GetTemplate returns a template by id. Uses TTL cache; on miss or expiry, fetches via Fetcher.
@@ -109,7 +114,7 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 		if err != nil {
 			return nil, err
 		}
-		tpl, err := manifest.ParseBytes(data)
+		tpl, err := manifest.Parse(data, r.parser)
 		if err != nil {
 			return nil, err
 		}

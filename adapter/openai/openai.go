@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -16,17 +17,23 @@ import (
 )
 
 // Adapter implements adapter.ProviderAdapter for the OpenAI Chat Completions API.
-// Translate returns *openai.ChatCompletionNewParams; ParseResponse expects *openai.ChatCompletion.
+// Req = *openai.ChatCompletionNewParams, Resp = *openai.ChatCompletion.
 type Adapter struct {
 	defaultModel shared.ChatModel
+	client       *openai.Client
 }
 
-// Option configures an Adapter (e.g. WithModel).
+// Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
 // WithModel sets the default model used when exec.ModelConfig does not contain "model".
 func WithModel(m shared.ChatModel) Option {
 	return func(a *Adapter) { a.defaultModel = m }
+}
+
+// WithClient injects the OpenAI SDK client for Execute. Required for Execute/LLMClient flow.
+func WithClient(c *openai.Client) Option {
+	return func(a *Adapter) { a.client = c }
 }
 
 // New returns an Adapter with default model set to gpt-4o. Options can override the default model.
@@ -38,17 +45,8 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
-// Translate converts PromptExecution into *openai.ChatCompletionNewParams.
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
-	}
-	return a.TranslateTyped(ctx, exec)
-}
-
-// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
-// it populates model_config from YAML and returns *openai.ChatCompletionNewParams, ready to pass to the OpenAI SDK.
-func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) { //nolint:revive // ctx required by ProviderAdapter
+// Translate converts PromptExecution into *openai.ChatCompletionNewParams (populates from exec.ModelConfig).
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -110,10 +108,18 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	return params, nil
 }
 
+// Execute performs the API call. Requires WithClient.
+func (a *Adapter) Execute(ctx context.Context, req *openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	if a.client == nil {
+		return nil, adapter.ErrNoClient
+	}
+	return a.client.Chat.Completions.New(ctx, *req)
+}
+
 func (a *Adapter) messageToUnion(msg prompty.ChatMessage) (openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
-		text := adapter.TextFromParts(msg.Content)
+		text := prompty.TextFromParts(msg.Content)
 		return openai.SystemMessage(text), nil
 	case prompty.RoleUser:
 		return a.userMessage(msg.Content)
@@ -148,7 +154,7 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 		}
 	}
 	if !hasImage {
-		return openai.UserMessage(adapter.TextFromParts(parts)), nil
+		return openai.UserMessage(prompty.TextFromParts(parts)), nil
 	}
 	return openai.UserMessage(contentParts), nil
 }
@@ -218,18 +224,17 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (openai.ChatCom
 					return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
 				}
 			}
-			text := adapter.TextFromParts(tr.Content)
+			text := prompty.TextFromParts(tr.Content)
 			return openai.ToolMessage(text, tr.ToolCallID), nil
 		}
 	}
 	return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
 }
 
-// ParseResponse converts *openai.ChatCompletion into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+// ParseResponse converts *openai.ChatCompletion into *prompty.Response.
+func (a *Adapter) ParseResponse(ctx context.Context, completion *openai.ChatCompletion) (*prompty.Response, error) {
 	_ = ctx
-	completion, ok := raw.(*openai.ChatCompletion)
-	if !ok {
+	if completion == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
 	if len(completion.Choices) == 0 {
@@ -252,33 +257,58 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return out, nil
+	usage := prompty.Usage{}
+	if completion.Usage.PromptTokens != 0 || completion.Usage.CompletionTokens != 0 || completion.Usage.TotalTokens != 0 {
+		usage.PromptTokens = int(completion.Usage.PromptTokens)
+		usage.CompletionTokens = int(completion.Usage.CompletionTokens)
+		usage.TotalTokens = int(completion.Usage.TotalTokens)
+	}
+	return &prompty.Response{Content: out, Usage: usage}, nil
 }
 
-// ParseStreamChunk parses a single OpenAI stream chunk (*openai.ChatCompletionChunk).
-// Emits one ContentPart per chunk (text delta or tool call delta); client glues ArgsChunk.
-func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
-	_ = ctx
-	chunk, ok := rawChunk.(*openai.ChatCompletionChunk)
-	if !ok {
-		return nil, adapter.ErrInvalidResponse
+// ExecuteStream performs streaming chat completion. Requires WithClient.
+func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionNewParams) iter.Seq2[*prompty.ResponseChunk, error] {
+	return func(yield func(*prompty.ResponseChunk, error) bool) {
+		if a.client == nil {
+			yield(nil, adapter.ErrNoClient)
+			return
+		}
+		stream := a.client.Chat.Completions.NewStreaming(ctx, *req)
+		defer func() { _ = stream.Close() }()
+
+		for stream.Next() {
+			chunk := stream.Current()
+			var content []prompty.ContentPart
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta
+				if delta.Content != "" {
+					content = append(content, prompty.TextPart{Text: delta.Content})
+				}
+				for _, tc := range delta.ToolCalls {
+					part := prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, ArgsChunk: tc.Function.Arguments}
+					content = append(content, part)
+				}
+			}
+			usage := prompty.Usage{}
+			if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 || chunk.Usage.TotalTokens != 0 {
+				usage.PromptTokens = int(chunk.Usage.PromptTokens)
+				usage.CompletionTokens = int(chunk.Usage.CompletionTokens)
+				usage.TotalTokens = int(chunk.Usage.TotalTokens)
+			}
+			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
+			resChunk := &prompty.ResponseChunk{Content: content, Usage: usage, IsFinished: isFinished}
+			if !yield(resChunk, nil) {
+				return
+			}
+		}
+		if err := stream.Err(); err != nil {
+			yield(nil, err)
+		}
 	}
-	if len(chunk.Choices) == 0 {
-		return nil, nil
-	}
-	delta := chunk.Choices[0].Delta
-	var out []prompty.ContentPart
-	if delta.Content != "" {
-		out = append(out, prompty.TextPart{Text: delta.Content})
-	}
-	for _, tc := range delta.ToolCalls {
-		part := prompty.ToolCallPart{ID: tc.ID}
-		part.Name = tc.Function.Name
-		part.ArgsChunk = tc.Function.Arguments
-		out = append(out, part)
-	}
-	return out, nil
 }
 
-// Compile-time check that Adapter implements ProviderAdapter.
-var _ adapter.ProviderAdapter = (*Adapter)(nil)
+// Compile-time checks that Adapter implements ProviderAdapter and StreamerAdapter.
+var (
+	_ adapter.ProviderAdapter[*openai.ChatCompletionNewParams, *openai.ChatCompletion] = (*Adapter)(nil)
+	_ adapter.StreamerAdapter[*openai.ChatCompletionNewParams]                         = (*Adapter)(nil)
+)

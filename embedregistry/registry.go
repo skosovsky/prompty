@@ -19,42 +19,47 @@ var (
 	_ prompty.Statter  = (*Registry)(nil)
 )
 
-// Registry loads all YAML manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates by id.
+// Registry loads all manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates by id.
+// Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	cache           map[string]*prompty.ChatPromptTemplate
 	ids             []string // ordered list of ids for List()
 	root            string
 	partialsPattern string // e.g. "partials/*.tmpl"; relative to root
+	parser          manifest.Unmarshaler
 	version         string // optional build/git version from WithVersion
 }
 
 // New walks fsys, parses every .yaml/.yml file under the given root, and returns a Registry.
-// id = basename without extension (e.g. "agent", "agent.prod").
+// id = basename without extension (e.g. "agent", "agent.prod"). Parser is required (use WithParser).
 func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 	r := &Registry{cache: make(map[string]*prompty.ChatPromptTemplate), root: root}
 	for _, opt := range opts {
 		opt(r)
+	}
+	if r.parser == nil {
+		return nil, prompty.ErrNoParser
 	}
 	seen := make(map[string]bool)
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
+		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
 			return nil
 		}
 		var tpl *prompty.ChatPromptTemplate
 		if r.partialsPattern != "" {
 			partialsPath := filepath.Join(r.root, r.partialsPattern)
-			tpl, err = manifest.ParseFSWithOptions(fsys, path, manifest.WithPartialsFS(fsys, partialsPath))
+			tpl, err = manifest.ParseFS(fsys, path, r.parser, manifest.WithPartialsFS(fsys, partialsPath))
 		} else {
-			tpl, err = manifest.ParseFS(fsys, path)
+			tpl, err = manifest.ParseFS(fsys, path, r.parser)
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		base := filepath.Base(path)
-		id := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		id := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml"), ".json")
 		tpl.Metadata.Environment = ""
 		r.cache[id] = tpl
 		if !seen[id] {
@@ -75,6 +80,11 @@ type Option func(*Registry)
 // WithPartials sets a pattern relative to root for partials (e.g. "partials/*.tmpl"); one shared partials dir for all manifests.
 func WithPartials(pattern string) Option {
 	return func(r *Registry) { r.partialsPattern = pattern }
+}
+
+// WithParser sets the manifest parser (required). Use manifest.NewJSONParser() or parser from github.com/skosovsky/prompty/parser/yaml for YAML.
+func WithParser(u manifest.Unmarshaler) Option {
+	return func(r *Registry) { r.parser = u }
 }
 
 // WithVersion sets a build or git version (e.g. from -ldflags). Stat returns it as TemplateInfo.Version.

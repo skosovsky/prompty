@@ -55,6 +55,13 @@ func WithResponseFormat(schema *SchemaDefinition) ChatTemplateOption {
 	}
 }
 
+// WithInputSchema sets the JSON Schema for template input (used by prompty-gen, FormatStruct required/partial).
+func WithInputSchema(schema *SchemaDefinition) ChatTemplateOption {
+	return func(c *ChatPromptTemplate) {
+		c.InputSchema = schema
+	}
+}
+
 // WithPartialsGlob sets a glob pattern (e.g. "_partials/*.tmpl") to parse before message templates; enables {{ template "name" }}.
 func WithPartialsGlob(glob string) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {

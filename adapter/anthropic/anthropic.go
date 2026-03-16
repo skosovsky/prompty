@@ -16,17 +16,23 @@ import (
 const defaultMaxTokens int64 = 1024
 
 // Adapter implements adapter.ProviderAdapter for the Anthropic Messages API.
-// Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
+// Req = *anthropic.MessageNewParams, Resp = *anthropic.Message.
 type Adapter struct {
 	defaultModel anthropic.Model
+	client       *anthropic.Client
 }
 
-// Option configures an Adapter (e.g. WithModel).
+// Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
 // WithModel sets the default model used when exec.ModelConfig does not contain "model".
 func WithModel(m anthropic.Model) Option {
 	return func(a *Adapter) { a.defaultModel = m }
+}
+
+// WithClient injects the Anthropic SDK client for Execute. Required for Execute/LLMClient flow.
+func WithClient(c *anthropic.Client) Option {
+	return func(a *Adapter) { a.client = c }
 }
 
 // New returns an Adapter with a default model. Options can override the default model.
@@ -39,16 +45,7 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
-	}
-	return a.TranslateTyped(ctx, exec)
-}
-
-// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
-// it populates model_config from YAML and returns *anthropic.MessageNewParams, ready to pass to the Anthropic SDK.
-func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -82,7 +79,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	for _, msg := range exec.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			text := adapter.TextFromParts(msg.Content)
+			text := prompty.TextFromParts(msg.Content)
 			systemBlocks = append(systemBlocks, a.systemTextBlock(text, msg.CachePoint))
 		case prompty.RoleUser:
 			m, err := a.userMessage(ctx, msg.Content, msg.CachePoint)
@@ -213,7 +210,7 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.Mess
 					return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 				}
 			}
-			text := adapter.TextFromParts(tr.Content)
+			text := prompty.TextFromParts(tr.Content)
 			return anthropic.NewUserMessage(anthropic.NewToolResultBlock(tr.ToolCallID, text, tr.IsError)), nil
 		}
 	}
@@ -247,11 +244,18 @@ func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string) anthropic.
 	return anthropic.NewImageBlockBase64(mime, base64Data)
 }
 
-// ParseResponse converts *anthropic.Message into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+// Execute performs the API call. Requires WithClient.
+func (a *Adapter) Execute(ctx context.Context, req *anthropic.MessageNewParams) (*anthropic.Message, error) {
+	if a.client == nil {
+		return nil, adapter.ErrNoClient
+	}
+	return a.client.Messages.New(ctx, *req)
+}
+
+// ParseResponse converts *anthropic.Message into *prompty.Response.
+func (a *Adapter) ParseResponse(ctx context.Context, msg *anthropic.Message) (*prompty.Response, error) {
 	_ = ctx
-	msg, ok := raw.(*anthropic.Message)
-	if !ok {
+	if msg == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
 	var out []prompty.ContentPart
@@ -273,7 +277,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return out, nil
+	return prompty.NewResponse(out), nil
 }
 
 // ParseStreamChunk parses a single Anthropic stream event. The SDK uses RawContentBlockDeltaUnion and
@@ -286,4 +290,4 @@ func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty
 	return nil, adapter.ErrStreamNotImplemented
 }
 
-var _ adapter.ProviderAdapter = (*Adapter)(nil)
+var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] = (*Adapter)(nil)

@@ -6,13 +6,14 @@ import (
 	"fmt"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 )
 
-//go:embed testdata/prompts/*.yaml
+//go:embed testdata/prompts/*.json
 var exampleFS embed.FS
 
 func ExampleNew() {
-	reg, err := New(exampleFS, "testdata/prompts")
+	reg, err := New(exampleFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +30,7 @@ func ExampleNew() {
 }
 
 func ExampleRegistry_GetTemplate() {
-	reg, err := New(exampleFS, "testdata/prompts")
+	reg, err := New(exampleFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	if err != nil {
 		panic(err)
 	}

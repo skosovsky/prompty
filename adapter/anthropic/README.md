@@ -23,9 +23,9 @@ messages:
 
 ## Capabilities
 
-- **Types:** `Translate` / `TranslateTyped` return `*anthropic.MessageNewParams`; `ParseResponse(ctx, raw)` expects the Anthropic message response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
+- **Types:** `Translate` returns `*anthropic.MessageNewParams`; `ParseResponse(ctx, raw)` expects the Anthropic message response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
 - **Messages:** system, user, assistant; tools and tool use. **Images:** only base64. For image URLs you must call `exec.ResolveMedia(ctx, fetcher)` before `Translate` (e.g. with `mediafetch.DefaultFetcher{}`); otherwise the adapter returns `adapter.ErrMediaNotResolved`.
 - **Tool results:** multimodal `ToolResultPart.Content`; if media in tool results is not supported, the adapter returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present.
-- **Helpers:** `adapter.TextFromParts`, `adapter.ExtractModelConfig` for model params from `exec.ModelConfig`.
+- **Helpers:** `prompty.TextFromParts`, `adapter.ExtractModelConfig` for model params from `exec.ModelConfig`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/anthropic) for the full API.

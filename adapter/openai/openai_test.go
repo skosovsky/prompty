@@ -26,7 +26,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, _ := a.TranslateTyped(context.Background(), exec)
+	params, _ := a.Translate(context.Background(), exec)
 	fmt.Println(params.Messages[0].OfUser.Content.OfString.Value)
 	// Output: Hello
 }
@@ -39,7 +39,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.NotNil(t, params.Messages[0].OfUser)
@@ -55,7 +55,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 2)
 	assert.NotNil(t, params.Messages[0].OfSystem)
@@ -74,7 +74,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Tools, 1)
 	assert.Equal(t, "get_weather", params.Tools[0].GetFunction().Name)
@@ -91,7 +91,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.NotNil(t, params.Messages[0].OfTool)
@@ -117,7 +117,7 @@ func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 }
@@ -134,7 +134,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 			"max_tokens":  int64(100),
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	assert.True(t, params.Temperature.Valid())
 	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-9)
@@ -162,7 +162,7 @@ func TestTranslate_ImagePartData(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.NotNil(t, params.Messages[0].OfUser)
@@ -182,7 +182,7 @@ func TestTranslate_ImagePartURL(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Messages[0].OfUser)
 	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
@@ -204,7 +204,7 @@ func TestTranslate_UserMessagePreservesTextImageOrder(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Messages[0].OfUser)
 	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
@@ -227,7 +227,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.NotNil(t, params.Messages[0].OfAssistant)
@@ -246,7 +246,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 	assert.Contains(t, err.Error(), "unknown_role")
@@ -260,10 +260,10 @@ func TestParseResponse_TextOnly(t *testing.T) {
 			Message: openai.ChatCompletionMessage{Content: "Hello back"},
 		}},
 	}
-	parts, err := a.ParseResponse(context.Background(), completion)
+	resp, err := a.ParseResponse(context.Background(), completion)
 	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	assert.Equal(t, "Hello back", parts[0].(prompty.TextPart).Text)
+	require.Len(t, resp.Content, 1)
+	assert.Equal(t, "Hello back", resp.Content[0].(prompty.TextPart).Text)
 }
 
 func TestParseResponse_ToolCalls(t *testing.T) {
@@ -284,19 +284,19 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			},
 		}},
 	}
-	parts, err := a.ParseResponse(context.Background(), completion)
+	resp, err := a.ParseResponse(context.Background(), completion)
 	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	tc := parts[0].(prompty.ToolCallPart)
+	require.Len(t, resp.Content, 1)
+	tc := resp.Content[0].(prompty.ToolCallPart)
 	assert.Equal(t, "call_1", tc.ID)
 	assert.Equal(t, "get_weather", tc.Name)
 	assert.JSONEq(t, `{"location":"NYC"}`, tc.Args)
 }
 
-func TestParseResponse_InvalidType(t *testing.T) {
+func TestParseResponse_NilCompletion(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(context.Background(), "not a completion")
+	_, err := a.ParseResponse(context.Background(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -320,52 +320,23 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
 
-func TestParseStreamChunk_InvalidType(t *testing.T) {
+func TestExecuteStream_NoClient(t *testing.T) {
 	t.Parallel()
-	a := New()
-	parts, err := a.ParseStreamChunk(context.Background(), nil)
-	require.Error(t, err)
-	assert.Nil(t, parts)
-	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
-}
-
-func TestParseStreamChunk_TextDelta(t *testing.T) {
-	t.Parallel()
-	a := New()
-	chunk := &openai.ChatCompletionChunk{
-		Choices: []openai.ChatCompletionChunkChoice{{
-			Delta: openai.ChatCompletionChunkChoiceDelta{Content: "Hello "},
-		}},
-	}
-	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	a := New() // no WithClient
+	req, err := a.Translate(context.Background(), &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
+		},
+	})
 	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	assert.Equal(t, "Hello ", parts[0].(prompty.TextPart).Text)
-}
-
-func TestParseStreamChunk_ToolCallChunk(t *testing.T) {
-	t.Parallel()
-	a := New()
-	chunk := &openai.ChatCompletionChunk{
-		Choices: []openai.ChatCompletionChunkChoice{{
-			Delta: openai.ChatCompletionChunkChoiceDelta{
-				ToolCalls: []openai.ChatCompletionChunkChoiceDeltaToolCall{{
-					ID: "call_1",
-					Function: openai.ChatCompletionChunkChoiceDeltaToolCallFunction{
-						Name:      "get_weather",
-						Arguments: `{"loc":"NYC"}`,
-					},
-				}},
-			},
-		}},
+	seq := a.ExecuteStream(context.Background(), req)
+	var gotErr error
+	for _, e := range seq {
+		gotErr = e
+		break
 	}
-	parts, err := a.ParseStreamChunk(context.Background(), chunk)
-	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	tc := parts[0].(prompty.ToolCallPart)
-	assert.Equal(t, "call_1", tc.ID)
-	assert.Equal(t, "get_weather", tc.Name)
-	assert.JSONEq(t, `{"loc":"NYC"}`, tc.ArgsChunk)
+	require.Error(t, gotErr)
+	assert.ErrorIs(t, gotErr, adapter.ErrNoClient)
 }
 
 func TestTranslate_ResponseFormat(t *testing.T) {
@@ -378,7 +349,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.ResponseFormat.OfJSONSchema)
 	assert.Equal(t, "reply_schema", params.ResponseFormat.OfJSONSchema.JSONSchema.Name)
@@ -394,7 +365,7 @@ func TestTranslate_StopSequences(t *testing.T) {
 		},
 		ModelConfig: map[string]any{"stop": []string{"STOP", "END"}},
 	}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.Stop.OfStringArray)
 	assert.Equal(t, []string{"STOP", "END"}, params.Stop.OfStringArray)
@@ -404,7 +375,7 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{Messages: nil}
-	params, err := a.TranslateTyped(context.Background(), exec)
+	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params)
 	assert.Empty(t, params.Messages)
@@ -420,7 +391,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.TranslateTyped(context.Background(), exec)
+	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }

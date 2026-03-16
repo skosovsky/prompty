@@ -168,8 +168,8 @@ func TestFuncMap_RandomHex(t *testing.T) {
 	assert.True(t, hexRe.MatchString(got), "randomHex output must be valid hex: %q", got)
 
 	// Zero and negative length return empty string.
-	assert.Equal(t, "", randomHex(0))
-	assert.Equal(t, "", randomHex(-1))
+	assert.Empty(t, randomHex(0))
+	assert.Empty(t, randomHex(-1))
 
 	// Two calls must produce different values (no static seed).
 	a, b := randomHex(8), randomHex(8)
@@ -228,6 +228,5 @@ func TestFuncMap_RandomHex_Integration(t *testing.T) {
 	assert.Len(t, delimOpen, 16)
 	assert.Len(t, delimClose, 16)
 	assert.Equal(t, delimOpen, delimClose, "same randomHex value must appear in both tags")
-	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]+$`), delimOpen)
+	assert.Regexp(t, `^[0-9a-f]+$`, delimOpen)
 }
-

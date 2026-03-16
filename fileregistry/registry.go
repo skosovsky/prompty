@@ -25,15 +25,17 @@ var (
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
 // Resolves id to {dir}/{id}.yaml or {dir}/{id}.yml (id = basename without extension).
+// Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	dir             string
 	partialsPattern string // e.g. "_partials/*.tmpl"; resolved relative to manifest dir when loading
+	parser          manifest.Unmarshaler
 	mu              sync.RWMutex
 	cache           map[string]*prompty.ChatPromptTemplate
 }
 
-// New creates a Registry that reads YAML manifests from dir.
-func New(dir string, opts ...Option) *Registry {
+// New creates a Registry that reads manifests from dir. Parser is required (use WithParser).
+func New(dir string, opts ...Option) (*Registry, error) {
 	r := &Registry{
 		dir:   dir,
 		cache: make(map[string]*prompty.ChatPromptTemplate),
@@ -41,7 +43,10 @@ func New(dir string, opts ...Option) *Registry {
 	for _, opt := range opts {
 		opt(r)
 	}
-	return r
+	if r.parser == nil {
+		return nil, prompty.ErrNoParser
+	}
+	return r, nil
 }
 
 // Option configures a Registry.
@@ -52,11 +57,17 @@ func WithPartials(relativePattern string) Option {
 	return func(r *Registry) { r.partialsPattern = relativePattern }
 }
 
-// idToPaths returns candidate paths for id in resolution order: id.yaml, id.yml.
+// WithParser sets the manifest parser (required). Use manifest.NewJSONParser() or parser/yaml for YAML.
+func WithParser(u manifest.Unmarshaler) Option {
+	return func(r *Registry) { r.parser = u }
+}
+
+// idToPaths returns candidate paths for id in resolution order: id.yaml, id.yml, id.json.
 func idToPaths(dir, id string) []string {
 	return []string{
 		filepath.Join(dir, id+".yaml"),
 		filepath.Join(dir, id+".yml"),
+		filepath.Join(dir, id+".json"),
 	}
 }
 
@@ -83,9 +94,9 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 	parseFile := func(path string) (*prompty.ChatPromptTemplate, error) {
 		if r.partialsPattern != "" {
 			glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
-			return manifest.ParseFileWithOptions(path, manifest.WithPartialsGlob(glob))
+			return manifest.ParseFile(path, r.parser, manifest.WithPartialsGlob(glob))
 		}
-		return manifest.ParseFile(path)
+		return manifest.ParseFile(path, r.parser)
 	}
 	for _, path := range idToPaths(r.dir, id) {
 		tpl, err := parseFile(path)
@@ -105,7 +116,7 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
-// List returns all template ids (basename without .yaml/.yml) under r.dir, unique and sorted.
+// List returns all template ids (basename without .yaml/.yml/.json) under r.dir, unique and sorted.
 func (r *Registry) List(ctx context.Context) ([]string, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -120,7 +131,7 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 			return nil
 		}
 		base := filepath.Base(path)
-		id := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		id := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml"), ".json")
 		if id == base {
 			return nil
 		}

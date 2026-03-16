@@ -6,11 +6,18 @@ model_config:
   temperature: 0.7
   max_tokens: 2048
 
-variables:
-  required:
-    - user_query
-  partial:
-    bot_name: "SupportBot"
+input_schema:
+  name: support_agent_input
+  schema:
+    type: object
+    properties:
+      user_query:
+        type: string
+      bot_name:
+        type: string
+        default: "SupportBot"
+    required:
+      - user_query
 
 tools:
   - name: get_order_status

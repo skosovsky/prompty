@@ -11,13 +11,18 @@ import (
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+
 	"github.com/skosovsky/prompty/adapter"
 	openaiadapter "github.com/skosovsky/prompty/adapter/openai"
 	"github.com/skosovsky/prompty/fileregistry"
+	"github.com/skosovsky/prompty/parser/yaml"
 )
 
 func main() {
-	reg := fileregistry.New(".")
+	reg, err := fileregistry.New(".", fileregistry.WithParser(yaml.New()))
+	if err != nil {
+		log.Fatalf("fileregistry.New: %v", err)
+	}
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "tools_demo")
 	if err != nil {
@@ -31,23 +36,16 @@ func main() {
 		log.Fatalf("FormatStruct: %v", err)
 	}
 
-	adp := openaiadapter.New()
-	params, err := adp.TranslateTyped(ctx, exec)
-	if err != nil {
-		log.Fatalf("Translate: %v", err)
-	}
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		log.Fatal("OPENAI_API_KEY is not set")
 	}
-	client := openaisdk.NewClient(option.WithAPIKey(apiKey))
-	resp, err := client.Chat.Completions.New(ctx, *params)
+	openaiClient := openaisdk.NewClient(option.WithAPIKey(apiKey))
+	adp := openaiadapter.New(openaiadapter.WithClient(&openaiClient))
+	client := adapter.NewClient(adp)
+	resp, err := client.Generate(ctx, exec)
 	if err != nil {
-		log.Fatalf("OpenAI API: %v", err)
+		log.Fatalf("Generate: %v", err)
 	}
-	parts, err := adp.ParseResponse(ctx, resp)
-	if err != nil {
-		log.Fatalf("ParseResponse: %v", err)
-	}
-	fmt.Println(adapter.TextFromParts(parts))
+	fmt.Println(resp.Text())
 }

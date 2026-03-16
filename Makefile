@@ -1,6 +1,18 @@
-.PHONY: test test-all lint lint-all bench bench-all cover cover-all examples-build
+.PHONY: test test-all lint lint-all bench bench-all cover cover-all examples-build fix-all
 
-SUBMODULES := remoteregistry/git adapter/openai adapter/anthropic adapter/gemini adapter/ollama
+SUBMODULES := parser/yaml remoteregistry/git adapter/openai adapter/anthropic adapter/gemini adapter/ollama \
+	examples/basic_chat examples/funcmap_tools examples/git_prompts examples/secure_prompt
+
+fix-all:
+	@echo "=== root: go mod tidy ==="
+	@go mod tidy
+	@echo "=== root: go work sync ==="
+	@go work sync
+	@echo "=== root: go fix ./... ==="
+	@go fix ./...
+	@echo "=== root: golangci-lint run --fix ./... ==="
+	@golangci-lint run --fix ./...
+	@for dir in $(SUBMODULES); do echo "=== fix $$dir ===" && (cd $$dir && go mod tidy && go fix ./... && golangci-lint run --fix ./...) || exit 1; done
 
 test:
 	@go test -race -count=1 ./...

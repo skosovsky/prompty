@@ -21,7 +21,7 @@ const (
 
 // ContentPart is a sealed interface for message parts. Only package types implement it via isContentPart().
 //
-// Contract: All ProviderAdapter implementations of ParseResponse and ParseStreamChunk MUST return
+// Contract: All ProviderAdapter implementations of ParseResponse MUST return
 // a []ContentPart slice containing only value types (e.g. TextPart, not *TextPart).
 // Consumers can rely on this and need no defensive checks for pointer vs value.
 type ContentPart interface {
@@ -115,6 +115,13 @@ type PromptExecution struct {
 	ModelConfig    map[string]any
 	Metadata       PromptMetadata
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
+}
+
+// NewExecution creates a new prompt execution from a set of messages.
+func NewExecution(messages []ChatMessage) *PromptExecution {
+	return &PromptExecution{
+		Messages: slices.Clone(messages),
+	}
 }
 
 // WithHistory appends history messages after system/developer block. Clones Messages before append; returns e for chaining.
@@ -233,6 +240,46 @@ func (e *PromptExecution) ResolveMedia(ctx context.Context, fetcher Fetcher) err
 		}
 	}
 	return nil
+}
+
+// NewSystemMessage creates a single system message with text content.
+func NewSystemMessage(text string) ChatMessage {
+	return ChatMessage{
+		Role:    RoleSystem,
+		Content: []ContentPart{TextPart{Text: text}},
+	}
+}
+
+// NewUserMessage creates a single user message with text content.
+func NewUserMessage(text string) ChatMessage {
+	return ChatMessage{
+		Role:    RoleUser,
+		Content: []ContentPart{TextPart{Text: text}},
+	}
+}
+
+// NewAssistantMessage creates a single assistant message with text content.
+func NewAssistantMessage(text string) ChatMessage {
+	return ChatMessage{
+		Role:    RoleAssistant,
+		Content: []ContentPart{TextPart{Text: text}},
+	}
+}
+
+// AppendValidationRetry appends to the dialogue messages about failed structured output validation
+// (assistant with the raw model output and user with the error description) and returns the updated execution.
+func (e *PromptExecution) AppendValidationRetry(badModelOutput string, validationError error) *PromptExecution {
+	if e == nil {
+		return e
+	}
+
+	// Build new messages using cloning AddMessage to avoid corrupting the existing slice.
+	msgAssistant := NewAssistantMessage(badModelOutput)
+	msgUser := NewUserMessage(fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError))
+
+	e = e.AddMessage(msgAssistant)
+	e = e.AddMessage(msgUser)
+	return e
 }
 
 // TemplatePart is one part of a message template (text or image_url). Type determines which field (Text or URL) is the template source.

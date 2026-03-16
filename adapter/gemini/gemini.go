@@ -13,32 +13,44 @@ import (
 	"google.golang.org/genai"
 )
 
-// Request wraps Contents and Config for Gemini GenerateContent API.
+// Request wraps Contents, Config and Model for Gemini GenerateContent API.
 type Request struct {
+	Model    string
 	Contents []*genai.Content
 	Config   *genai.GenerateContentConfig
 }
 
 // Adapter implements adapter.ProviderAdapter for the Google Gemini (genai) API.
-// Translate returns *gemini.Request; ParseResponse expects *genai.GenerateContentResponse.
-type Adapter struct{}
+// Req = *Request, Resp = *genai.GenerateContentResponse.
+type Adapter struct {
+	defaultModel string
+	client       *genai.Client
+}
 
-// New returns an Adapter.
-func New() *Adapter {
-	return &Adapter{}
+// Option configures an Adapter (e.g. WithModel, WithClient).
+type Option func(*Adapter)
+
+// WithModel sets the default model used when exec.ModelConfig does not contain "model".
+func WithModel(m string) Option {
+	return func(a *Adapter) { a.defaultModel = m }
+}
+
+// WithClient injects the genai client for Execute. Required for Execute/LLMClient flow.
+func WithClient(c *genai.Client) Option {
+	return func(a *Adapter) { a.client = c }
+}
+
+// New returns an Adapter with default model "gemini-2.0-flash".
+func New(opts ...Option) *Adapter {
+	a := &Adapter{defaultModel: "gemini-2.0-flash"}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // Translate converts PromptExecution into *Request (Contents + Config).
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (any, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
-	}
-	return a.TranslateTyped(ctx, exec)
-}
-
-// TranslateTyped returns the typed request struct. Use it when working with this adapter directly:
-// it populates model_config from YAML and returns *Request, ready to pass to the Gemini SDK (optionally after adjusting Config.Tools).
-func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecution) (*Request, error) {
+func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*Request, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -71,7 +83,7 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 	for _, msg := range exec.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			systemParts = append(systemParts, adapter.TextFromParts(msg.Content))
+			systemParts = append(systemParts, prompty.TextFromParts(msg.Content))
 		case prompty.RoleUser:
 			c, err := a.userContent(msg.Content)
 			if err != nil {
@@ -139,7 +151,21 @@ func (a *Adapter) TranslateTyped(ctx context.Context, exec *prompty.PromptExecut
 			config.ResponseSchema = schema
 		}
 	}
-	return &Request{Contents: contents, Config: config}, nil
+	model := a.defaultModel
+	if exec.ModelConfig != nil {
+		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
+			model = m
+		}
+	}
+	return &Request{Model: model, Contents: contents, Config: config}, nil
+}
+
+// Execute performs the API call. Requires WithClient.
+func (a *Adapter) Execute(ctx context.Context, req *Request) (*genai.GenerateContentResponse, error) {
+	if a.client == nil {
+		return nil, adapter.ErrNoClient
+	}
+	return a.client.Models.GenerateContent(ctx, req.Model, req.Contents, req.Config)
 }
 
 func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, error) {
@@ -214,7 +240,7 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 					return nil, adapter.ErrUnsupportedContentType
 				}
 			}
-			text := adapter.TextFromParts(tr.Content)
+			text := prompty.TextFromParts(tr.Content)
 			part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text})
 			return genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser), nil
 		}
@@ -222,11 +248,10 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 	return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
 }
 
-// ParseResponse converts *genai.GenerateContentResponse into []prompty.ContentPart.
-func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.ContentPart, error) {
+// ParseResponse converts *genai.GenerateContentResponse into *prompty.Response.
+func (a *Adapter) ParseResponse(ctx context.Context, resp *genai.GenerateContentResponse) (*prompty.Response, error) {
 	_ = ctx
-	resp, ok := raw.(*genai.GenerateContentResponse)
-	if !ok {
+	if resp == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
 	var out []prompty.ContentPart
@@ -249,7 +274,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, raw any) ([]prompty.Content
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return out, nil
+	return prompty.NewResponse(out), nil
 }
 
 // ParseStreamChunk parses a single Gemini stream chunk (*genai.GenerateContentResponse).
@@ -278,4 +303,4 @@ func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty
 	return out, nil
 }
 
-var _ adapter.ProviderAdapter = (*Adapter)(nil)
+var _ adapter.ProviderAdapter[*Request, *genai.GenerateContentResponse] = (*Adapter)(nil)

@@ -30,6 +30,7 @@ type ChatPromptTemplate struct {
 	ModelConfig      map[string]any
 	Metadata         PromptMetadata
 	ResponseFormat   *SchemaDefinition // JSON Schema for structured output (passed to PromptExecution)
+	InputSchema      *SchemaDefinition // JSON Schema for template input (prompty-gen, required/partial derivation)
 	RequiredVars     []string          // explicit required vars from manifest; merged with template-derived in FormatStruct
 	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter

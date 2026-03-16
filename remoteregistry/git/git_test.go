@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/parser/yaml"
 	"github.com/skosovsky/prompty/remoteregistry"
 
 	"github.com/stretchr/testify/require"
@@ -143,7 +144,8 @@ messages:
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
-	reg := remoteregistry.New(g)
+	reg, err := remoteregistry.New(g, remoteregistry.WithParser(yaml.New()))
+	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "integ")
 	require.NoError(t, err)
