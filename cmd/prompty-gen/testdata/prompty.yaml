@@ -1,0 +1,8 @@
+version: "1"
+packages:
+  - name: prompts
+    path: gen_out
+    queries:
+      - "prompts/*.yaml"
+    package: prompts
+    mode: types

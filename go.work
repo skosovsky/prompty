@@ -6,10 +6,10 @@ use (
 	./adapter/gemini
 	./adapter/ollama
 	./adapter/openai
+	./cmd/prompty-gen
 	./examples/basic_chat
 	./examples/funcmap_tools
 	./examples/git_prompts
 	./examples/secure_prompt
-	./parser/yaml
 	./remoteregistry/git
 )
