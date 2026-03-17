@@ -184,7 +184,87 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	return out
 }
 
-// FormatStruct renders the template using payload struct (prompt tags), merges variables, validates, splices history.
+// Format renders the template using the given input map (reflection-free).
+// Same merge and validation as FormatStruct. History is not supported.
+func (c *ChatPromptTemplate) Format(ctx context.Context, vars map[string]any) (*PromptExecution, error) {
+	if vars == nil {
+		vars = make(map[string]any)
+	}
+	merged := maps.Clone(c.PartialVariables)
+	if merged == nil {
+		merged = make(map[string]any)
+	}
+	maps.Copy(merged, vars)
+	merged["Tools"] = c.Tools
+	required := mergeRequiredVars(c.RequiredVars, c.requiredFromAST)
+	for _, name := range required {
+		if _, ok := merged[name]; !ok {
+			return nil, &VariableError{Variable: name, Template: c.Metadata.ID, Err: ErrMissingVariable}
+		}
+	}
+	var out []ChatMessage
+	for i, pm := range c.parsedTemplates {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		optionalSkip := pm.optional && allVarsZeroForMessage(merged, pm.vars)
+		if optionalSkip {
+			continue
+		}
+		var contentParts []ContentPart
+		for j, part := range pm.parts {
+			buf := renderPool.Get().(*bytes.Buffer)
+			if err := part.tpl.Execute(buf, merged); err != nil {
+				if buf.Cap() <= maxRenderBufferCap {
+					buf.Reset()
+					renderPool.Put(buf)
+				}
+				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
+			}
+			rendered := buf.String()
+			if buf.Cap() <= maxRenderBufferCap {
+				buf.Reset()
+				renderPool.Put(buf)
+			}
+			switch part.kind {
+			case "text":
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			case "image_url":
+				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
+			default:
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			}
+		}
+		msgMeta := maps.Clone(pm.metadata)
+		out = append(out, ChatMessage{
+			Role:       pm.role,
+			Content:    contentParts,
+			CachePoint: pm.cachePoint,
+			Metadata:   msgMeta,
+		})
+	}
+	meta := c.Metadata
+	meta.Tags = slices.Clone(meta.Tags)
+	var clonedFormat *SchemaDefinition
+	if c.ResponseFormat != nil {
+		clonedFormat = &SchemaDefinition{
+			Name:        c.ResponseFormat.Name,
+			Description: c.ResponseFormat.Description,
+		}
+		if c.ResponseFormat.Schema != nil {
+			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
+		}
+	}
+	return &PromptExecution{
+		Messages:       out,
+		Tools:          slices.Clone(c.Tools),
+		ModelConfig:    maps.Clone(c.ModelConfig),
+		Metadata:       meta,
+		ResponseFormat: clonedFormat,
+	}, nil
+}
+
+// FormatStruct renders the template using payload struct (prompt tags), merges input fields, validates, splices history.
 func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*PromptExecution, error) {
 	vars, history, err := getPayloadFields(payload)
 	if err != nil {
@@ -266,7 +346,7 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 }
 
 // ValidateVariables runs a dry-run execute with the given data (same merge as FormatStruct: PartialVariables + data + Tools).
-// Returns an error with role/message index context if any template references a missing or invalid variable.
+// Returns an error with role/message index context if any template references a missing or invalid input field.
 func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
 	merged := maps.Clone(c.PartialVariables)
 	if merged == nil {

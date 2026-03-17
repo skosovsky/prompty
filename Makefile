@@ -1,6 +1,6 @@
 .PHONY: test test-all lint lint-all bench bench-all cover cover-all examples-build fix-all
 
-SUBMODULES := parser/yaml remoteregistry/git adapter/openai adapter/anthropic adapter/gemini adapter/ollama \
+SUBMODULES := remoteregistry/git adapter/openai adapter/anthropic adapter/gemini adapter/ollama \
 	examples/basic_chat examples/funcmap_tools examples/git_prompts examples/secure_prompt
 
 fix-all:
