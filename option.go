@@ -5,7 +5,7 @@ import "io/fs"
 // ChatTemplateOption configures ChatPromptTemplate (functional options pattern).
 type ChatTemplateOption func(*ChatPromptTemplate)
 
-// WithPartialVariables sets default variables merged with payload (payload overrides).
+// WithPartialVariables sets default input values merged with payload (payload overrides).
 func WithPartialVariables(vars map[string]any) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.PartialVariables = vars
@@ -40,8 +40,8 @@ func WithTokenCounter(tc TokenCounter) ChatTemplateOption {
 	}
 }
 
-// WithRequiredVars sets explicit required variable names (e.g. from manifest variables.required).
-// Merged with variables inferred from template content in FormatStruct.
+// WithRequiredVars sets explicit required input field names (e.g. from manifest input_schema.required).
+// Merged with input fields inferred from template content in FormatStruct.
 func WithRequiredVars(vars []string) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.RequiredVars = vars

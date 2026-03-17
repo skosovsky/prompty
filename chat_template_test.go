@@ -88,7 +88,7 @@ func TestFormatStruct_MissingRequired(t *testing.T) {
 	assert.Equal(t, "user_name", ve.Variable)
 }
 
-// TestFormatStruct_ManifestRequiredVars ensures manifest-derived RequiredVars (e.g. variables.required) are enforced.
+// TestFormatStruct_ManifestRequiredVars ensures manifest-derived RequiredVars (e.g. input_schema.required) are enforced.
 func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
