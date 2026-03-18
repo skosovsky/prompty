@@ -284,7 +284,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, completion *openai.ChatComp
 	}
 	finishReason := ""
 	if completion.Choices[0].FinishReason != "" {
-		finishReason = string(completion.Choices[0].FinishReason)
+		finishReason = completion.Choices[0].FinishReason
 	}
 	return &prompty.Response{Content: out, Usage: usage, FinishReason: finishReason}, nil
 }
@@ -321,7 +321,7 @@ func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionN
 			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
 			finishReason := ""
 			if isFinished && chunk.Choices[0].FinishReason != "" {
-				finishReason = string(chunk.Choices[0].FinishReason)
+				finishReason = chunk.Choices[0].FinishReason
 			}
 			resChunk := &prompty.ResponseChunk{Content: content, Usage: usage, IsFinished: isFinished, FinishReason: finishReason}
 			if !yield(resChunk, nil) {

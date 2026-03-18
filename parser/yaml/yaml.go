@@ -66,11 +66,76 @@ func New() *Parser {
 	return &Parser{}
 }
 
+// normalizeValue converts map[any]any and nested structures to map[string]any recursively.
+// Non-string keys in maps are silently dropped (safe for JSON Schema contract).
+func normalizeValue(v any) any {
+	switch x := v.(type) {
+	case map[any]any:
+		m := make(map[string]any, len(x))
+		for k, val := range x {
+			if strKey, ok := k.(string); ok {
+				m[strKey] = normalizeValue(val)
+			}
+		}
+		return m
+	case map[string]any:
+		return normalizeMap(x)
+	case []any:
+		arr := make([]any, len(x))
+		for i, val := range x {
+			arr[i] = normalizeValue(val)
+		}
+		return arr
+	default:
+		return v
+	}
+}
+
+// normalizeMap recursively normalizes values in a map (handles nested map[any]any in values).
+func normalizeMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	res := make(map[string]any, len(m))
+	for k, v := range m {
+		res[k] = normalizeValue(v)
+	}
+	return res
+}
+
+// asMapStringAny returns v as map[string]any; returns nil if v is nil or not a map.
+func asMapStringAny(v any) map[string]any {
+	if v == nil {
+		return nil
+	}
+	m, _ := v.(map[string]any)
+	return m
+}
+
 // Unmarshal parses YAML into manifest.RawManifest.
 func (p *Parser) Unmarshal(in []byte, out any) error {
 	var fm fileManifest
 	if err := yaml.Unmarshal(in, &fm); err != nil {
 		return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
+	}
+	// Normalize dynamic maps so map[any]any becomes map[string]any for JSON Schema contract.
+	fm.ModelConfig = asMapStringAny(normalizeValue(fm.ModelConfig))
+	fm.Metadata = asMapStringAny(normalizeValue(fm.Metadata))
+	if fm.InputSchema != nil {
+		fm.InputSchema.Schema = asMapStringAny(normalizeValue(fm.InputSchema.Schema))
+	}
+	if fm.ResponseFormat != nil {
+		fm.ResponseFormat.Schema = asMapStringAny(normalizeValue(fm.ResponseFormat.Schema))
+	}
+	for i := range fm.Tools {
+		if fm.Tools[i].Parameters != nil {
+			fm.Tools[i].Parameters = asMapStringAny(normalizeValue(fm.Tools[i].Parameters))
+		}
+	}
+	for i := range fm.Messages {
+		if fm.Messages[i].Metadata != nil {
+			fm.Messages[i].Metadata = asMapStringAny(normalizeValue(fm.Messages[i].Metadata))
+		}
 	}
 	raw, ok := out.(*manifest.RawManifest)
 	if !ok {

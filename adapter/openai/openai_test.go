@@ -384,7 +384,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	require.True(t, ok, "response_format must be present in serialized JSON")
 	jsonSchema, ok := rf["json_schema"].(map[string]any)
 	require.True(t, ok)
-	assert.True(t, jsonSchema["strict"] == true, "serialized JSON must contain strict: true for OpenAI strict mode")
+	assert.Equal(t, true, jsonSchema["strict"], "serialized JSON must contain strict: true for OpenAI strict mode")
 }
 
 func TestTranslate_StopSequences(t *testing.T) {

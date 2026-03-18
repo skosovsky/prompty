@@ -13,7 +13,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-//go:embed testdata/*.json
+//go:embed testdata/*.json testdata/*.yaml
 var testdataFS embed.FS
 
 var jsonParser = NewJSONParser()

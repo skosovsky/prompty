@@ -184,3 +184,13 @@ go test ./cmd/prompty-gen/gen -run TestGenerate_Golden -args -golden=./cmd/promp
 ```
 
 Файлы `shared_gen.go.golden`, `support_agent_gen.go.golden`, `consts_gen.go.golden` будут перезаписаны. Без `-golden` тест `TestGenerate_Golden` пропускается; `TestGenerate_GoldenCompare` проверяет соответствие сгенерированного кода golden-файлам.
+
+## External DoD validation (kosmify-prompts)
+
+**Manual validation step** — cannot be run in this repo; perform in the consuming project after local tests pass.
+
+After changing prompty or prompty-gen (e.g. YAML normalization in task17-1), run external validation in a consuming project (e.g. kosmify-prompts):
+
+1. `go install ./cmd/prompty-gen` (from prompty repo)
+2. `make generate` (in kosmify-prompts)
+3. **DoD check:** Generated Input structs (e.g. `PromptsInternalRouterInput`) must contain expected fields (`CurrentDoctorTime`, `Timezone`, `ChatHistory`, etc.), not be empty — this validates YAML `input_schema.properties` are correctly normalized from `map[any]any` to `map[string]any`.
