@@ -277,20 +277,45 @@ func NewAssistantMessage(text string) ChatMessage {
 	}
 }
 
-// AppendValidationRetry appends to the dialogue messages about failed structured output validation
-// (assistant with the raw model output and user with the error description) and returns the updated execution.
-func (e *PromptExecution) AppendValidationRetry(badModelOutput string, validationError error) *PromptExecution {
+func newAssistantMessageWithContent(content []ContentPart) ChatMessage {
+	return ChatMessage{
+		Role:    RoleAssistant,
+		Content: cloneContentParts(content),
+	}
+}
+
+func newToolResultMessage(toolCallID, name, text string, isError bool) ChatMessage {
+	return ChatMessage{
+		Role: RoleTool,
+		Content: []ContentPart{
+			ToolResultPart{
+				ToolCallID: toolCallID,
+				Name:       name,
+				Content:    []ContentPart{TextPart{Text: text}},
+				IsError:    isError,
+			},
+		},
+	}
+}
+
+func (e *PromptExecution) appendRetryFeedback(badModelOutput, feedback string) *PromptExecution {
 	if e == nil {
 		return e
 	}
 
-	// Build new messages using cloning AddMessage to avoid corrupting the existing slice.
-	msgAssistant := NewAssistantMessage(badModelOutput)
-	msgUser := NewUserMessage(fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError))
-
-	e = e.AddMessage(msgAssistant)
-	e = e.AddMessage(msgUser)
+	e = e.AddMessage(NewAssistantMessage(badModelOutput))
+	e = e.AddMessage(NewUserMessage(feedback))
 	return e
+}
+
+func validationRetryFeedbackText(validationError error) string {
+	return fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError)
+}
+
+// AppendValidationRetry appends to the dialogue messages about failed structured output validation
+// (assistant with the raw model output and user with the error description) and returns the updated execution.
+func (e *PromptExecution) AppendValidationRetry(badModelOutput string, validationError error) *PromptExecution {
+	return e.appendRetryFeedback(badModelOutput, validationRetryFeedbackText(validationError))
 }
 
 // TemplatePart is one part of a message template (text or image_url). Type determines which field (Text or URL) is the template source.

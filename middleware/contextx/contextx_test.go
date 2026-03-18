@@ -326,6 +326,43 @@ func TestWithTokenBudget_BudgetMetWhenTurnIncludedBeforeBreak(t *testing.T) {
 	require.LessOrEqual(t, total, 50, "trimmed total must fit budget")
 }
 
+func TestWithTokenBudget_DownstreamMutationDoesNotLeakToOriginal(t *testing.T) {
+	t.Parallel()
+
+	base := &invokerFunc{
+		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+			exec.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
+			exec.Messages[0].Metadata["trace"].(map[string]any)["id"] = "mutated"
+			exec.Messages[0].Content[0].(*prompty.TextPart).Text = "mutated"
+			return &prompty.Response{}, nil
+		},
+	}
+	counter := &mockCounter{count: func(_ string) (int, error) { return 1, nil }}
+	inv := WithTokenBudget(100, counter)(base)
+
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role: prompty.RoleSystem,
+				Content: []prompty.ContentPart{
+					&prompty.TextPart{Text: "sys"},
+				},
+				Metadata: map[string]any{"trace": map[string]any{"id": "original"}},
+			},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
+		},
+		Metadata: prompty.PromptMetadata{
+			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+		},
+	}
+
+	_, err := inv.Generate(context.Background(), exec)
+	require.NoError(t, err)
+	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
+	assert.Equal(t, "original", exec.Messages[0].Metadata["trace"].(map[string]any)["id"])
+	assert.Equal(t, "sys", exec.Messages[0].Content[0].(*prompty.TextPart).Text)
+}
+
 type invokerFunc struct {
 	generate func(context.Context, *prompty.PromptExecution) (*prompty.Response, error)
 }

@@ -53,6 +53,9 @@ func TestExecuteWithStructuredOutput_ValidationRetry(t *testing.T) {
 	require.Len(t, spy.lastExec.Messages, initialLen+2)
 	assert.Equal(t, RoleAssistant, spy.lastExec.Messages[initialLen].Role)
 	assert.Equal(t, RoleUser, spy.lastExec.Messages[initialLen+1].Role)
+	assert.Equal(t, `{invalid`, spy.lastExec.Messages[initialLen].Content[0].(TextPart).Text)
+	assert.Contains(t, spy.lastExec.Messages[initialLen+1].Content[0].(TextPart).Text, "JSON validation failed:")
+	assert.Contains(t, spy.lastExec.Messages[initialLen+1].Content[0].(TextPart).Text, "Please fix your output.")
 }
 
 type mockLLMClient struct {
