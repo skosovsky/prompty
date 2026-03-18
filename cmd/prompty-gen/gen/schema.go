@@ -404,10 +404,14 @@ func sortedKeys(m map[string]any) []string {
 
 func (m *schemaMapper) emitStruct(ts typeSpec) jen.Code {
 	var fields []jen.Code
+	// Base path for children: ts.Name = rootName+path; children need path+propPart (matches collectTypeSpecs).
+	basePath := strings.TrimPrefix(ts.Name, m.rootName)
 	for _, propName := range sortedKeys(ts.Props) {
 		propVal := ts.Props[propName]
 		propSchema, _ := propVal.(map[string]any)
-		goType, _ := m.mapSchemaToGo(propSchema, pascal(propName))
+		// Child type name = ParentName + Pascal(propName); for array, mapSchemaToGo appends "Item".
+		nestedPath := basePath + pascal(propName)
+		goType, _ := m.mapSchemaToGo(propSchema, nestedPath)
 		optional := !ts.Required[propName]
 		typ, _ := propSchema["type"].(string)
 		if optional {

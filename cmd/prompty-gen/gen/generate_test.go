@@ -207,6 +207,125 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	}
 }
 
+// --- task17-3: nested type naming regression tests ---
+
+func TestGenerateManifestTypes_NestedObjectInOutput(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "router",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"entities": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "type RouterOutputEntities struct") {
+		t.Error("expected type RouterOutputEntities struct for nested object in Output")
+	}
+	if !strings.Contains(out, "Entities *RouterOutputEntities") {
+		t.Error("expected field Entities *RouterOutputEntities (parent-based naming)")
+	}
+}
+
+func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "router",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"payload": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"query": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "type RouterInputPayload struct") {
+		t.Error("expected type RouterInputPayload struct for nested object in Input")
+	}
+	if !strings.Contains(out, "Payload *RouterInputPayload") {
+		t.Error("expected field Payload *RouterInputPayload (parent-based naming)")
+	}
+}
+
+func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "router",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"users": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"name": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "type RouterOutputUsersItem struct") {
+		t.Error("expected type RouterOutputUsersItem struct for array-of-object in Output")
+	}
+	if !strings.Contains(out, "Users []RouterOutputUsersItem") {
+		t.Error("expected field Users []RouterOutputUsersItem (not ...OutputItemUsers)")
+	}
+}
+
 func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "no_vars",
