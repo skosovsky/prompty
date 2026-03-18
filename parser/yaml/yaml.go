@@ -47,15 +47,15 @@ type rawMessage struct {
 }
 
 type fileManifest struct {
-	ID             string                    `yaml:"id"`
-	Version        string                    `yaml:"version"`
-	Description    string                    `yaml:"description"`
-	ModelConfig    map[string]any            `yaml:"model_config"`
-	Metadata       map[string]any            `yaml:"metadata"`
-	InputSchema    *prompty.SchemaDefinition `yaml:"input_schema"`
-	Tools          []prompty.ToolDefinition  `yaml:"tools"`
-	ResponseFormat *prompty.SchemaDefinition `yaml:"response_format"`
-	Messages       []rawMessage              `yaml:"messages"`
+	ID             string                   `yaml:"id"`
+	Version        string                   `yaml:"version"`
+	Description    string                   `yaml:"description"`
+	ModelConfig    map[string]any           `yaml:"model_config"`
+	Metadata       map[string]any           `yaml:"metadata"`
+	InputSchema    map[string]any           `yaml:"input_schema"`
+	Tools          []prompty.ToolDefinition `yaml:"tools"`
+	ResponseFormat map[string]any           `yaml:"response_format"`
+	Messages       []rawMessage             `yaml:"messages"`
 }
 
 // Parser implements manifest.Unmarshaler for YAML manifests.
@@ -103,13 +103,21 @@ func normalizeMap(m map[string]any) map[string]any {
 	return res
 }
 
-// asMapStringAny returns v as map[string]any; returns nil if v is nil or not a map.
-func asMapStringAny(v any) map[string]any {
-	if v == nil {
+// rawToSchemaDefinition builds SchemaDefinition from a raw map, supporting both flat and nested formats.
+// Nested: {name, description, schema: {type, properties}} -> extracts name/desc, Schema from inner.
+// Flat: {type, properties, required, ...} -> whole map is the JSON schema.
+func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
+	if raw == nil {
 		return nil
 	}
-	m, _ := v.(map[string]any)
-	return m
+	normalized := normalizeMap(raw)
+	inner, hasSchema := normalized["schema"].(map[string]any)
+	if hasSchema && inner != nil {
+		name, _ := normalized["name"].(string)
+		desc, _ := normalized["description"].(string)
+		return &prompty.SchemaDefinition{Name: name, Description: desc, Schema: inner}
+	}
+	return &prompty.SchemaDefinition{Schema: normalized}
 }
 
 // Unmarshal parses YAML into manifest.RawManifest.
@@ -118,24 +126,14 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	if err := yaml.Unmarshal(in, &fm); err != nil {
 		return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
-	// Normalize dynamic maps so map[any]any becomes map[string]any for JSON Schema contract.
-	fm.ModelConfig = asMapStringAny(normalizeValue(fm.ModelConfig))
-	fm.Metadata = asMapStringAny(normalizeValue(fm.Metadata))
-	if fm.InputSchema != nil {
-		fm.InputSchema.Schema = asMapStringAny(normalizeValue(fm.InputSchema.Schema))
-	}
-	if fm.ResponseFormat != nil {
-		fm.ResponseFormat.Schema = asMapStringAny(normalizeValue(fm.ResponseFormat.Schema))
-	}
+	// Direct normalization (no casts needed; fileManifest fields are already map[string]any)
+	fm.ModelConfig = normalizeMap(fm.ModelConfig)
+	fm.Metadata = normalizeMap(fm.Metadata)
 	for i := range fm.Tools {
-		if fm.Tools[i].Parameters != nil {
-			fm.Tools[i].Parameters = asMapStringAny(normalizeValue(fm.Tools[i].Parameters))
-		}
+		fm.Tools[i].Parameters = normalizeMap(fm.Tools[i].Parameters)
 	}
 	for i := range fm.Messages {
-		if fm.Messages[i].Metadata != nil {
-			fm.Messages[i].Metadata = asMapStringAny(normalizeValue(fm.Messages[i].Metadata))
-		}
+		fm.Messages[i].Metadata = normalizeMap(fm.Messages[i].Metadata)
 	}
 	raw, ok := out.(*manifest.RawManifest)
 	if !ok {
@@ -146,9 +144,10 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.Description = fm.Description
 	raw.ModelConfig = fm.ModelConfig
 	raw.Metadata = fm.Metadata
-	raw.InputSchema = fm.InputSchema
+	// rawToSchemaDefinition calls normalizeMap internally
+	raw.InputSchema = rawToSchemaDefinition(fm.InputSchema)
+	raw.ResponseFormat = rawToSchemaDefinition(fm.ResponseFormat)
 	raw.Tools = fm.Tools
-	raw.ResponseFormat = fm.ResponseFormat
 	raw.Messages = make([]manifest.RawMessage, len(fm.Messages))
 	for i := range fm.Messages {
 		m := &fm.Messages[i]

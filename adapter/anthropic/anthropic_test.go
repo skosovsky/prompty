@@ -408,7 +408,7 @@ func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 	}
 	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, prompty.ErrConflictingDirectives)
+	require.ErrorIs(t, err, prompty.ErrConflictingDirectives)
 	assert.Contains(t, err.Error(), "cannot use both Tools and ResponseFormat")
 }
 
