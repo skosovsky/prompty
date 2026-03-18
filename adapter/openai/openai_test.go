@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -266,6 +267,20 @@ func TestParseResponse_TextOnly(t *testing.T) {
 	assert.Equal(t, "Hello back", resp.Content[0].(prompty.TextPart).Text)
 }
 
+func TestParseResponse_FinishReason(t *testing.T) {
+	t.Parallel()
+	a := New()
+	completion := &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			Message:      openai.ChatCompletionMessage{Content: "done"},
+			FinishReason: "stop",
+		}},
+	}
+	resp, err := a.ParseResponse(context.Background(), completion)
+	require.NoError(t, err)
+	assert.Equal(t, "stop", resp.FinishReason)
+}
+
 func TestParseResponse_ToolCalls(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -352,8 +367,24 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	params, err := a.Translate(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.ResponseFormat.OfJSONSchema)
-	assert.Equal(t, "reply_schema", params.ResponseFormat.OfJSONSchema.JSONSchema.Name)
-	assert.Equal(t, schema, params.ResponseFormat.OfJSONSchema.JSONSchema.Schema)
+	js := params.ResponseFormat.OfJSONSchema.JSONSchema
+	assert.Equal(t, "reply_schema", js.Name)
+	assert.True(t, js.Strict.Value, "OpenAI ResponseFormat must use strict mode")
+	// strict mode requires additionalProperties: false for type object; normalization adds it
+	gotSchema, ok := js.Schema.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "object", gotSchema["type"])
+	assert.Equal(t, false, gotSchema["additionalProperties"], "strict mode requires additionalProperties: false")
+	// DoD: serialized request JSON must contain "strict":true
+	raw, err := json.Marshal(params)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	rf, ok := m["response_format"].(map[string]any)
+	require.True(t, ok, "response_format must be present in serialized JSON")
+	jsonSchema, ok := rf["json_schema"].(map[string]any)
+	require.True(t, ok)
+	assert.True(t, jsonSchema["strict"] == true, "serialized JSON must contain strict: true for OpenAI strict mode")
 }
 
 func TestTranslate_StopSequences(t *testing.T) {

@@ -70,7 +70,7 @@ func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 // Fetch tries URLs in order: {base}/{id}.yaml, {base}/{id}.yml.
 // On 404 proceeds to next; on other non-2xx returns ErrHTTPStatus.
 func (h *HTTPFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
-	if err := ValidateID(id); err != nil {
+	if err := ValidatePathForFetch(id); err != nil {
 		return nil, err
 	}
 	for _, path := range CandidatePaths(id) {
@@ -88,8 +88,11 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 
 var errNotFound = errors.New("not found")
 
-func (h *HTTPFetcher) fetchOne(ctx context.Context, path string) ([]byte, error) {
-	u := h.baseURL + "/" + url.PathEscape(path)
+func (h *HTTPFetcher) fetchOne(ctx context.Context, pathSeg string) ([]byte, error) {
+	u, err := url.JoinPath(h.baseURL, pathSeg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: join path: %w", ErrFetchFailed, err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)

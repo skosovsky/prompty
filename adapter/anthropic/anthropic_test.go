@@ -308,6 +308,18 @@ func TestParseResponse_TextOnly(t *testing.T) {
 	assert.Equal(t, "Hello back", resp.Content[0].(prompty.TextPart).Text)
 }
 
+func TestParseResponse_FinishReason(t *testing.T) {
+	t.Parallel()
+	a := New()
+	msg := &anthropic.Message{
+		Content:    []anthropic.ContentBlockUnion{{Type: "text", Text: "done"}},
+		StopReason: anthropic.StopReasonEndTurn,
+	}
+	resp, err := a.ParseResponse(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Equal(t, "end_turn", resp.FinishReason)
+}
+
 func TestParseResponse_NilMessage(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -337,6 +349,25 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Contains(t, tc.Args, "NYC")
 }
 
+func TestParseResponse_OutputFormatToolUse_ReturnsTextPart(t *testing.T) {
+	t.Parallel()
+	a := New()
+	structuredJSON := `{"name":"Alice","age":30}`
+	msg := &anthropic.Message{
+		Content: []anthropic.ContentBlockUnion{{
+			Type:  "tool_use",
+			ID:    "call_out",
+			Name:  outputFormatToolName,
+			Input: json.RawMessage(structuredJSON),
+		}},
+	}
+	resp, err := a.ParseResponse(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, resp.Content, 1)
+	tp := resp.Content[0].(prompty.TextPart)
+	assert.JSONEq(t, structuredJSON, tp.Text)
+}
+
 func TestParseResponse_EmptyContent(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -361,18 +392,77 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
-func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
+func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ResponseFormat: &prompty.SchemaDefinition{Schema: map[string]any{"type": "object"}},
+		Tools: []prompty.ToolDefinition{
+			{Name: "my_tool", Description: "A tool", Parameters: map[string]any{"type": "object"}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}},
+		},
 	}
 	_, err := a.Translate(context.Background(), exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrStructuredOutputNotSupported)
+	assert.ErrorIs(t, err, prompty.ErrConflictingDirectives)
+	assert.Contains(t, err.Error(), "cannot use both Tools and ResponseFormat")
+}
+
+func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Name:   "my_schema",
+			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}, "required": []any{"x"}},
+		},
+	}
+	params, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+	require.Len(t, params.Tools, 1)
+	assert.Equal(t, outputFormatToolName, params.Tools[0].OfTool.Name)
+	assert.NotNil(t, params.Tools[0].OfTool.InputSchema.Properties)
+	assert.Equal(t, []string{"x"}, params.Tools[0].OfTool.InputSchema.Required)
+	// tool_choice forces output_format
+	require.NotNil(t, params.ToolChoice.OfTool)
+	assert.Equal(t, outputFormatToolName, params.ToolChoice.OfTool.Name)
+}
+
+func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"x": map[string]any{"type": "string"}},
+				"required":             []any{"x"},
+				"additionalProperties": false,
+				"description":          "Strict output schema",
+			},
+		},
+	}
+	params, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, params.Tools, 1)
+	schema := params.Tools[0].OfTool.InputSchema
+	assert.NotNil(t, schema.Properties)
+	assert.Equal(t, []string{"x"}, schema.Required)
+	// ExtraFields should contain additionalProperties and description for strict decoding
+	assert.NotNil(t, schema.ExtraFields)
+	assert.Equal(t, false, schema.ExtraFields["additionalProperties"])
+	assert.Equal(t, "Strict output schema", schema.ExtraFields["description"])
 }
 
 func TestParseStreamChunk_NotImplemented(t *testing.T) {

@@ -51,7 +51,7 @@ type fileManifest struct {
 	Version        string                    `yaml:"version"`
 	Description    string                    `yaml:"description"`
 	ModelConfig    map[string]any            `yaml:"model_config"`
-	Metadata       struct{ Tags []string }   `yaml:"metadata"`
+	Metadata       map[string]any            `yaml:"metadata"`
 	InputSchema    *prompty.SchemaDefinition `yaml:"input_schema"`
 	Tools          []prompty.ToolDefinition  `yaml:"tools"`
 	ResponseFormat *prompty.SchemaDefinition `yaml:"response_format"`
@@ -80,7 +80,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.Version = fm.Version
 	raw.Description = fm.Description
 	raw.ModelConfig = fm.ModelConfig
-	raw.Metadata.Tags = fm.Metadata.Tags
+	raw.Metadata = fm.Metadata
 	raw.InputSchema = fm.InputSchema
 	raw.Tools = fm.Tools
 	raw.ResponseFormat = fm.ResponseFormat

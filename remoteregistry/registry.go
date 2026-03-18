@@ -44,11 +44,13 @@ func (r *Registry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 }
 
 // Registry loads prompt templates via a Fetcher and caches them with TTL.
+// WithEnvironment(env): Fetch tries id.env first, then id (e.g. internal/router.prod before internal/router).
 // It implements prompty.Registry; GetTemplate returns a cloned template.
 // When the Fetcher also implements Lister and Statter, Registry implements prompty.Lister and prompty.Statter and proxies List and Stat calls to the Fetcher.
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	fetcher Fetcher
+	env     string // e.g. "prod"; Fetch tries id.env first
 	parser  manifest.Unmarshaler
 	ttl     time.Duration
 	mu      sync.RWMutex
@@ -76,12 +78,35 @@ func New(fetcher Fetcher, opts ...Option) (*Registry, error) {
 	return r, nil
 }
 
+// fetchCandidateIDs returns ids to try in order: with env first, then base id.
+func fetchCandidateIDs(id, env string) []string {
+	if env != "" {
+		return []string{id + "." + env, id}
+	}
+	return []string{id}
+}
+
 // GetTemplate returns a template by id. Uses TTL cache; on miss or expiry, fetches via Fetcher.
-// id must pass ValidateID. Returns a cloned template; enriches tpl.Metadata.Version from Stat if Fetcher implements Statter.
+// With env, tries id.env first. id must pass ValidateID. Returns a cloned template; enriches tpl.Metadata.Version from Stat if Fetcher implements Statter.
 func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
+	candidates := fetchCandidateIDs(id, r.env)
+	for _, cid := range candidates {
+		tpl, err := r.getTemplateByID(ctx, cid)
+		if err == nil {
+			return tpl, nil
+		}
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// getTemplateByID fetches and caches a single id (no env fallback).
+func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	now := time.Now()
 
 	r.mu.RLock()
@@ -127,9 +152,6 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 		return tpl, nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
-		}
 		return nil, err
 	}
 	tpl := v.(*prompty.ChatPromptTemplate)

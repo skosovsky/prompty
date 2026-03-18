@@ -6,12 +6,16 @@ import (
 	"strings"
 
 	"github.com/dave/jennifer/jen"
+	"github.com/skosovsky/prompty"
 )
 
-// ValidatePromptID returns an error if id is empty or reserved (e.g. "prompts" collides with type Prompts).
+// ValidatePromptID returns an error if id is empty, invalid (per prompty.ValidateID), or reserved.
 func ValidatePromptID(id string) error {
 	if id == "" {
 		return fmt.Errorf("manifest id must be non-empty")
+	}
+	if err := prompty.ValidateID(id); err != nil {
+		return err
 	}
 	if idToConstName(id) == "Prompts" {
 		return fmt.Errorf("manifest id %q is reserved (collision with type Prompts)", id)
@@ -51,7 +55,9 @@ func GenerateConstsPackage(pkgName string, ids []string) (*jen.File, error) {
 	return f, nil
 }
 
-// idToConstName converts manifest id (e.g. "support-agent") to PascalCase const name (e.g. SupportAgent).
+// idToConstName converts manifest id (e.g. "support-agent", "internal/router") to PascalCase const name.
 func idToConstName(id string) string {
-	return pascal(strings.ReplaceAll(id, "-", "_"))
+	s := strings.ReplaceAll(id, "/", "_")
+	s = strings.ReplaceAll(s, "-", "_")
+	return pascal(s)
 }

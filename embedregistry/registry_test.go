@@ -3,6 +3,7 @@ package embedregistry
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"testing"
 	"testing/fstest"
 
@@ -57,14 +58,14 @@ func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 
 func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	t.Parallel()
-	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
+	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent.prod")
+	tpl, err := reg.GetTemplate(ctx, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent prod")
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent prod", "env variant should be preferred")
 }
 
 // TestEmbedRegistry_GetTemplate_NotFound ensures missing id returns ErrTemplateNotFound.
@@ -73,7 +74,7 @@ func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "agent.staging")
+	_, err = reg.GetTemplate(ctx, "agent/staging")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -95,8 +96,58 @@ func TestEmbedRegistry_List(t *testing.T) {
 	ctx := context.Background()
 	ids, err := reg.List(ctx)
 	require.NoError(t, err)
+	// List returns base IDs only; agent.prod and agent both yield "agent"
 	assert.Contains(t, ids, "agent")
-	assert.Contains(t, ids, "agent.prod")
+	assert.NotContains(t, ids, "agent.prod")
+}
+
+func TestEmbedRegistry_List_BaseIDNormalization(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		fsys   fs.FS
+		root   string
+		wantID string
+	}{
+		{"base+env json", fstest.MapFS{
+			"p/agent.json":      &fstest.MapFile{Data: []byte(`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`)},
+			"p/agent.prod.json": &fstest.MapFile{Data: []byte(`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`)},
+		}, "p", "agent"},
+		{"nested slash path json", fstest.MapFS{
+			"q/internal/router.prod.json": &fstest.MapFile{Data: []byte(`{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"Router"}]}]}`)},
+		}, "q", "internal/router"},
+		{"extensions yaml yml", fstest.MapFS{
+			"r/foo.yaml": &fstest.MapFile{Data: []byte(`{"id":"foo","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`)},
+			"r/bar.yml":  &fstest.MapFile{Data: []byte(`{"id":"bar","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`)},
+		}, "r", "foo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			reg, err := New(tt.fsys, tt.root, WithParser(manifest.NewJSONParser()))
+			require.NoError(t, err)
+			ids, err := reg.List(context.Background())
+			require.NoError(t, err)
+			assert.Contains(t, ids, tt.wantID)
+			// List returns base IDs only; env suffix must not appear
+			assert.NotContains(t, ids, tt.wantID+".prod")
+		})
+	}
+}
+
+func TestEmbedRegistry_List_ExcludesPartials(t *testing.T) {
+	t.Parallel()
+	mapFS := fstest.MapFS{
+		"prompts/main.json":                &fstest.MapFile{Data: []byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`)},
+		"prompts/partials/dummy.tmpl":      &fstest.MapFile{Data: []byte(`{{ define "dummy" }}x{{ end }}`)},
+		"prompts/partials/accidental.yaml": &fstest.MapFile{Data: []byte(`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Should not appear"}]}]}`)},
+	}
+	reg, err := New(mapFS, "prompts", WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ids, err := reg.List(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, ids, "main", "manifest in root should appear")
+	assert.NotContains(t, ids, "partials/accidental", "manifests under partials dir must be excluded")
 }
 
 func TestEmbedRegistry_Stat(t *testing.T) {
@@ -110,6 +161,25 @@ func TestEmbedRegistry_Stat(t *testing.T) {
 	_, err = reg.Stat(ctx, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestEmbedRegistry_Stat_EnvFallback(t *testing.T) {
+	t.Parallel()
+	// Only env variant exists; Stat should find it via same candidate lookup as GetTemplate.
+	mapFS := fstest.MapFS{
+		"p/agent.prod.json": &fstest.MapFile{Data: []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod only"}]}]}`)},
+	}
+	reg, err := New(mapFS, "p", WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	info, err := reg.Stat(ctx, "agent")
+	require.NoError(t, err)
+	assert.Equal(t, "agent", info.ID)
+	tpl, err := reg.GetTemplate(ctx, "agent")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Prod only")
 }
 
 func TestEmbedRegistry_WithVersion(t *testing.T) {

@@ -27,12 +27,13 @@ type RawMessage struct {
 // RawManifest is the raw representation of a manifest, sufficient for buildTemplate.
 // Supports Unmarshaler (YAML, JSON, etc.).
 // InputSchema is the JSON Schema for input typing (prompty-gen, required/partial derivation).
+// Metadata is the full metadata block; BuildFromRaw extracts tags and puts the rest into Extras.
 type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
 	ModelConfig    map[string]any            `json:"model_config"`
-	Metadata       struct{ Tags []string }   `json:"metadata"`
+	Metadata       map[string]any            `json:"metadata"`
 	InputSchema    *prompty.SchemaDefinition `json:"input_schema"`
 	Tools          []prompty.ToolDefinition  `json:"tools"`
 	ResponseFormat *prompty.SchemaDefinition `json:"response_format"`

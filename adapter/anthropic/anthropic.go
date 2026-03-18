@@ -44,13 +44,15 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
+const outputFormatToolName = "output_format"
+
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
 func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	if exec.ResponseFormat != nil {
-		return nil, adapter.ErrStructuredOutputNotSupported
+	if exec.ResponseFormat != nil && len(exec.Tools) > 0 {
+		return nil, fmt.Errorf("anthropic adapter: cannot use both Tools and ResponseFormat simultaneously: %w", prompty.ErrConflictingDirectives)
 	}
 	params := &anthropic.MessageNewParams{
 		MaxTokens: defaultMaxTokens,
@@ -107,8 +109,22 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		params.System = systemBlocks
 	}
 	params.Messages = messages
+	// ResponseFormat: add mandatory output_format tool with schema; force tool_choice.
+	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
+		schema := schemaToToolInput(exec.ResponseFormat.Schema)
+		desc := exec.ResponseFormat.Description
+		if desc == "" {
+			desc = "Output must strictly follow this JSON schema"
+		}
+		outputTool := anthropic.ToolUnionParamOfTool(schema, outputFormatToolName)
+		outputTool.OfTool.Description = anthropic.String(desc)
+		params.Tools = append(params.Tools, outputTool)
+		params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputFormatToolName)
+	}
 	if len(exec.Tools) > 0 {
-		params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
+		if params.Tools == nil {
+			params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
+		}
 		for _, t := range exec.Tools {
 			schema := toolSchemaFromParameters(t.Parameters)
 			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
@@ -121,8 +137,48 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 	return params, nil
 }
 
-// toolSchemaFromParameters builds ToolInputSchemaParam from a JSON Schema map, preserving type, properties, required.
-// Other top-level keys (e.g. additionalProperties, description) are not set; the SDK struct may not support them.
+// schemaToToolInput converts ResponseFormat.Schema (full JSON Schema) to ToolInputSchemaParam.
+// Passes through type, properties, required; other top-level keys (additionalProperties, description, etc.) go to ExtraFields for strict output.
+func schemaToToolInput(schema map[string]any) anthropic.ToolInputSchemaParam {
+	s := anthropic.ToolInputSchemaParam{
+		Type: constant.Object("object"),
+	}
+	if schema == nil {
+		return s
+	}
+	if t, ok := schema["type"].(string); ok && t != "" {
+		s.Type = constant.Object(t)
+	}
+	if p, ok := schema["properties"].(map[string]any); ok {
+		s.Properties = p
+	}
+	if r, ok := schema["required"].([]any); ok {
+		required := make([]string, 0, len(r))
+		for _, x := range r {
+			if str, ok := x.(string); ok {
+				required = append(required, str)
+			}
+		}
+		s.Required = required
+	} else if r, ok := schema["required"].([]string); ok {
+		s.Required = r
+	}
+	// Pass through remaining top-level schema keys for strict constrained decoding
+	known := map[string]bool{"type": true, "properties": true, "required": true}
+	extras := make(map[string]any)
+	for k, v := range schema {
+		if !known[k] && v != nil {
+			extras[k] = v
+		}
+	}
+	if len(extras) > 0 {
+		s.ExtraFields = extras
+	}
+	return s
+}
+
+// toolSchemaFromParameters builds ToolInputSchemaParam from a JSON Schema map.
+// Passes through type, properties, required; other top-level keys go to ExtraFields.
 func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaParam {
 	schema := anthropic.ToolInputSchemaParam{
 		Type: constant.Object("object"),
@@ -146,6 +202,16 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 		schema.Required = required
 	} else if r, ok := params["required"].([]string); ok {
 		schema.Required = r
+	}
+	known := map[string]bool{"type": true, "properties": true, "required": true}
+	extras := make(map[string]any)
+	for k, v := range params {
+		if !known[k] && v != nil {
+			extras[k] = v
+		}
+	}
+	if len(extras) > 0 {
+		schema.ExtraFields = extras
 	}
 	return schema
 }
@@ -271,13 +337,22 @@ func (a *Adapter) ParseResponse(ctx context.Context, msg *anthropic.Message) (*p
 			if args == "" {
 				args = "{}"
 			}
-			out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
+			// Structured output: output_format tool returns JSON as text for consumer to parse
+			if block.Name == outputFormatToolName {
+				out = append(out, prompty.TextPart{Text: args})
+			} else {
+				out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
+			}
 		}
 	}
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return prompty.NewResponse(out), nil
+	resp := prompty.NewResponse(out)
+	if msg.StopReason != "" {
+		resp.FinishReason = string(msg.StopReason)
+	}
+	return resp, nil
 }
 
 // ParseStreamChunk parses a single Anthropic stream event. The SDK uses RawContentBlockDeltaUnion and

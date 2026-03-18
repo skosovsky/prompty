@@ -11,5 +11,6 @@ use (
 	./examples/funcmap_tools
 	./examples/git_prompts
 	./examples/secure_prompt
+	./ext/otelprompty
 	./remoteregistry/git
 )

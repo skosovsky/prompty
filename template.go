@@ -181,6 +181,9 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	if len(c.Metadata.Tags) > 0 {
 		out.Metadata.Tags = slices.Clone(c.Metadata.Tags)
 	}
+	if c.Metadata.Extras != nil {
+		out.Metadata.Extras = maps.Clone(c.Metadata.Extras)
+	}
 	return out
 }
 
@@ -245,6 +248,9 @@ func (c *ChatPromptTemplate) Format(ctx context.Context, vars map[string]any) (*
 	}
 	meta := c.Metadata
 	meta.Tags = slices.Clone(meta.Tags)
+	if meta.Extras != nil {
+		meta.Extras = maps.Clone(meta.Extras)
+	}
 	var clonedFormat *SchemaDefinition
 	if c.ResponseFormat != nil {
 		clonedFormat = &SchemaDefinition{
@@ -326,6 +332,9 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 	out = spliceHistory(out, history)
 	meta := c.Metadata
 	meta.Tags = slices.Clone(meta.Tags)
+	if meta.Extras != nil {
+		meta.Extras = maps.Clone(meta.Extras)
+	}
 	var clonedFormat *SchemaDefinition
 	if c.ResponseFormat != nil {
 		clonedFormat = &SchemaDefinition{

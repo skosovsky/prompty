@@ -61,7 +61,7 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 
 // Fetch reads the manifest from the repo: {dir}/{id}.yaml or {dir}/{id}.yml.
 func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
-	if err := remoteregistry.ValidateID(id); err != nil {
+	if err := remoteregistry.ValidatePathForFetch(id); err != nil {
 		return nil, err
 	}
 	g.mu.Lock()
@@ -108,7 +108,14 @@ func (g *Fetcher) resolvePath(id string) (absPath, relPathFromRepoRoot string, e
 
 var _ remoteregistry.Lister = (*Fetcher)(nil)
 
-// ListIDs returns all template ids (relative path without .yaml/.yml, forward slashes) under the manifest dir.
+func trimManifestExt(s string) string {
+	for _, ext := range []string{".yaml", ".yml", ".json"} {
+		s = strings.TrimSuffix(s, ext)
+	}
+	return s
+}
+
+// ListIDs returns all template ids (relative path without .yaml/.yml/.json, forward slashes) under the manifest dir.
 func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -129,7 +136,7 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 			return nil
 		}
 		base := filepath.Base(path)
-		id := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		id := trimManifestExt(base)
 		if id == base {
 			return nil
 		}
@@ -138,7 +145,7 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 			return nil
 		}
 		id = filepath.ToSlash(rel)
-		id = strings.TrimSuffix(strings.TrimSuffix(id, ".yaml"), ".yml")
+		id = trimManifestExt(id)
 		if !seen[id] {
 			seen[id] = true
 			ids = append(ids, id)

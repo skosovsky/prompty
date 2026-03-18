@@ -2,6 +2,8 @@ package remoteregistry
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 
 	"github.com/skosovsky/prompty"
 )
@@ -25,14 +27,25 @@ type Statter interface {
 	Stat(ctx context.Context, id string) (prompty.TemplateInfo, error)
 }
 
-// ValidateID checks that id is safe for use in paths and cache keys.
-// Delegates to prompty.ValidateID so all registries share the same rules.
+// ValidateID checks that id is a valid user-facing prompt id (slash-only, no extension).
+// Delegates to prompty.ValidateID. Use for user input validation.
 func ValidateID(id string) error {
 	return prompty.ValidateID(id)
 }
 
-// CandidatePaths returns manifest filename candidates in resolution order: id.yaml, id.yml.
-// Call ValidateID(id) before using the result with filesystem paths.
+// ValidatePathForFetch validates path for internal fetcher use. Allows env suffix (id.env).
+// Used when registry passes candidate ids like "internal/router.prod" for env fallback.
+func ValidatePathForFetch(id string) error {
+	if id == "" {
+		return fmt.Errorf("%w: id must not be empty", prompty.ErrInvalidName)
+	}
+	if !fs.ValidPath(id) {
+		return fmt.Errorf("%w: invalid path %q", prompty.ErrInvalidName, id)
+	}
+	return nil
+}
+
+// CandidatePaths returns manifest filename candidates in resolution order: id.yaml, id.yml, id.json.
 func CandidatePaths(id string) []string {
-	return []string{id + ".yaml", id + ".yml"}
+	return []string{id + ".yaml", id + ".yml", id + ".json"}
 }

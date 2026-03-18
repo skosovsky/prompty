@@ -49,19 +49,19 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Base")
 }
 
-func TestFileRegistry_GetTemplate_IdWithDot(t *testing.T) {
+func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.production.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`), 0600))
-	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("production"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent.production")
+	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text, "env variant should be preferred over base")
 }
 
 func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
@@ -69,10 +69,11 @@ func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.json"), []byte(`{"id":"p","messages":[unclosed`), 0600))
-	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "p.prod")
+	// With env "prod", GetTemplate("p") tries p.prod.json first; it has invalid JSON
+	_, err = reg.GetTemplate(ctx, "p")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -115,6 +116,39 @@ func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	assert.Equal(t, "only_tool", tpl2.Tools[0].Name)
 }
 
+func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal"), 0755))
+	basePath := filepath.Join(dir, "internal", "router.json")
+	envPath := filepath.Join(dir, "internal", "router.prod.json")
+	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base router"}]}]}`), 0600))
+	require.NoError(t, os.WriteFile(envPath, []byte(`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod router"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "internal/router")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Prod router", tpl.Messages[0].Content[0].Text, "env variant should be preferred")
+}
+
+func TestFileRegistry_GetTemplate_WithEnvironment_FallbackToBase(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "agent.json")
+	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base only"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "agent")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Base only", tpl.Messages[0].Content[0].Text, "should fallback to base when env variant missing")
+}
+
 func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -124,6 +158,46 @@ func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 	_, err = reg.GetTemplate(ctx, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		id       string
+		env      string
+		ext      string
+		baseText string
+		envText  string
+		wantText string
+	}{
+		{"slash_id_yaml", "internal/router", "prod", ".yaml", "Base", "Prod", "Prod"},
+		{"slash_id_yml", "a/b", "staging", ".yml", "Base", "Staging", "Staging"},
+		{"slash_id_json", "x/y/z", "dev", ".json", "Base", "Dev", "Dev"},
+		{"fallback_when_env_missing", "flat", "prod", ".json", "BaseOnly", "", "BaseOnly"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			basePath := filepath.Join(dir, tt.id+tt.ext)
+			require.NoError(t, os.MkdirAll(filepath.Dir(basePath), 0755))
+			require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.baseText+`"}]}]}`), 0600))
+			if tt.envText != "" {
+				envPath := filepath.Join(dir, tt.id+"."+tt.env+tt.ext)
+				require.NoError(t, os.MkdirAll(filepath.Dir(envPath), 0755))
+				require.NoError(t, os.WriteFile(envPath, []byte(`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.envText+`"}]}]}`), 0600))
+			}
+			reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment(tt.env))
+			require.NoError(t, err)
+			ctx := context.Background()
+			tpl, err := reg.GetTemplate(ctx, tt.id)
+			require.NoError(t, err)
+			require.NotNil(t, tpl)
+			require.Len(t, tpl.Messages[0].Content, 1)
+			assert.Equal(t, tt.wantText, tpl.Messages[0].Content[0].Text)
+		})
+	}
 }
 
 func TestFileRegistry_List(t *testing.T) {
@@ -139,6 +213,83 @@ func TestFileRegistry_List(t *testing.T) {
 	assert.Len(t, ids, 2)
 	assert.Contains(t, ids, "a")
 	assert.Contains(t, ids, "b")
+}
+
+func TestFileRegistry_List_SlashIdsNested(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal/router.yaml"), []byte(`{"id":"internal/router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`), 0600))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ctx := context.Background()
+	ids, err := reg.List(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, ids, "internal/router")
+}
+
+func TestFileRegistry_List_BaseIDNormalization(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		files  map[string]string // path -> json content
+		wantID string
+	}{
+		{"base+env yields base only", map[string]string{
+			"agent.json":      `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`,
+			"agent.prod.json": `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`,
+		}, "agent"},
+		{"nested slash path", map[string]string{
+			"internal/router.prod.json": `{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"R"}]}]}`,
+		}, "internal/router"},
+		{"extensions yaml yml json", map[string]string{
+			"foo.yaml": `{"id":"foo","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`,
+			"bar.yml":  `{"id":"bar","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`,
+			"baz.json": `{"id":"baz","messages":[{"role":"system","content":[{"type":"text","text":"J"}]}]}`,
+		}, "foo"},
+		{"excludes partials", map[string]string{
+			"main.json":                `{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"M"}]}]}`,
+			"partials/accidental.json": `{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"X"}]}]}`,
+		}, "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for path, data := range tt.files {
+				fullPath := filepath.Join(dir, path)
+				require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+				require.NoError(t, os.WriteFile(fullPath, []byte(data), 0600))
+			}
+			opts := []Option{WithParser(manifest.NewJSONParser())}
+			if tt.name == "excludes partials" {
+				opts = append(opts, WithPartials("partials/*.tmpl"))
+			}
+			reg, err := New(dir, opts...)
+			require.NoError(t, err)
+			ids, err := reg.List(context.Background())
+			require.NoError(t, err)
+			assert.Contains(t, ids, tt.wantID)
+			assert.NotContains(t, ids, tt.wantID+".prod", "List returns base IDs only")
+			if tt.name == "excludes partials" {
+				assert.NotContains(t, ids, "partials/accidental")
+			}
+		})
+	}
+}
+
+func TestFileRegistry_List_ExcludesPartials(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.json"), []byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials/accidental.json"), []byte(`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Excluded"}]}]}`), 0600))
+	reg, err := New(dir, WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ids, err := reg.List(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, ids, "main")
+	assert.NotContains(t, ids, "partials/accidental")
 }
 
 func TestFileRegistry_Stat(t *testing.T) {

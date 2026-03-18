@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/manifest"
 	"github.com/skosovsky/prompty/parser/yaml"
 	"github.com/skosovsky/prompty/remoteregistry"
 
@@ -329,6 +330,30 @@ func TestFetcher_ListIDs(t *testing.T) {
 	for _, id := range ids {
 		require.NotContains(t, id, "\\")
 	}
+}
+
+func TestFetcher_ListIDs_IncludesJson(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"json_only.json": `{"id":"json_only","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"JSON"}]}]}`,
+		"mixed.json":     `{"id":"mixed","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Mixed"}]}]}`,
+	})
+	g, err := NewFetcher("file://" + dir)
+	require.NoError(t, err)
+	defer func() { _ = g.Close() }()
+	ctx := context.Background()
+	ids, err := g.ListIDs(ctx)
+	require.NoError(t, err)
+	require.Contains(t, ids, "json_only")
+	require.Contains(t, ids, "mixed")
+	// Fetch and List should be consistent: GetTemplate works for listed ids
+	reg, err := remoteregistry.New(g, remoteregistry.WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	tpl, err := reg.GetTemplate(ctx, "json_only")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Equal(t, "json_only", tpl.Metadata.ID)
 }
 
 func TestFetcher_Stat(t *testing.T) {

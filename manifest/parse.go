@@ -10,6 +10,38 @@ import (
 	"github.com/skosovsky/prompty/internal/cast"
 )
 
+// metadataToPromptMetadata extracts known fields from raw metadata and builds PromptMetadata.
+// Known typed fields: tags -> Tags, environment -> Environment. Unknown keys go to Extras.
+func metadataToPromptMetadata(raw *RawManifest) prompty.PromptMetadata {
+	meta := prompty.PromptMetadata{
+		ID:          raw.ID,
+		Version:     raw.Version,
+		Description: raw.Description,
+	}
+	if raw.Metadata != nil {
+		if tags, ok := raw.Metadata["tags"]; ok {
+			if ss, ok := cast.ToStringSlice(tags); ok {
+				meta.Tags = ss
+			}
+		}
+		if env, ok := raw.Metadata["environment"]; ok {
+			if s, ok := env.(string); ok {
+				meta.Environment = s
+			}
+		}
+		extras := make(map[string]any)
+		for k, v := range raw.Metadata {
+			if k != "tags" && k != "environment" && v != nil {
+				extras[k] = v
+			}
+		}
+		if len(extras) > 0 {
+			meta.Extras = extras
+		}
+	}
+	return meta
+}
+
 // ParseOption configures parsing (e.g. partials).
 type ParseOption func(*parseOpts)
 
@@ -72,12 +104,7 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		}
 	}
 	opts := []prompty.ChatTemplateOption{
-		prompty.WithMetadata(prompty.PromptMetadata{
-			ID:          raw.ID,
-			Version:     raw.Version,
-			Description: raw.Description,
-			Tags:        raw.Metadata.Tags,
-		}),
+		prompty.WithMetadata(metadataToPromptMetadata(raw)),
 	}
 	if raw.InputSchema != nil {
 		opts = append(opts, prompty.WithInputSchema(raw.InputSchema))

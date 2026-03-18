@@ -263,23 +263,25 @@ func TestHTTPFetcher_Fetch_ContextCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-func TestHTTPFetcher_Fetch_DotInName(t *testing.T) {
+func TestHTTPFetcher_Fetch_SlashId(t *testing.T) {
 	t.Parallel()
-	manifestYAML := `
-id: support.agent
-version: "1"
-messages:
-  - role: system
-    content: "Dot name"
-`
+	// Slash-only ID (internal/router); CandidatePaths tries .yaml, .yml, .json.
+	manifestJSON := `{"id":"internal/router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Router prompt"}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/support.agent.yaml", r.URL.Path)
-		_, _ = w.Write([]byte(manifestYAML))
+		assert.Equal(t, "/internal/router.yaml", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestJSON))
 	}))
 	defer srv.Close()
 	h, err := NewHTTPFetcher(srv.URL)
 	require.NoError(t, err)
-	data, err := h.Fetch(context.Background(), "support.agent")
+	reg, err := New(h, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "support.agent")
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "internal/router")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, "internal/router", tpl.Metadata.ID)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Router prompt")
 }

@@ -18,12 +18,14 @@ func TestValidateID(t *testing.T) {
 		{"", false},
 		{"x", true},
 		{"support_agent", true},
-		{"agent.prod", true},
+		{"internal/router", true},
 		{"name-with-dash", true},
-		{"name/with/slash", false},
+		{"name/with/slash", true},
 		{"name\\backslash", false},
 		{"..", false},
 		{"name:with:colon", false},
+		{"internal/router.yaml", false},
+		{"agent.prod", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -39,15 +41,39 @@ func TestValidateID(t *testing.T) {
 	}
 }
 
+func TestValidatePathForFetch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		id    string
+		valid bool
+	}{
+		{"", false},
+		{"internal/router", true},
+		{"internal/router.prod", true},
+		{"..", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			t.Parallel()
+			err := ValidatePathForFetch(tt.id)
+			if tt.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestCandidatePaths(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		id   string
 		want []string
 	}{
-		{"x", []string{"x.yaml", "x.yml"}},
-		{"support_agent", []string{"support_agent.yaml", "support_agent.yml"}},
-		{"agent.prod", []string{"agent.prod.yaml", "agent.prod.yml"}},
+		{"x", []string{"x.yaml", "x.yml", "x.json"}},
+		{"support_agent", []string{"support_agent.yaml", "support_agent.yml", "support_agent.json"}},
+		{"internal/router", []string{"internal/router.yaml", "internal/router.yml", "internal/router.json"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

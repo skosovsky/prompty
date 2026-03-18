@@ -81,13 +81,45 @@ func runGenerate(configPath string) error {
 	return nil
 }
 
+// idFromRelativePath computes a fallback PromptID from file path relative to query bases.
+// Uses the longest matching base from queries; strips extension, returns slash format (canonical ID).
+// Example: base=prompts/, fpath=prompts/workers/image_analyze.yaml -> "workers/image_analyze"
+func idFromRelativePath(fpath string, configDir string, queries []string) string {
+	fpath = filepath.Clean(fpath)
+	configDir = filepath.Clean(configDir)
+	var bestRel string
+	var bestBaseLen int
+	for _, q := range queries {
+		base := filepath.Join(configDir, q)
+		base = filepath.Clean(base)
+		if strings.Contains(q, "*") {
+			base = filepath.Dir(base)
+		}
+		rel, err := filepath.Rel(base, fpath)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if len(base) > bestBaseLen {
+			bestBaseLen = len(base)
+			bestRel = rel
+		}
+	}
+	// No basename fallback: path must resolve relative to queries or callers return error.
+	ext := filepath.Ext(bestRel)
+	bestRel = strings.TrimSuffix(bestRel, ext)
+	return filepath.ToSlash(bestRel)
+}
+
 // runConsts generates one _consts_gen.go file with PromptID consts and AllPromptIDs.
 // Consts mode has no schema dependency; uses loadManifestID to read only id (no input_schema/response_format).
-func runConsts(_ string, files []string, pkg *Package, outDir string) error {
+func runConsts(configDir string, files []string, pkg *Package, outDir string) error {
 	var ids []string
 	seenIDs := make(map[string]string) // id -> first fpath
 	for _, fpath := range files {
-		id, err := loadManifestID(fpath)
+		id, err := loadManifestID(fpath, configDir, pkg.Queries)
 		if err != nil {
 			return fmt.Errorf("manifest %s: %w", fpath, err)
 		}
@@ -113,12 +145,12 @@ func runConsts(_ string, files []string, pkg *Package, outDir string) error {
 }
 
 // runTypes generates shared _shared_gen.go plus per-manifest _gen.go (hybrid types mode).
-func runTypes(_ string, files []string, pkg *Package, outDir string) error {
+func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
 	var specs []*gen.PromptSpec
 	var ids []string
 	seenIDs := make(map[string]string) // id -> first fpath
 	for _, fpath := range files {
-		spec, err := loadSpec(fpath)
+		spec, err := loadSpec(fpath, configDir, pkg.Queries)
 		if err != nil {
 			return fmt.Errorf("manifest %s: %w", fpath, err)
 		}
@@ -182,7 +214,7 @@ func runList(configPath string) error {
 			return fmt.Errorf("package %q: %w", pkg.Name, err)
 		}
 		for _, fpath := range files {
-			spec, err := loadSpec(fpath)
+			spec, err := loadSpec(fpath, configDir, pkg.Queries)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  %s: %v\n", fpath, err)
 				continue
@@ -193,7 +225,7 @@ func runList(configPath string) error {
 	return nil
 }
 
-func loadSpec(fpath string) (*gen.PromptSpec, error) {
+func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec, error) {
 	data, err := os.ReadFile(fpath)
 	if err != nil {
 		return nil, err
@@ -209,7 +241,25 @@ func loadSpec(fpath string) (*gen.PromptSpec, error) {
 		return nil, fmt.Errorf("unsupported manifest format")
 	}
 
-	tpl, err := manifest.Parse(data, u)
+	var raw manifest.RawManifest
+	if err := u.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("%w", err)
+	}
+	if raw.ID == "" {
+		raw.ID = idFromRelativePath(fpath, configDir, queries)
+		if raw.ID == "" {
+			return nil, fmt.Errorf("manifest has no id field and could not derive id from path")
+		}
+	}
+	// Clean Break v2.0: types mode requires messages and input_schema
+	if len(raw.Messages) == 0 {
+		return nil, fmt.Errorf("manifest missing messages block (v2.0 required)")
+	}
+	if raw.InputSchema == nil {
+		return nil, fmt.Errorf("manifest missing input_schema block (v2.0 required)")
+	}
+
+	tpl, err := manifest.BuildFromRaw(&raw, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -221,30 +271,44 @@ func loadSpec(fpath string) (*gen.PromptSpec, error) {
 	}, nil
 }
 
-// loadManifestID reads only the manifest id field (no schema parsing).
-// Used by consts mode to support legacy manifests without input_schema.
-func loadManifestID(fpath string) (string, error) {
+// loadManifestID reads the manifest id field and validates v2.0 clean-break (messages, input_schema).
+// Priority 1: explicit id from YAML/JSON. Priority 2: fallback from relative path.
+// Consts flow rejects legacy manifests missing messages or input_schema.
+func loadManifestID(fpath string, configDir string, queries []string) (string, error) {
 	data, err := os.ReadFile(fpath)
 	if err != nil {
 		return "", err
 	}
-	var minimal struct {
-		ID string `yaml:"id" json:"id"`
+	var v2Check struct {
+		ID          string `yaml:"id" json:"id"`
+		Messages    []any  `yaml:"messages" json:"messages"`
+		InputSchema any    `yaml:"input_schema" json:"input_schema"`
 	}
 	switch strings.ToLower(filepath.Ext(fpath)) {
 	case ".yaml", ".yml":
-		if err := yamlv3.Unmarshal(data, &minimal); err != nil {
+		if err := yamlv3.Unmarshal(data, &v2Check); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
 	case ".json":
-		if err := json.Unmarshal(data, &minimal); err != nil {
+		if err := json.Unmarshal(data, &v2Check); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
 	default:
 		return "", fmt.Errorf("unsupported manifest format")
 	}
-	if minimal.ID == "" {
-		return "", fmt.Errorf("manifest has no id field")
+	// Clean Break v2.0: consts mode requires messages and input_schema
+	if len(v2Check.Messages) == 0 {
+		return "", fmt.Errorf("manifest missing messages block (v2.0 required)")
 	}
-	return minimal.ID, nil
+	if v2Check.InputSchema == nil {
+		return "", fmt.Errorf("manifest missing input_schema block (v2.0 required)")
+	}
+	if v2Check.ID != "" {
+		return v2Check.ID, nil
+	}
+	id := idFromRelativePath(fpath, configDir, queries)
+	if id == "" {
+		return "", fmt.Errorf("manifest has no id field and path not under queries (add to queries or set id)")
+	}
+	return id, nil
 }

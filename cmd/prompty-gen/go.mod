@@ -9,3 +9,6 @@ require (
 )
 
 require github.com/kr/text v0.2.0 // indirect
+
+// Replace with local prompty so parser/yaml and manifest resolve from the same module.
+replace github.com/skosovsky/prompty => ../..

@@ -89,6 +89,32 @@ func TestParse_InvalidJSON(t *testing.T) {
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
+func TestParse_MetadataTagsAndExtras(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"id":"x","version":"1","metadata":{"tags":["a","b"],"domain":"medical","version":"2"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, []string{"a", "b"}, tpl.Metadata.Tags)
+	require.NotNil(t, tpl.Metadata.Extras)
+	assert.Equal(t, "medical", tpl.Metadata.Extras["domain"])
+	assert.Equal(t, "2", tpl.Metadata.Extras["version"])
+}
+
+func TestParse_MetadataEnvironmentTyped(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"id":"x","version":"1","metadata":{"environment":"prod","tags":["a"],"custom":"val"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, "prod", tpl.Metadata.Environment)
+	assert.Equal(t, []string{"a"}, tpl.Metadata.Tags)
+	require.NotNil(t, tpl.Metadata.Extras)
+	assert.Equal(t, "val", tpl.Metadata.Extras["custom"])
+	assert.NotContains(t, tpl.Metadata.Extras, "environment")
+	assert.NotContains(t, tpl.Metadata.Extras, "tags")
+}
+
 func TestParse_AcceptsCustomRole(t *testing.T) {
 	t.Parallel()
 	data := []byte(`{"id":"x","version":"1","messages":[{"role":"custom_alien","content":[{"type":"text","text":"Hi"}]}]}`)

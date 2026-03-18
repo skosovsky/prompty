@@ -3,6 +3,7 @@ package prompty
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 )
@@ -99,13 +100,16 @@ type SchemaDefinition struct {
 	Schema      map[string]any `json:"schema" yaml:"schema"` // JSON Schema
 }
 
-// PromptMetadata holds observability metadata.
+// PromptMetadata holds observability metadata (v2.0 DTO).
+// Known fields: ID, Version, Description, Tags, Environment.
+// Extras holds arbitrary keys from manifest metadata block for tracing/custom middleware.
 type PromptMetadata struct {
-	ID          string // From manifest id
-	Version     string
-	Description string   // From manifest description
-	Tags        []string // From manifest metadata.tags
-	Environment string   // Set by registry when loading by env (e.g. production); not from manifest
+	ID          string         `json:"id"`
+	Version     string         `json:"version,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Environment string         `json:"environment,omitempty"`
+	Extras      map[string]any `json:"extras,omitempty"`
 }
 
 // PromptExecution is the result of formatting a template; immutable after creation.
@@ -158,11 +162,18 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 		}
 		out = append(out, merged)
 	}
+	meta := e.Metadata
+	if meta.Tags != nil {
+		meta.Tags = slices.Clone(meta.Tags)
+	}
+	if meta.Extras != nil {
+		meta.Extras = maps.Clone(meta.Extras)
+	}
 	return &PromptExecution{
 		Messages:       out,
 		Tools:          e.Tools,
 		ModelConfig:    e.ModelConfig,
-		Metadata:       e.Metadata,
+		Metadata:       meta,
 		ResponseFormat: e.ResponseFormat,
 	}
 }

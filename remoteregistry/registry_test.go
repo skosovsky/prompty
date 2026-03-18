@@ -41,7 +41,7 @@ func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	if d, ok := m.data[id]; ok {
 		return d, nil
 	}
-	return nil, fmt.Errorf("%w: not found", ErrFetchFailed)
+	return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
 func TestRegistry_GetTemplate_Success(t *testing.T) {
@@ -66,32 +66,46 @@ func TestRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	t.Parallel()
 	prodJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"p.production": []byte(prodJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("production"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p.production")
+	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text, "env variant p.production should be preferred")
 }
 
-func TestRegistry_GetTemplate_TwoIds(t *testing.T) {
+func TestRegistry_GetTemplate_EnvFallbackBaseAndStaging(t *testing.T) {
 	t.Parallel()
-	manifestJSON := `{"id":"env_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Env"}]}]}`
+	baseJSON := `{"id":"env_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`
+	stagingJSON := `{"id":"env_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Staging"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{
-		"env_test":         []byte(manifestJSON),
-		"env_test.staging": []byte(manifestJSON),
+		"env_test":         []byte(baseJSON),
+		"env_test.staging": []byte(stagingJSON),
 	}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("staging"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tplEmpty, err := reg.GetTemplate(ctx, "env_test")
+	tpl, err := reg.GetTemplate(ctx, "env_test")
 	require.NoError(t, err)
-	require.NotNil(t, tplEmpty)
-	tplStaging, err := reg.GetTemplate(ctx, "env_test.staging")
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "Staging", tpl.Messages[0].Content[0].Text, "env variant env_test.staging should be preferred over base")
+}
+
+func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {
+	t.Parallel()
+	baseJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"BaseOnly"}]}]}`
+	m := &mockFetcher{data: map[string][]byte{"p": []byte(baseJSON)}}
+	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("prod"))
 	require.NoError(t, err)
-	require.NotNil(t, tplStaging)
+	ctx := context.Background()
+	tpl, err := reg.GetTemplate(ctx, "p")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	assert.Equal(t, "BaseOnly", tpl.Messages[0].Content[0].Text, "should fallback to base when env variant missing")
 }
 
 func TestRegistry_GetTemplate_FetchError(t *testing.T) {

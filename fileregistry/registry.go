@@ -25,9 +25,11 @@ var (
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
 // Resolves id to {dir}/{id}.yaml or {dir}/{id}.yml (id = basename without extension).
+// WithEnvironment(env): tries {dir}/{id}.{env}.yaml first, then {dir}/{id}.yaml.
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	dir             string
+	env             string // e.g. "prod"; env inserted before extension: internal/router.prod.yaml
 	partialsPattern string // e.g. "_partials/*.tmpl"; resolved relative to manifest dir when loading
 	parser          manifest.Unmarshaler
 	mu              sync.RWMutex
@@ -57,18 +59,43 @@ func WithPartials(relativePattern string) Option {
 	return func(r *Registry) { r.partialsPattern = relativePattern }
 }
 
+// WithEnvironment sets env for fallback resolution: tries {id}.{env}.yaml first, then {id}.yaml.
+// Example: id "internal/router", env "prod" -> internal/router.prod.yaml, then internal/router.yaml.
+func WithEnvironment(env string) Option {
+	return func(r *Registry) { r.env = env }
+}
+
 // WithParser sets the manifest parser (required). Use manifest.NewJSONParser() or parser/yaml for YAML.
 func WithParser(u manifest.Unmarshaler) Option {
 	return func(r *Registry) { r.parser = u }
 }
 
-// idToPaths returns candidate paths for id in resolution order: id.yaml, id.yml, id.json.
-func idToPaths(dir, id string) []string {
-	return []string{
-		filepath.Join(dir, id+".yaml"),
-		filepath.Join(dir, id+".yml"),
-		filepath.Join(dir, id+".json"),
+// insertEnvBeforeExt returns base with env inserted before extension: "internal/router" + "prod" -> "internal/router.prod".
+func insertEnvBeforeExt(base, env string) string {
+	if env == "" {
+		return base
 	}
+	return base + "." + env
+}
+
+// idToPaths returns candidate paths for id in resolution order (io/fs slash-style id).
+// When env != "", tries {id}.{env}.yaml first, then base paths.
+// Uses filepath.FromSlash(id) for Windows filesystem compatibility.
+func idToPaths(dir, id, env string) []string {
+	exts := []string{".yaml", ".yml", ".json"}
+	var out []string
+	base := insertEnvBeforeExt(id, env)
+	if env != "" {
+		for _, ext := range exts {
+			path := filepath.FromSlash(base + ext)
+			out = append(out, filepath.Join(dir, path))
+		}
+	}
+	for _, ext := range exts {
+		path := filepath.FromSlash(id + ext)
+		out = append(out, filepath.Join(dir, path))
+	}
+	return out
 }
 
 // GetTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
@@ -98,7 +125,7 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 		}
 		return manifest.ParseFile(path, r.parser)
 	}
-	for _, path := range idToPaths(r.dir, id) {
+	for _, path := range idToPaths(r.dir, id, r.env) {
 		tpl, err := parseFile(path)
 		if err == nil {
 			info, _ := r.Stat(ctx, id)
@@ -116,7 +143,41 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
-// List returns all template ids (basename without .yaml/.yml/.json) under r.dir, unique and sorted.
+// baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).
+// Example: internal/router.prod.yaml -> internal/router. Algorithm: strip extension,
+// then on basename drop everything after first dot as env suffix (router.prod -> router).
+func baseIDFromPath(path string) string {
+	slash := filepath.ToSlash(path)
+	for _, ext := range []string{".yaml", ".yml", ".json"} {
+		slash = strings.TrimSuffix(slash, ext)
+	}
+	base := filepath.Base(slash)
+	if idx := strings.Index(base, "."); idx > 0 {
+		base = base[:idx]
+	}
+	dir := filepath.Dir(slash)
+	if dir == "." {
+		return base
+	}
+	return filepath.ToSlash(filepath.Join(dir, base))
+}
+
+// underPartialsDir reports whether path is under the partials pattern directory (to exclude from List).
+func underPartialsDir(path, partialsPattern string) bool {
+	if partialsPattern == "" {
+		return false
+	}
+	partialsDir := filepath.ToSlash(filepath.Dir(partialsPattern))
+	if partialsDir == "." {
+		return false
+	}
+	p := filepath.ToSlash(path)
+	return p == partialsDir || strings.HasPrefix(p, partialsDir+"/")
+}
+
+// List returns all template ids (base slash path, env suffix stripped) under r.dir, unique and sorted.
+// agent.prod.yaml and agent.yaml both yield "agent"; internal/router.prod.yaml yields "internal/router".
+// Paths under partials directory are excluded.
 func (r *Registry) List(ctx context.Context) ([]string, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -130,11 +191,21 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		base := filepath.Base(path)
-		id := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml"), ".json")
-		if id == base {
+		slashPath := filepath.ToSlash(path)
+		hasManifestExt := false
+		for _, ext := range []string{".yaml", ".yml", ".json"} {
+			if strings.HasSuffix(slashPath, ext) {
+				hasManifestExt = true
+				break
+			}
+		}
+		if !hasManifestExt {
 			return nil
 		}
+		if underPartialsDir(path, r.partialsPattern) {
+			return nil
+		}
+		id := baseIDFromPath(path)
 		if !seen[id] {
 			seen[id] = true
 			ids = append(ids, id)
@@ -153,7 +224,7 @@ func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, err
 	if err := prompty.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
 	}
-	for _, path := range idToPaths(r.dir, id) {
+	for _, path := range idToPaths(r.dir, id, r.env) {
 		fi, err := os.Stat(path)
 		if err == nil {
 			mod := fi.ModTime()

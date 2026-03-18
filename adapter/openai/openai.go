@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"maps"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -43,6 +44,22 @@ func New(opts ...Option) *Adapter {
 		opt(a)
 	}
 	return a
+}
+
+// normalizeSchemaForStrict returns a schema copy with additionalProperties: false for type object
+// (required by OpenAI strict mode). Does not mutate the original.
+func normalizeSchemaForStrict(schema any) any {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return schema
+	}
+	clone := maps.Clone(m)
+	if t, _ := clone["type"].(string); t == "object" {
+		if _, has := clone["additionalProperties"]; !has {
+			clone["additionalProperties"] = false
+		}
+	}
+	return clone
 }
 
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams (populates from exec.ModelConfig).
@@ -96,11 +113,13 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		if name == "" {
 			name = "response_schema"
 		}
+		schema := normalizeSchemaForStrict(exec.ResponseFormat.Schema)
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
 					Name:   name,
-					Schema: exec.ResponseFormat.Schema,
+					Strict: openai.Bool(true),
+					Schema: schema,
 				},
 			},
 		}
@@ -263,7 +282,11 @@ func (a *Adapter) ParseResponse(ctx context.Context, completion *openai.ChatComp
 		usage.CompletionTokens = int(completion.Usage.CompletionTokens)
 		usage.TotalTokens = int(completion.Usage.TotalTokens)
 	}
-	return &prompty.Response{Content: out, Usage: usage}, nil
+	finishReason := ""
+	if completion.Choices[0].FinishReason != "" {
+		finishReason = string(completion.Choices[0].FinishReason)
+	}
+	return &prompty.Response{Content: out, Usage: usage, FinishReason: finishReason}, nil
 }
 
 // ExecuteStream performs streaming chat completion. Requires WithClient.
@@ -296,8 +319,16 @@ func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionN
 				usage.TotalTokens = int(chunk.Usage.TotalTokens)
 			}
 			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
-			resChunk := &prompty.ResponseChunk{Content: content, Usage: usage, IsFinished: isFinished}
+			finishReason := ""
+			if isFinished && chunk.Choices[0].FinishReason != "" {
+				finishReason = string(chunk.Choices[0].FinishReason)
+			}
+			resChunk := &prompty.ResponseChunk{Content: content, Usage: usage, IsFinished: isFinished, FinishReason: finishReason}
 			if !yield(resChunk, nil) {
+				// Policy: always check stream.Err() before exit; propagate if consumer stopped early.
+				if err := stream.Err(); err != nil {
+					yield(nil, err)
+				}
 				return
 			}
 		}

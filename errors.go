@@ -3,6 +3,8 @@ package prompty
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 )
 
@@ -20,6 +22,8 @@ var (
 	ErrInvalidName = errors.New("prompty: invalid template name")
 	// ErrNoParser indicates that a registry was created without a manifest parser (use WithParser when creating the registry).
 	ErrNoParser = errors.New("prompty: parser is required but not provided")
+	// ErrConflictingDirectives indicates conflicting execution directives (e.g. Tools and ResponseFormat together).
+	ErrConflictingDirectives = errors.New("prompty: conflicting directives (e.g. Tools and ResponseFormat cannot be used together)")
 )
 
 // VariableError wraps a sentinel error with variable and template context.
@@ -56,17 +60,25 @@ func ValidateName(name, env string) error {
 	return nil
 }
 
-// ValidateID checks that id is safe for use in paths and cache keys.
-// Rejects empty id and ids containing '/', '\\', "..", or ':'. Call before registry GetTemplate/Stat or path resolution.
+// ValidateID checks that id is a valid io/fs-style path (slash-separated, no extensions).
+// Canonical ID format: slash-only (e.g. "internal/router"). Rejects dotted IDs (Clean Break).
+// Rejects ids containing ':', '\', ".", ".." for cross-platform safety.
+// Use fs.ValidPath for path safety; rejects IDs with file extensions.
 func ValidateID(id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id must not be empty", ErrInvalidName)
 	}
-	invalid := []string{"/", "\\", "..", ":"}
-	for _, s := range invalid {
-		if strings.Contains(id, s) {
-			return fmt.Errorf("%w: id must not contain %q", ErrInvalidName, s)
-		}
+	if strings.Contains(id, ":") || strings.Contains(id, "\\") {
+		return fmt.Errorf("%w: id must not contain : or \\", ErrInvalidName)
+	}
+	if id == "." || id == ".." {
+		return fmt.Errorf("%w: id %q is invalid", ErrInvalidName, id)
+	}
+	if !fs.ValidPath(id) {
+		return fmt.Errorf("%w: id %q is not a valid path", ErrInvalidName, id)
+	}
+	if ext := filepath.Ext(id); ext != "" {
+		return fmt.Errorf("%w: id must not contain file extension (got %q)", ErrInvalidName, ext)
 	}
 	return nil
 }

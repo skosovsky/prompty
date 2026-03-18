@@ -14,6 +14,11 @@ func WithParser(u manifest.Unmarshaler) Option {
 	return func(r *Registry) { r.parser = u }
 }
 
+// WithEnvironment sets env for fallback: Fetch tries id.env first, then id.
+func WithEnvironment(env string) Option {
+	return func(r *Registry) { r.env = env }
+}
+
 // WithTTL sets the cache TTL. Templates are refetched after this duration.
 // Default is 5 minutes. TTL <= 0 means entries never expire (infinite cache).
 // To disable caching, use a very short TTL (e.g. 1 nanosecond).
