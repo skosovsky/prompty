@@ -8,6 +8,13 @@ import (
 // Option configures a PromptExecution for convenience helpers.
 type Option func(*PromptExecution)
 
+// GenerateOption configures GenerateStructured.
+type GenerateOption func(*generateStructuredConfig)
+
+type generateStructuredConfig struct {
+	retries int
+}
+
 // SimpleChat builds a typical execution with one system instruction and one user message.
 func SimpleChat(system, user string) *PromptExecution {
 	return NewExecution([]ChatMessage{
@@ -45,4 +52,45 @@ func GenerateText(ctx context.Context, invoker Invoker, prompt string, opts ...O
 		return "", fmt.Errorf("generate text: nil response")
 	}
 	return resp.Text(), nil
+}
+
+// WithRetries enables retry orchestration for GenerateStructured.
+func WithRetries(n int) GenerateOption {
+	return func(cfg *generateStructuredConfig) {
+		if cfg == nil {
+			return
+		}
+		if n < 0 {
+			n = 0
+		}
+		cfg.retries = n
+	}
+}
+
+// GenerateStructured builds a one-message PromptExecution and returns typed structured output.
+func GenerateStructured[T any](ctx context.Context, invoker Invoker, prompt string, opts ...GenerateOption) (T, error) {
+	var zero T
+
+	if invoker == nil {
+		return zero, fmt.Errorf("generate structured: invoker is nil")
+	}
+
+	cfg := generateStructuredConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
+	exec := NewExecution([]ChatMessage{NewUserMessage(prompt)})
+	result, err := WithRetry(ctx, exec, cfg.retries, func(ctx context.Context, exec *PromptExecution) (*T, error) {
+		return ExecuteWithStructuredOutput[T](ctx, invoker, exec)
+	})
+	if err != nil {
+		return zero, err
+	}
+	if result == nil {
+		return zero, fmt.Errorf("generate structured: nil result")
+	}
+	return *result, nil
 }

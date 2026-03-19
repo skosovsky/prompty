@@ -284,38 +284,29 @@ func newAssistantMessageWithContent(content []ContentPart) ChatMessage {
 	}
 }
 
+func newToolMessageWithContent(content []ContentPart) ChatMessage {
+	return ChatMessage{
+		Role:    RoleTool,
+		Content: cloneContentParts(content),
+	}
+}
+
+func newToolResultPart(toolCallID, name, text string, isError bool) ToolResultPart {
+	return ToolResultPart{
+		ToolCallID: toolCallID,
+		Name:       name,
+		Content:    []ContentPart{TextPart{Text: text}},
+		IsError:    isError,
+	}
+}
+
 func newToolResultMessage(toolCallID, name, text string, isError bool) ChatMessage {
 	return ChatMessage{
 		Role: RoleTool,
 		Content: []ContentPart{
-			ToolResultPart{
-				ToolCallID: toolCallID,
-				Name:       name,
-				Content:    []ContentPart{TextPart{Text: text}},
-				IsError:    isError,
-			},
+			newToolResultPart(toolCallID, name, text, isError),
 		},
 	}
-}
-
-func (e *PromptExecution) appendRetryFeedback(badModelOutput, feedback string) *PromptExecution {
-	if e == nil {
-		return e
-	}
-
-	e = e.AddMessage(NewAssistantMessage(badModelOutput))
-	e = e.AddMessage(NewUserMessage(feedback))
-	return e
-}
-
-func validationRetryFeedbackText(validationError error) string {
-	return fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError)
-}
-
-// AppendValidationRetry appends to the dialogue messages about failed structured output validation
-// (assistant with the raw model output and user with the error description) and returns the updated execution.
-func (e *PromptExecution) AppendValidationRetry(badModelOutput string, validationError error) *PromptExecution {
-	return e.appendRetryFeedback(badModelOutput, validationRetryFeedbackText(validationError))
 }
 
 // TemplatePart is one part of a message template (text or image_url). Type determines which field (Text or URL) is the template source.

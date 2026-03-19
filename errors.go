@@ -34,6 +34,20 @@ type VariableError struct {
 	Err      error
 }
 
+// ValidationError is returned when model output is invalid JSON or violates semantic validation.
+type ValidationError struct {
+	RawAssistantMessage *ChatMessage
+	FeedbackPrompt      string
+	Err                 error
+}
+
+// ToolCallError is returned when model-generated tool arguments fail validation.
+type ToolCallError struct {
+	RawAssistantMessage *ChatMessage
+	ToolResults         []ContentPart
+	Err                 error
+}
+
 // Error implements error.
 func (e *VariableError) Error() string {
 	return fmt.Sprintf("prompty: variable %q in template %q: %v", e.Variable, e.Template, e.Err)
@@ -42,8 +56,42 @@ func (e *VariableError) Error() string {
 // Unwrap returns the wrapped error for errors.Is/errors.As.
 func (e *VariableError) Unwrap() error { return e.Err }
 
+// Error implements error.
+func (e *ValidationError) Error() string {
+	if e == nil || e.Err == nil {
+		return "prompty: validation error"
+	}
+	return fmt.Sprintf("prompty: validation error: %v", e.Err)
+}
+
+// Unwrap returns the wrapped error for errors.Is/errors.As.
+func (e *ValidationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// Error implements error.
+func (e *ToolCallError) Error() string {
+	if e == nil || e.Err == nil {
+		return "prompty: tool call error"
+	}
+	return fmt.Sprintf("prompty: tool call error: %v", e.Err)
+}
+
+// Unwrap returns the wrapped error for errors.Is/errors.As.
+func (e *ToolCallError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // Compile-time check that VariableError implements error.
 var _ error = (*VariableError)(nil)
+var _ error = (*ValidationError)(nil)
+var _ error = (*ToolCallError)(nil)
 
 // ValidateName checks that name and env are safe for use in paths and cache keys.
 // Rejects empty name and names containing '/', '\\', "..", or ':'. Call before registry GetTemplate or path resolution.

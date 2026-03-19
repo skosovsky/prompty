@@ -100,6 +100,28 @@ func TestTranslate_ToolResult(t *testing.T) {
 	assert.Equal(t, "Sunny", params.Messages[0].OfTool.Content.OfString.Value)
 }
 
+func TestTranslate_BatchedToolResults(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+			}},
+		},
+	}
+	params, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 2)
+	require.NotNil(t, params.Messages[0].OfTool)
+	require.NotNil(t, params.Messages[1].OfTool)
+	assert.Equal(t, "call_1", params.Messages[0].OfTool.ToolCallID)
+	assert.Equal(t, "Sunny", params.Messages[0].OfTool.Content.OfString.Value)
+	assert.Equal(t, "call_2", params.Messages[1].OfTool.ToolCallID)
+	assert.Equal(t, "12:00", params.Messages[1].OfTool.Content.OfString.Value)
+}
+
 func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -385,6 +407,105 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	jsonSchema, ok := rf["json_schema"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, true, jsonSchema["strict"], "serialized JSON must contain strict: true for OpenAI strict mode")
+}
+
+func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T) {
+	t.Parallel()
+	a := New()
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"nickname": map[string]any{"type": "string"},
+			"profile": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"bio": map[string]any{"type": "string"},
+				},
+			},
+		},
+		"required": []string{"profile"},
+	}
+	original := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"nickname": map[string]any{"type": "string"},
+			"profile": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"bio": map[string]any{"type": "string"},
+				},
+			},
+		},
+		"required": []string{"profile"},
+	}
+
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+		},
+		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
+	}
+	params, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, params.ResponseFormat.OfJSONSchema)
+
+	gotSchema, ok := params.ResponseFormat.OfJSONSchema.JSONSchema.Schema.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, false, gotSchema["additionalProperties"])
+	assert.ElementsMatch(t, []string{"profile", "nickname"}, gotSchema["required"])
+	nickname := gotSchema["properties"].(map[string]any)["nickname"].(map[string]any)
+	assert.Equal(t, []any{"string", "null"}, nickname["type"])
+	profile := gotSchema["properties"].(map[string]any)["profile"].(map[string]any)
+	assert.Equal(t, false, profile["additionalProperties"])
+	assert.ElementsMatch(t, []string{"bio"}, profile["required"])
+	bio := profile["properties"].(map[string]any)["bio"].(map[string]any)
+	assert.Equal(t, []any{"string", "null"}, bio["type"])
+	assert.Equal(t, original, schema, "strict normalization must not mutate caller-owned schema")
+}
+
+func TestTranslate_WithRetryBatchedToolResultsSurviveOpenAITranslation(t *testing.T) {
+	t.Parallel()
+	a := New()
+
+	callNum := 0
+	var translatedExec *prompty.PromptExecution
+	result, err := prompty.WithRetry(context.Background(), prompty.NewExecution([]prompty.ChatMessage{
+		prompty.NewUserMessage("hi"),
+	}), 1, func(_ context.Context, exec *prompty.PromptExecution) (string, error) {
+		callNum++
+		if callNum == 1 {
+			msg := prompty.ChatMessage{
+				Role: prompty.RoleAssistant,
+				Content: []prompty.ContentPart{
+					prompty.ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
+					prompty.ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
+				},
+			}
+			return "", &prompty.ToolCallError{
+				RawAssistantMessage: &msg,
+				ToolResults: []prompty.ContentPart{
+					prompty.ToolResultPart{ToolCallID: "tool-1", Name: "lookup", Content: []prompty.ContentPart{prompty.TextPart{Text: "lookup invalid"}}, IsError: true},
+					prompty.ToolResultPart{ToolCallID: "tool-2", Name: "weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "weather invalid"}}, IsError: true},
+				},
+				Err: fmt.Errorf("invalid tool batch"),
+			}
+		}
+		translatedExec = exec
+		return "ok", nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+	require.NotNil(t, translatedExec)
+
+	params, err := a.Translate(context.Background(), translatedExec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 4)
+	require.NotNil(t, params.Messages[2].OfTool)
+	require.NotNil(t, params.Messages[3].OfTool)
+	assert.Equal(t, "tool-1", params.Messages[2].OfTool.ToolCallID)
+	assert.Equal(t, "lookup invalid", params.Messages[2].OfTool.Content.OfString.Value)
+	assert.Equal(t, "tool-2", params.Messages[3].OfTool.ToolCallID)
+	assert.Equal(t, "weather invalid", params.Messages[3].OfTool.Content.OfString.Value)
 }
 
 func TestTranslate_StopSequences(t *testing.T) {

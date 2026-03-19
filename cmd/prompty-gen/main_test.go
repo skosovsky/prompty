@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -101,6 +103,59 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	}
 	if !strings.Contains(c, "string(SupportAgent)") {
 		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
+	}
+}
+
+func TestLoadSpec_DualSchemaFixture(t *testing.T) {
+	manifestPath := "testdata/dual_schema_manifest.yaml"
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	if spec.ResponseFormat == nil || spec.ResponseFormat.Schema == nil {
+		t.Fatal("expected response_format schema")
+	}
+
+	fixtureData, err := os.ReadFile("testdata/dual_schema_fixture.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var raw any
+	if err := json.Unmarshal(fixtureData, &raw); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	got := normalizeSchemaValue(spec.ResponseFormat.Schema)
+	want := normalizeSchemaValue(raw)
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("response_format schema mismatch\nwant: %#v\ngot: %#v", want, got)
+	}
+}
+
+func normalizeSchemaValue(value any) any {
+	switch x := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for key, item := range x {
+			out[key] = normalizeSchemaValue(item)
+		}
+		if required, ok := out["required"].([]any); ok {
+			names := make([]string, 0, len(required))
+			for _, item := range required {
+				if name, ok := item.(string); ok {
+					names = append(names, name)
+				}
+			}
+			out["required"] = names
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = normalizeSchemaValue(item)
+		}
+		return out
+	default:
+		return value
 	}
 }
 

@@ -85,6 +85,28 @@ func TestTranslate_ToolResult(t *testing.T) {
 	assert.Equal(t, "call_1", params.Messages[0].Content[0].OfToolResult.ToolUseID)
 }
 
+func TestTranslate_BatchedToolResults(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+			}},
+		},
+	}
+	params, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	assert.Equal(t, anthropic.MessageParamRoleUser, params.Messages[0].Role)
+	require.Len(t, params.Messages[0].Content, 2)
+	require.NotNil(t, params.Messages[0].Content[0].OfToolResult)
+	require.NotNil(t, params.Messages[0].Content[1].OfToolResult)
+	assert.Equal(t, "call_1", params.Messages[0].Content[0].OfToolResult.ToolUseID)
+	assert.Equal(t, "call_2", params.Messages[0].Content[1].OfToolResult.ToolUseID)
+}
+
 func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 	t.Parallel()
 	a := New()

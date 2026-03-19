@@ -268,6 +268,7 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart, cachePoint bool)
 }
 
 func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
 			// SDK NewToolResultBlock(toolUseID, content string, isError). Build text from parts; fail on MediaPart.
@@ -277,10 +278,13 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.Mess
 				}
 			}
 			text := prompty.TextFromParts(tr.Content)
-			return anthropic.NewUserMessage(anthropic.NewToolResultBlock(tr.ToolCallID, text, tr.IsError)), nil
+			blocks = append(blocks, anthropic.NewToolResultBlock(tr.ToolCallID, text, tr.IsError))
 		}
 	}
-	return anthropic.MessageParam{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	if len(blocks) == 0 {
+		return anthropic.MessageParam{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	}
+	return anthropic.NewUserMessage(blocks...), nil
 }
 
 // systemTextBlock returns a system text block; sets CacheControl when cachePoint is true (ephemeral).

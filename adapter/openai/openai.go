@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
-	"maps"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -49,17 +50,150 @@ func New(opts ...Option) *Adapter {
 // normalizeSchemaForStrict returns a schema copy with additionalProperties: false for type object
 // (required by OpenAI strict mode). Does not mutate the original.
 func normalizeSchemaForStrict(schema any) any {
+	return normalizeStrictSchemaNode(cloneStrictSchemaNode(schema))
+}
+
+func normalizeStrictSchemaNode(schema any) any {
 	m, ok := schema.(map[string]any)
 	if !ok {
 		return schema
 	}
-	clone := maps.Clone(m)
-	if t, _ := clone["type"].(string); t == "object" {
-		if _, has := clone["additionalProperties"]; !has {
-			clone["additionalProperties"] = false
+
+	if properties, ok := m["properties"].(map[string]any); ok {
+		required := requiredNames(m["required"])
+		missing := make([]string, 0)
+		for name, rawProp := range properties {
+			propMap, ok := rawProp.(map[string]any)
+			if ok {
+				propMap = normalizeStrictSchemaNode(propMap).(map[string]any)
+				if !required[name] {
+					makeStrictPropertyNullable(propMap)
+					missing = append(missing, name)
+				}
+				properties[name] = propMap
+				continue
+			}
+			if !required[name] {
+				missing = append(missing, name)
+			}
+		}
+		if schemaTypeIncludes(m["type"], "object") || len(properties) > 0 {
+			if _, has := m["additionalProperties"]; !has {
+				m["additionalProperties"] = false
+			}
+			if len(missing) > 0 {
+				sort.Strings(missing)
+				requiredList := requiredNamesInOrder(m["required"])
+				requiredList = append(requiredList, missing...)
+				m["required"] = requiredList
+			}
 		}
 	}
-	return clone
+	if items, ok := m["items"].(map[string]any); ok {
+		m["items"] = normalizeStrictSchemaNode(items)
+	}
+	return m
+}
+
+func cloneStrictSchemaNode(value any) any {
+	switch x := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(x))
+		for key, item := range x {
+			clone[key] = cloneStrictSchemaNode(item)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(x))
+		for i, item := range x {
+			clone[i] = cloneStrictSchemaNode(item)
+		}
+		return clone
+	case []string:
+		clone := make([]string, len(x))
+		copy(clone, x)
+		return clone
+	default:
+		return value
+	}
+}
+
+func requiredNames(value any) map[string]bool {
+	names := make(map[string]bool)
+	switch x := value.(type) {
+	case []string:
+		for _, name := range x {
+			names[name] = true
+		}
+	case []any:
+		for _, item := range x {
+			if name, ok := item.(string); ok {
+				names[name] = true
+			}
+		}
+	}
+	return names
+}
+
+func requiredNamesInOrder(value any) []string {
+	switch x := value.(type) {
+	case []string:
+		out := make([]string, len(x))
+		copy(out, x)
+		return out
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			if name, ok := item.(string); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func schemaTypeIncludes(value any, target string) bool {
+	switch x := value.(type) {
+	case string:
+		return x == target
+	case []string:
+		if slices.Contains(x, target) {
+			return true
+		}
+	case []any:
+		for _, item := range x {
+			if item == target {
+				return true
+			}
+			if s, ok := item.(string); ok && s == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func makeStrictPropertyNullable(schema map[string]any) {
+	switch t := schema["type"].(type) {
+	case string:
+		schema["type"] = []any{t, "null"}
+	case []string:
+		if !schemaTypeIncludes(t, "null") {
+			out := make([]string, len(t), len(t)+1)
+			copy(out, t)
+			out = append(out, "null")
+			schema["type"] = out
+		}
+	case []any:
+		if !schemaTypeIncludes(t, "null") {
+			out := make([]any, len(t), len(t)+1)
+			copy(out, t)
+			out = append(out, "null")
+			schema["type"] = out
+		}
+	}
 }
 
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams (populates from exec.ModelConfig).
@@ -92,11 +226,11 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		}
 	}
 	for _, msg := range exec.Messages {
-		union, err := a.messageToUnion(msg)
+		unions, err := a.messageToUnions(msg)
 		if err != nil {
 			return nil, err
 		}
-		params.Messages = append(params.Messages, union)
+		params.Messages = append(params.Messages, unions...)
 	}
 	if len(exec.Tools) > 0 {
 		params.Tools = make([]openai.ChatCompletionToolUnionParam, 0, len(exec.Tools))
@@ -135,19 +269,27 @@ func (a *Adapter) Execute(ctx context.Context, req *openai.ChatCompletionNewPara
 	return a.client.Chat.Completions.New(ctx, *req)
 }
 
-func (a *Adapter) messageToUnion(msg prompty.ChatMessage) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
 		text := prompty.TextFromParts(msg.Content)
-		return openai.SystemMessage(text), nil
+		return []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(text)}, nil
 	case prompty.RoleUser:
-		return a.userMessage(msg.Content)
+		union, err := a.userMessage(msg.Content)
+		if err != nil {
+			return nil, err
+		}
+		return []openai.ChatCompletionMessageParamUnion{union}, nil
 	case prompty.RoleAssistant:
-		return a.assistantMessage(msg.Content)
+		union, err := a.assistantMessage(msg.Content)
+		if err != nil {
+			return nil, err
+		}
+		return []openai.ChatCompletionMessageParamUnion{union}, nil
 	case prompty.RoleTool:
-		return a.toolResultMessage(msg.Content)
+		return a.toolResultMessages(msg.Content)
 	default:
-		return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
+		return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 	}
 }
 
@@ -234,20 +376,24 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 	return openai.AssistantMessage(text), nil
 }
 
-func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (openai.ChatCompletionMessageParamUnion, error) {
+func (a *Adapter) toolResultMessages(parts []prompty.ContentPart) ([]openai.ChatCompletionMessageParamUnion, error) {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(parts))
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
 			// SDK tool message content: string or array of text parts; fail-fast on MediaPart (SDK OfArrayOfContentParts type is text-only).
 			for _, cp := range tr.Content {
 				if _, ok := cp.(prompty.MediaPart); ok {
-					return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
+					return nil, adapter.ErrUnsupportedContentType
 				}
 			}
 			text := prompty.TextFromParts(tr.Content)
-			return openai.ToolMessage(text, tr.ToolCallID), nil
+			messages = append(messages, openai.ToolMessage(text, tr.ToolCallID))
 		}
 	}
-	return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	}
+	return messages, nil
 }
 
 // ParseResponse converts *openai.ChatCompletion into *prompty.Response.

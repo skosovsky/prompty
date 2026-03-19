@@ -3,6 +3,7 @@ package prompty_test
 import (
 	"context"
 	"fmt"
+	"iter"
 
 	"github.com/skosovsky/prompty"
 )
@@ -74,4 +75,36 @@ func Example() {
 	// Output:
 	// You are HelperBot.
 	// What is 2+2?
+}
+
+type exampleStructuredInvoker struct{}
+
+func (exampleStructuredInvoker) Generate(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
+	return prompty.NewResponse([]prompty.ContentPart{
+		prompty.TextPart{Text: `{"name":"Alice"}`},
+	}), nil
+}
+
+func (exampleStructuredInvoker) GenerateStream(ctx context.Context, exec *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+	return func(yield func(*prompty.ResponseChunk, error) bool) {
+		resp, err := exampleStructuredInvoker{}.Generate(ctx, exec)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		yield(&prompty.ResponseChunk{Content: resp.Content, IsFinished: true}, nil)
+	}
+}
+
+func ExampleGenerateStructured() {
+	type Result struct {
+		Name string `json:"name"`
+	}
+
+	result, err := prompty.GenerateStructured[Result](context.Background(), exampleStructuredInvoker{}, "Extract name")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(result.Name)
+	// Output: Alice
 }

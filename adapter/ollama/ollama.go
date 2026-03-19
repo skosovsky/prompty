@@ -172,32 +172,27 @@ func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) (
 		text := prompty.TextFromParts(msg.Content)
 		return []api.Message{{Role: "assistant", Content: text, ToolCalls: toolCalls}}, nil
 	case prompty.RoleTool:
-		var toolResult prompty.ToolResultPart
-		var foundToolResult bool
+		messages := make([]api.Message, 0, len(msg.Content))
 		for _, p := range msg.Content {
 			switch x := p.(type) {
 			case prompty.MediaPart:
 				return nil, fmt.Errorf("%w: Ollama does not support images in tool messages", adapter.ErrUnsupportedContentType)
 			case prompty.ToolResultPart:
-				if !foundToolResult {
-					toolResult = x
-					foundToolResult = true
+				for _, cp := range x.Content {
+					if _, ok := cp.(prompty.MediaPart); ok {
+						return nil, fmt.Errorf("%w: Ollama does not support images in tool result content", adapter.ErrUnsupportedContentType)
+					}
 				}
+				text := prompty.TextFromParts(x.Content)
+				messages = append(messages, api.Message{
+					Role:       "tool",
+					Content:    text,
+					ToolCallID: x.ToolCallID,
+				})
 			}
 		}
-		if foundToolResult {
-			// Fail-fast on MediaPart inside tool result content
-			for _, cp := range toolResult.Content {
-				if _, ok := cp.(prompty.MediaPart); ok {
-					return nil, fmt.Errorf("%w: Ollama does not support images in tool result content", adapter.ErrUnsupportedContentType)
-				}
-			}
-			text := prompty.TextFromParts(toolResult.Content)
-			return []api.Message{{
-				Role:       "tool",
-				Content:    text,
-				ToolCallID: toolResult.ToolCallID,
-			}}, nil
+		if len(messages) > 0 {
+			return messages, nil
 		}
 		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
 	default:

@@ -101,6 +101,28 @@ func TestTranslate_ToolResult(t *testing.T) {
 	assert.Equal(t, "Sunny", req.Messages[0].Content)
 }
 
+func TestTranslate_BatchedToolResults(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+			}},
+		},
+	}
+	req, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, req.Messages, 2)
+	assert.Equal(t, "tool", req.Messages[0].Role)
+	assert.Equal(t, "call_1", req.Messages[0].ToolCallID)
+	assert.Equal(t, "Sunny", req.Messages[0].Content)
+	assert.Equal(t, "tool", req.Messages[1].Role)
+	assert.Equal(t, "call_2", req.Messages[1].ToolCallID)
+	assert.Equal(t, "12:00", req.Messages[1].Content)
+}
+
 func TestTranslate_ModelConfig(t *testing.T) {
 	t.Parallel()
 	a := New()

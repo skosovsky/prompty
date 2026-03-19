@@ -8,14 +8,7 @@ import (
 	"strings"
 )
 
-var schemaProviderType = reflect.TypeFor[SchemaProvider]()
-
 const semanticRetryTemplate = "The JSON format is valid, but data violates business rules: %v. Fix it."
-
-// SchemaProvider allows caller-owned types to provide a JSON Schema for strict structured output.
-type SchemaProvider interface {
-	JSONSchema() map[string]any
-}
 
 // Validatable allows caller-owned types to enforce post-unmarshal business rules.
 type Validatable interface {
@@ -51,68 +44,71 @@ func extractFencedBlock(s, marker string, caseInsensitive bool) (string, bool) {
 		}
 	}
 
-	end := strings.Index(s[start:], "```")
-	if end < 0 {
+	end, ok := findClosingFenceOffset(s[start:])
+	if !ok {
 		return "", false
 	}
 	return strings.TrimSpace(s[start : start+end]), true
 }
 
-// ExecuteWithStructuredOutput performs a request to the LLM and attempts to parse the response as JSON into type T.
-// On JSON validation error, it adds a pair of messages to PromptExecution (assistant with the "bad" output
-// and user with the error text) and retries up to maxRetries times.
-//
-// maxRetries is the number of retry attempts on JSON validation error. Total API calls = maxRetries + 1
-// (e.g. maxRetries=3 means up to 4 calls). LLM responses wrapped in markdown (```json ... ```)
-// are automatically stripped before parsing.
+func findClosingFenceOffset(s string) (int, bool) {
+	offset := 0
+	for {
+		line := s[offset:]
+		lineEnd := strings.IndexByte(line, '\n')
+		segment := line
+		if lineEnd >= 0 {
+			segment = line[:lineEnd]
+		}
+		if strings.TrimSpace(segment) == "```" {
+			return offset, true
+		}
+		if lineEnd < 0 {
+			return 0, false
+		}
+		offset += lineEnd + 1
+	}
+}
+
+// ExecuteWithStructuredOutput performs a single request to the LLM and parses the response as JSON into type T.
 func ExecuteWithStructuredOutput[T any](
 	ctx context.Context,
-	client LLMClient,
+	invoker Invoker,
 	exec *PromptExecution,
-	maxRetries int,
 ) (*T, error) {
-	if client == nil {
-		return nil, fmt.Errorf("structured output: client is nil")
+	if invoker == nil {
+		return nil, fmt.Errorf("structured output: invoker is nil")
 	}
 
 	workExec, err := prepareStructuredExecution[T](exec)
 	if err != nil {
 		return nil, err
 	}
-	if maxRetries < 0 {
-		maxRetries = 0
+	resp, err := invoker.Generate(ctx, workExec)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("structured output: nil response")
 	}
 
-	var lastErr error
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	assistantMsg := newAssistantMessageWithContent(resp.Content)
+	result, err := decodeStructuredOutput[T](resp.Text())
+	if err != nil {
+		return nil, &ValidationError{
+			RawAssistantMessage: &assistantMsg,
+			FeedbackPrompt:      validationRetryFeedbackText(err),
+			Err:                 err,
 		}
-
-		resp, err := client.Generate(ctx, workExec)
-		if err != nil {
-			return nil, err
-		}
-		if resp == nil {
-			return nil, fmt.Errorf("structured output: nil response")
-		}
-
-		result, err := decodeStructuredOutput[T](resp.Text())
-		if err != nil {
-			lastErr = err
-			workExec = workExec.appendRetryFeedback(resp.Text(), validationRetryFeedbackText(err))
-			continue
-		}
-		if err := validateStructuredValue(result); err != nil {
-			lastErr = err
-			workExec = workExec.appendRetryFeedback(resp.Text(), fmt.Sprintf(semanticRetryTemplate, err))
-			continue
-		}
-		return result, nil
 	}
-
-	return nil, fmt.Errorf("structured output: validation failed after %d retries: %w", maxRetries+1, lastErr)
+	if err := validateStructuredValue(result); err != nil {
+		return nil, &ValidationError{
+			RawAssistantMessage: &assistantMsg,
+			FeedbackPrompt:      semanticValidationFeedbackText(err),
+			Err:                 err,
+		}
+	}
+	return result, nil
 }
 
 func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution, error) {
@@ -125,42 +121,18 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 		return workExec, nil
 	}
 
-	schema, ok := schemaForType[T]()
-	if !ok {
-		return workExec, nil
+	schema, err := schemaForStructuredType[T]()
+	if err != nil {
+		return nil, fmt.Errorf("structured output: %w", err)
 	}
 	workExec.ResponseFormat = &SchemaDefinition{
-		Schema: cloneMapAny(schema),
+		Schema: schema,
 	}
 	return workExec, nil
 }
 
-func schemaForType[T any]() (map[string]any, bool) {
-	t := reflect.TypeFor[T]()
-	if provider, ok := schemaProviderForType(t); ok {
-		return cloneMapAny(provider.JSONSchema()), true
-	}
-	if t.Kind() != reflect.Pointer {
-		if provider, ok := schemaProviderForType(reflect.PointerTo(t)); ok {
-			return cloneMapAny(provider.JSONSchema()), true
-		}
-	}
-	return nil, false
-}
-
-func schemaProviderForType(t reflect.Type) (SchemaProvider, bool) {
-	if !t.Implements(schemaProviderType) {
-		return nil, false
-	}
-
-	var value reflect.Value
-	if t.Kind() == reflect.Pointer {
-		value = reflect.New(t.Elem())
-	} else {
-		value = reflect.New(t).Elem()
-	}
-	provider, ok := value.Interface().(SchemaProvider)
-	return provider, ok
+func schemaForStructuredType[T any]() (map[string]any, error) {
+	return extractSchemaFromType(reflect.TypeFor[T]())
 }
 
 func decodeStructuredOutput[T any](raw string) (*T, error) {
@@ -220,4 +192,12 @@ func validatableFromValue(value reflect.Value) (Validatable, bool) {
 		}
 	}
 	return nil, false
+}
+
+func validationRetryFeedbackText(validationError error) string {
+	return fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError)
+}
+
+func semanticValidationFeedbackText(validationError error) string {
+	return fmt.Sprintf(semanticRetryTemplate, validationError)
 }

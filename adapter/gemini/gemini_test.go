@@ -124,6 +124,29 @@ func TestTranslate_ToolResult(t *testing.T) {
 	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["result"])
 }
 
+func TestTranslate_BatchedToolResults(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+			}},
+		},
+	}
+	req, err := a.Translate(context.Background(), exec)
+	require.NoError(t, err)
+	require.Len(t, req.Contents, 1)
+	require.Len(t, req.Contents[0].Parts, 2)
+	require.NotNil(t, req.Contents[0].Parts[0].FunctionResponse)
+	require.NotNil(t, req.Contents[0].Parts[1].FunctionResponse)
+	assert.Equal(t, "get_weather", req.Contents[0].Parts[0].FunctionResponse.Name)
+	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["result"])
+	assert.Equal(t, "get_time", req.Contents[0].Parts[1].FunctionResponse.Name)
+	assert.Equal(t, "12:00", req.Contents[0].Parts[1].FunctionResponse.Response["result"])
+}
+
 func TestTranslate_ModelConfig(t *testing.T) {
 	t.Parallel()
 	a := New()

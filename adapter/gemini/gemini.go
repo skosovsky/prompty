@@ -232,6 +232,7 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 }
 
 func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content, error) {
+	genParts := make([]*genai.Part, 0, len(parts))
 	for _, p := range parts {
 		if tr, ok := p.(prompty.ToolResultPart); ok {
 			// Fail-fast on MediaPart: FunctionResponse expects map[string]any (JSON), no native image support
@@ -241,11 +242,13 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 				}
 			}
 			text := prompty.TextFromParts(tr.Content)
-			part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text})
-			return genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser), nil
+			genParts = append(genParts, genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text}))
 		}
 	}
-	return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	if len(genParts) == 0 {
+		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+	}
+	return genai.NewContentFromParts(genParts, genai.RoleUser), nil
 }
 
 // ParseResponse converts *genai.GenerateContentResponse into *prompty.Response.

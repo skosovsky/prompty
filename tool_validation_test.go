@@ -9,21 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecuteWithToolValidation_InvalidToolCallRetries(t *testing.T) {
+func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testing.T) {
 	t.Parallel()
 
 	callNum := 0
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
 			callNum++
-			if callNum == 1 {
-				return NewResponse([]ContentPart{
-					TextPart{Text: "Calling tool"},
-					ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{"city":1}`},
-				}), nil
-			}
-			require.Len(t, exec.Messages, 3)
-			return NewResponse([]ContentPart{TextPart{Text: "done"}}), nil
+			require.Len(t, exec.Messages, 1)
+			return NewResponse([]ContentPart{
+				TextPart{Text: "Calling tool"},
+				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{"city":1}`},
+			}), nil
 		},
 	}
 
@@ -32,51 +29,58 @@ func TestExecuteWithToolValidation_InvalidToolCallRetries(t *testing.T) {
 		assert.Equal(t, "lookup", name)
 		assert.JSONEq(t, `{"city":1}`, argsJSON)
 		return errors.New("city must be a string")
-	}), 1)
-	require.NoError(t, err)
+	}))
+	require.Error(t, err)
 	require.NotNil(t, result)
-	require.Len(t, result.Messages, 4)
-	assert.Equal(t, RoleAssistant, result.Messages[1].Role)
-	assert.Len(t, result.Messages[1].Content, 2)
-	assert.Equal(t, RoleTool, result.Messages[2].Role)
-	assert.Equal(t, "city must be a string", result.Messages[2].Content[0].(ToolResultPart).Content[0].(TextPart).Text)
-	assert.Equal(t, RoleAssistant, result.Messages[3].Role)
-	assert.Len(t, exec.Messages, 1, "original exec must remain unchanged")
+	assert.Equal(t, 1, callNum)
+	assert.Len(t, result.Messages, 1)
+	assert.Len(t, exec.Messages, 1)
+
+	var toolErr *ToolCallError
+	require.ErrorAs(t, err, &toolErr)
+	require.NotNil(t, toolErr.RawAssistantMessage)
+	assert.Equal(t, RoleAssistant, toolErr.RawAssistantMessage.Role)
+	require.Len(t, toolErr.ToolResults, 1)
+	part := toolErr.ToolResults[0].(ToolResultPart)
+	assert.Equal(t, "tool-1", part.ToolCallID)
+	assert.Equal(t, "lookup", part.Name)
+	assert.True(t, part.IsError)
+	assert.Equal(t, "city must be a string", part.Content[0].(TextPart).Text)
 }
 
-func TestExecuteWithToolValidation_MultipleInvalidToolCalls(t *testing.T) {
+func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *testing.T) {
 	t.Parallel()
 
-	callNum := 0
 	invoker := &scriptedInvoker{
-		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
-			callNum++
-			if callNum == 1 {
-				return NewResponse([]ContentPart{
-					ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
-					ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
-				}), nil
-			}
-			require.Len(t, exec.Messages, 4)
-			return NewResponse([]ContentPart{TextPart{Text: "retry ok"}}), nil
+		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
+			return NewResponse([]ContentPart{
+				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
+				ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
+			}), nil
 		},
 	}
 
 	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(name string, _ string) error {
 		return errors.New(name + " invalid")
-	}), 1)
-	require.NoError(t, err)
+	}))
+	require.Error(t, err)
 	require.NotNil(t, result)
-	require.Len(t, result.Messages, 5)
-	assert.Equal(t, "lookup invalid", result.Messages[2].Content[0].(ToolResultPart).Content[0].(TextPart).Text)
-	assert.Equal(t, "weather invalid", result.Messages[3].Content[0].(ToolResultPart).Content[0].(TextPart).Text)
+	require.Len(t, result.Messages, 1)
+
+	var toolErr *ToolCallError
+	require.ErrorAs(t, err, &toolErr)
+	require.Len(t, toolErr.ToolResults, 2)
+	assert.Equal(t, "lookup invalid", toolErr.ToolResults[0].(ToolResultPart).Content[0].(TextPart).Text)
+	assert.Equal(t, "weather invalid", toolErr.ToolResults[1].(ToolResultPart).Content[0].(TextPart).Text)
 }
 
 func TestExecuteWithToolValidation_ValidToolCallReturnsImmediately(t *testing.T) {
 	t.Parallel()
 
+	callNum := 0
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
+			callNum++
 			return NewResponse([]ContentPart{
 				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
 			}), nil
@@ -85,9 +89,10 @@ func TestExecuteWithToolValidation_ValidToolCallReturnsImmediately(t *testing.T)
 
 	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(string, string) error {
 		return nil
-	}), 2)
+	}))
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.Equal(t, 1, callNum)
 	require.Len(t, result.Messages, 2)
 	assert.Equal(t, RoleAssistant, result.Messages[1].Role)
 }
@@ -105,7 +110,7 @@ func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testin
 	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(string, string) error {
 		validatorCalls++
 		return nil
-	}), 2)
+	}))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.Messages, 2)
@@ -123,30 +128,9 @@ func TestExecuteWithToolValidation_NilValidatorWithToolCall(t *testing.T) {
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), nil, 0)
+	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), nil)
 	require.Error(t, err)
 	require.NotNil(t, result)
-	require.Len(t, result.Messages, 2)
+	require.Len(t, result.Messages, 1)
 	assert.Contains(t, err.Error(), "validator is nil")
-}
-
-func TestExecuteWithToolValidation_ReturnsLastExecutionOnRetryLimit(t *testing.T) {
-	t.Parallel()
-
-	invoker := &scriptedInvoker{
-		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
-			return NewResponse([]ContentPart{
-				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
-			}), nil
-		},
-	}
-
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(string, string) error {
-		return errors.New("bad args")
-	}), 0)
-	require.Error(t, err)
-	require.NotNil(t, result)
-	require.Len(t, result.Messages, 3)
-	assert.Equal(t, RoleTool, result.Messages[2].Role)
-	assert.Contains(t, err.Error(), "bad args")
 }

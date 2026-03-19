@@ -1,0 +1,50 @@
+id: fixtures/dual_schema
+version: "1"
+
+input_schema:
+  name: dual_schema_input
+  schema:
+    type: object
+    properties:
+      prompt:
+        type: string
+    required:
+      - prompt
+
+response_format:
+  name: dual_schema_output
+  schema:
+    type: object
+    properties:
+      id:
+        type: string
+      note:
+        type: string
+      name:
+        type: string
+      count:
+        type: integer
+      tags:
+        type: array
+        items:
+          type: string
+      score:
+        type: number
+      details:
+        type: object
+        properties:
+          active:
+            type: boolean
+        required:
+          - active
+        additionalProperties: false
+    required:
+      - id
+      - name
+      - tags
+      - details
+    additionalProperties: false
+
+messages:
+  - role: user
+    content: "{{ .prompt }}"

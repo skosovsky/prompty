@@ -76,6 +76,10 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 	return out
 }
 
+func cloneChatMessage(msg ChatMessage) ChatMessage {
+	return cloneMessages([]ChatMessage{msg})[0]
+}
+
 func cloneContentParts(parts []ContentPart) []ContentPart {
 	if parts == nil {
 		return nil
