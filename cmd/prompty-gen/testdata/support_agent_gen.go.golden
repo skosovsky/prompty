@@ -30,7 +30,7 @@ func (p *Prompts) RenderSupportAgent(ctx context.Context, input SupportAgentInpu
 		vars["bot_name"] = "SupportBot"
 	}
 	vars["user_query"] = input.UserQuery
-	exec, err := tmpl.Format(ctx, vars)
+	exec, err := tmpl.Format(vars)
 	if err != nil {
 		return nil, fmt.Errorf("format template: %w", err)
 	}

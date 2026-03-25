@@ -19,10 +19,10 @@ func WithTools(tools []ToolDefinition) ChatTemplateOption {
 	}
 }
 
-// WithConfig sets model config (e.g. temperature, max_tokens).
-func WithConfig(config map[string]any) ChatTemplateOption {
+// WithModelOptions sets model options (e.g. temperature, max_tokens).
+func WithModelOptions(config *ModelOptions) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
-		c.ModelConfig = config
+		c.ModelOptions = config
 	}
 }
 
@@ -69,7 +69,7 @@ func WithPartialsGlob(glob string) ChatTemplateOption {
 	}
 }
 
-// WithPartialsFS sets an fs.FS and pattern for partials (e.g. embed FS and "partials/*.tmpl"); enables {{ template "name" }}.
+// WithPartialsFS sets an [fs.FS] and pattern for partials (e.g. embed FS and "partials/*.tmpl"); enables {{ template "name" }}.
 func WithPartialsFS(fsys fs.FS, pattern string) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.partialsFS = struct {

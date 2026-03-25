@@ -21,6 +21,9 @@ const maxBodySize = 1 << 20
 // defaultUserAgent is the User-Agent header value for HTTP requests.
 const defaultUserAgent = "prompty-remote-registry/1.0"
 
+// defaultHTTPClientTimeout is the default timeout for manifest fetches when no custom client is set.
+const defaultHTTPClientTimeout = 30 * time.Second
+
 // HTTPFetcher holds base URL, client, and optional Bearer token.
 type HTTPFetcher struct {
 	baseURL    string
@@ -51,7 +54,7 @@ func WithAuthToken(token string) HTTPOption {
 func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	if baseURL == "" {
-		return nil, fmt.Errorf("remoteregistry: base URL must not be empty")
+		return nil, errors.New("remoteregistry: base URL must not be empty")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" {
@@ -59,7 +62,7 @@ func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 	}
 	h := &HTTPFetcher{
 		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: defaultHTTPClientTimeout},
 	}
 	for _, opt := range opts {
 		opt(h)

@@ -91,7 +91,7 @@ packages:
 }
 
 func TestLoadConfig_ModeDefaultTypes(t *testing.T) {
-	tmp, err := os.CreateTemp("", "prompty-*.yaml")
+	tmp, err := os.CreateTemp(t.TempDir(), "prompty-*.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

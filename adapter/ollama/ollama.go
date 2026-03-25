@@ -21,12 +21,12 @@ type Adapter struct {
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
-// WithModel sets the default model used when exec.ModelConfig does not contain "model".
+// WithModel sets the default model used when exec.ModelOptions does not contain Model.
 func WithModel(m string) Option {
 	return func(a *Adapter) { a.defaultModel = m }
 }
 
-// WithClient injects the Ollama SDK client for Execute. Required for Execute/LLMClient flow.
+// WithClient injects the Ollama SDK client for Execute. Required for Execute/Invoker flow.
 func WithClient(c *api.Client) Option {
 	return func(a *Adapter) { a.client = c }
 }
@@ -41,7 +41,7 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *api.ChatRequest.
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*api.ChatRequest, error) {
+func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -49,35 +49,32 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		return nil, adapter.ErrStructuredOutputNotSupported
 	}
 	model := a.defaultModel
-	if exec.ModelConfig != nil {
-		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			model = m
-		}
+	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
+		model = exec.ModelOptions.Model
 	}
 	req := &api.ChatRequest{
 		Model:    model,
 		Messages: make([]api.Message, 0, len(exec.Messages)),
 	}
-	if exec.ModelConfig != nil {
-		mp := adapter.ExtractModelConfig(exec.ModelConfig)
-		if mp.Temperature != nil || mp.MaxTokens != nil || mp.TopP != nil || len(mp.Stop) > 0 {
+	if exec.ModelOptions != nil {
+		if exec.ModelOptions.Temperature != nil || exec.ModelOptions.MaxTokens != nil || exec.ModelOptions.TopP != nil || len(exec.ModelOptions.Stop) > 0 {
 			req.Options = make(map[string]any)
-			if mp.Temperature != nil {
-				req.Options["temperature"] = *mp.Temperature
+			if exec.ModelOptions.Temperature != nil {
+				req.Options["temperature"] = *exec.ModelOptions.Temperature
 			}
-			if mp.MaxTokens != nil {
-				req.Options["num_predict"] = *mp.MaxTokens
+			if exec.ModelOptions.MaxTokens != nil {
+				req.Options["num_predict"] = *exec.ModelOptions.MaxTokens
 			}
-			if mp.TopP != nil {
-				req.Options["top_p"] = *mp.TopP
+			if exec.ModelOptions.TopP != nil {
+				req.Options["top_p"] = *exec.ModelOptions.TopP
 			}
-			if len(mp.Stop) > 0 {
-				req.Options["stop"] = mp.Stop
+			if len(exec.ModelOptions.Stop) > 0 {
+				req.Options["stop"] = exec.ModelOptions.Stop
 			}
 		}
 	}
 	for _, msg := range exec.Messages {
-		m, err := a.translateMessage(ctx, msg)
+		m, err := a.translateMessage(msg)
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +113,7 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 	return &lastResp, nil
 }
 
-func (a *Adapter) translateMessage(_ context.Context, msg prompty.ChatMessage) ([]api.Message, error) {
+func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
 		for _, p := range msg.Content {
@@ -228,8 +225,7 @@ func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
 }
 
 // ParseResponse converts *api.ChatResponse into *prompty.Response.
-func (a *Adapter) ParseResponse(ctx context.Context, resp *api.ChatResponse) (*prompty.Response, error) {
-	_ = ctx
+func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, error) {
 	if resp == nil {
 		return nil, adapter.ErrInvalidResponse
 	}

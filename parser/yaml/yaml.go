@@ -47,15 +47,15 @@ type rawMessage struct {
 }
 
 type fileManifest struct {
-	ID             string                   `yaml:"id"`
-	Version        string                   `yaml:"version"`
-	Description    string                   `yaml:"description"`
-	ModelConfig    map[string]any           `yaml:"model_config"`
-	Metadata       map[string]any           `yaml:"metadata"`
-	InputSchema    map[string]any           `yaml:"input_schema"`
-	Tools          []prompty.ToolDefinition `yaml:"tools"`
-	ResponseFormat map[string]any           `yaml:"response_format"`
-	Messages       []rawMessage             `yaml:"messages"`
+	ID              string                   `yaml:"id"`
+	Version         string                   `yaml:"version"`
+	Description     string                   `yaml:"description"`
+	ModelOptionsRaw map[string]any           `yaml:"model_config"`
+	Metadata        map[string]any           `yaml:"metadata"`
+	InputSchema     map[string]any           `yaml:"input_schema"`
+	Tools           []prompty.ToolDefinition `yaml:"tools"`
+	ResponseFormat  map[string]any           `yaml:"response_format"`
+	Messages        []rawMessage             `yaml:"messages"`
 }
 
 // Parser implements manifest.Unmarshaler for YAML manifests.
@@ -127,7 +127,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 		return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
 	// Direct normalization (no casts needed; fileManifest fields are already map[string]any)
-	fm.ModelConfig = normalizeMap(fm.ModelConfig)
+	fm.ModelOptionsRaw = normalizeMap(fm.ModelOptionsRaw)
 	fm.Metadata = normalizeMap(fm.Metadata)
 	for i := range fm.Tools {
 		fm.Tools[i].Parameters = normalizeMap(fm.Tools[i].Parameters)
@@ -142,7 +142,11 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.ID = fm.ID
 	raw.Version = fm.Version
 	raw.Description = fm.Description
-	raw.ModelConfig = fm.ModelConfig
+	modelOptions, err := manifest.DecodeModelOptions(fm.ModelOptionsRaw)
+	if err != nil {
+		return fmt.Errorf("%w: model_config: %w", prompty.ErrInvalidManifest, err)
+	}
+	raw.ModelOptions = modelOptions
 	raw.Metadata = fm.Metadata
 	// rawToSchemaDefinition calls normalizeMap internally
 	raw.InputSchema = rawToSchemaDefinition(fm.InputSchema)

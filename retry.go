@@ -16,10 +16,10 @@ func WithRetry[T any](
 	var zero T
 
 	if executor == nil {
-		return zero, fmt.Errorf("retry: executor is nil")
+		return zero, errors.New("retry: executor is nil")
 	}
 	if exec == nil {
-		return zero, fmt.Errorf("retry: execution is nil")
+		return zero, errors.New("retry: execution is nil")
 	}
 	if maxRetries < 0 {
 		maxRetries = 0

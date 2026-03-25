@@ -11,13 +11,14 @@ go get github.com/skosovsky/prompty/adapter/ollama
 ## Configuration
 
 - **Endpoint:** use the `ollama/api` client (e.g. `api.NewClient()` or custom endpoint). This adapter produces `*api.ChatRequest`; you send it with the Ollama client. No API key; typically local or self-hosted.
-- **Default model:** `New()` uses `llama3.2`. Override with `WithModel(modelName)`, or set per execution via `exec.ModelConfig["model"]`.
+- **Default model:** `New()` uses `llama3.2`. Override with `WithModel(modelName)`, or set per execution via `exec.ModelOptions.Model`.
 
 ## Capabilities
 
-- **Types:** `Translate` returns `*api.ChatRequest`; `ParseResponse(ctx, raw)` expects the Ollama chat response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
+- **Types:** `Translate` returns `*api.ChatRequest`; `ParseResponse(raw)` expects the Ollama chat response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
 - **Messages:** system, user, assistant. **Tools:** native Ollama tool definitions and tool call/result format.
-- **Images:** only base64. For image URLs call `exec.ResolveMedia(ctx, fetcher)` before `Translate`; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Tool results: if the adapter does not support media in tool results, it returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
-- **Helpers:** `prompty.TextFromParts`, `adapter.ExtractModelConfig`.
+- **Images:** only base64. For image URLs call `exec.ResolvedMedia(ctx, fetcher)` before `Translate`; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Tool results: if the adapter does not support media in tool results, it returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
+- **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
+- **Helpers:** `prompty.TextFromParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama) for the full API.

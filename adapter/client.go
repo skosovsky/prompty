@@ -13,8 +13,11 @@ type clientImpl[Req any, Resp any] struct {
 }
 
 // Generate performs Translate → Execute → ParseResponse.
-func (c *clientImpl[Req, Resp]) Generate(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-	req, err := c.adapter.Translate(ctx, exec)
+func (c *clientImpl[Req, Resp]) Generate(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+) (*prompty.Response, error) {
+	req, err := c.adapter.Translate(exec)
 	if err != nil {
 		return nil, err
 	}
@@ -22,14 +25,17 @@ func (c *clientImpl[Req, Resp]) Generate(ctx context.Context, exec *prompty.Prom
 	if err != nil {
 		return nil, err
 	}
-	return c.adapter.ParseResponse(ctx, resp)
+	return c.adapter.ParseResponse(resp)
 }
 
 // GenerateStream uses StreamerAdapter if implemented; otherwise polyfill via Generate.
-func (c *clientImpl[Req, Resp]) GenerateStream(ctx context.Context, exec *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+func (c *clientImpl[Req, Resp]) GenerateStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+) iter.Seq2[*prompty.ResponseChunk, error] {
 	streamer, ok := any(c.adapter).(StreamerAdapter[Req])
 	if ok {
-		req, err := c.adapter.Translate(ctx, exec)
+		req, err := c.adapter.Translate(exec)
 		if err != nil {
 			return func(yield func(*prompty.ResponseChunk, error) bool) { yield(nil, err) }
 		}
@@ -55,8 +61,8 @@ func (c *clientImpl[Req, Resp]) GenerateStream(ctx context.Context, exec *prompt
 	}
 }
 
-// NewClient creates prompty.LLMClient from ProviderAdapter. Middlewares wrap the base Invoker.
-func NewClient[Req any, Resp any](adp ProviderAdapter[Req, Resp], mws ...prompty.Middleware) prompty.LLMClient {
+// NewClient creates a prompty.Invoker from ProviderAdapter. Middlewares wrap the base Invoker.
+func NewClient[Req any, Resp any](adp ProviderAdapter[Req, Resp], mws ...prompty.Middleware) prompty.Invoker {
 	base := &clientImpl[Req, Resp]{adapter: adp}
 	if len(mws) == 0 {
 		return base

@@ -148,3 +148,89 @@ response_format:
 	require.True(t, ok)
 	assert.Contains(t, rfProps, "result")
 }
+
+func TestUnmarshal_ModelOptionsTyped(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_model_opts
+version: "1"
+model_config:
+  model: gpt-4o
+  temperature: 0.7
+  max_tokens: 2048
+  top_p: 0.8
+  stop:
+    - END
+  frequency_penalty: 0.2
+  provider_settings:
+    frequency_penalty: 0.5
+    custom_flag: true
+messages:
+  - role: system
+    content: "Hi"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.NoError(t, err)
+	require.NotNil(t, raw.ModelOptions)
+	assert.Equal(t, "gpt-4o", raw.ModelOptions.Model)
+	require.NotNil(t, raw.ModelOptions.Temperature)
+	assert.InDelta(t, 0.7, *raw.ModelOptions.Temperature, 1e-9)
+	require.NotNil(t, raw.ModelOptions.MaxTokens)
+	assert.Equal(t, int64(2048), *raw.ModelOptions.MaxTokens)
+	require.NotNil(t, raw.ModelOptions.TopP)
+	assert.InDelta(t, 0.8, *raw.ModelOptions.TopP, 1e-9)
+	assert.Equal(t, []string{"END"}, raw.ModelOptions.Stop)
+	require.NotNil(t, raw.ModelOptions.ProviderSettings)
+	assert.InDelta(t, 0.5, raw.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
+	assert.Equal(t, true, raw.ModelOptions.ProviderSettings["custom_flag"])
+}
+
+func TestUnmarshal_ModelOptionsEmptyBlockReturnsNil(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: empty_model_opts
+version: "1"
+model_config: {}
+messages:
+  - role: system
+    content: "Hi"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.NoError(t, err)
+	assert.Nil(t, raw.ModelOptions)
+}
+
+func TestUnmarshal_ModelOptions_ParseIntegration(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_parse_model_opts
+version: "1"
+model_config:
+  model: gemini-2.5-pro
+  temperature: 0.3
+  top_p: 0.9
+  custom_mode: fast
+messages:
+  - role: system
+    content: "Hi"
+`)
+	tpl, err := manifest.Parse(yamlData, New())
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.NotNil(t, tpl.ModelOptions)
+	assert.Equal(t, "gemini-2.5-pro", tpl.ModelOptions.Model)
+	require.NotNil(t, tpl.ModelOptions.Temperature)
+	assert.InDelta(t, 0.3, *tpl.ModelOptions.Temperature, 1e-9)
+	require.NotNil(t, tpl.ModelOptions.TopP)
+	assert.InDelta(t, 0.9, *tpl.ModelOptions.TopP, 1e-9)
+	assert.Equal(t, map[string]any{"custom_mode": "fast"}, tpl.ModelOptions.ProviderSettings)
+
+	exec, err := tpl.Format(map[string]any{})
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+	require.NotNil(t, exec.ModelOptions)
+	assert.Equal(t, "gemini-2.5-pro", exec.ModelOptions.Model)
+	assert.Equal(t, map[string]any{"custom_mode": "fast"}, exec.ModelOptions.ProviderSettings)
+}

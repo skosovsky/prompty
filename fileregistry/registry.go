@@ -80,7 +80,7 @@ func insertEnvBeforeExt(base, env string) string {
 
 // idToPaths returns candidate paths for id in resolution order (io/fs slash-style id).
 // When env != "", tries {id}.{env}.yaml first, then base paths.
-// Uses filepath.FromSlash(id) for Windows filesystem compatibility.
+// Uses [filepath.FromSlash] on id for Windows filesystem compatibility.
 func idToPaths(dir, id, env string) []string {
 	exts := []string{".yaml", ".yml", ".json"}
 	var out []string

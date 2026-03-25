@@ -1,7 +1,7 @@
 package prompty
 
 import (
-	"fmt"
+	"errors"
 	"reflect"
 )
 
@@ -45,19 +45,19 @@ func extractSchemaFromType(t reflect.Type) (map[string]any, error) {
 
 func normalizedSchemaTypeFromValue(v any) (reflect.Type, error) {
 	if v == nil {
-		return nil, fmt.Errorf("schema: nil value")
+		return nil, errors.New("schema: nil value")
 	}
 	return normalizedSchemaType(reflect.TypeOf(v))
 }
 
 func normalizedSchemaType(t reflect.Type) (reflect.Type, error) {
 	if t == nil {
-		return nil, fmt.Errorf("schema: nil type")
+		return nil, errors.New("schema: nil type")
 	}
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 		if t == nil {
-			return nil, fmt.Errorf("schema: nil type")
+			return nil, errors.New("schema: nil type")
 		}
 	}
 	return t, nil

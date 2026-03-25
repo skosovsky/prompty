@@ -12,7 +12,7 @@ import (
 // Registry uses it to obtain manifest content; HTTP and Git are typical implementations.
 //
 // Return ErrNotFound when the template does not exist; Registry translates it to prompty.ErrTemplateNotFound.
-// Wrap other errors in ErrFetchFailed so callers can use errors.Is.
+// Wrap other errors in ErrFetchFailed so callers can use [errors.Is].
 type Fetcher interface {
 	Fetch(ctx context.Context, id string) ([]byte, error)
 }

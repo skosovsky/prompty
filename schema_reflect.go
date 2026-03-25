@@ -115,7 +115,11 @@ func (b *schemaBuilder) schemaForStructType(t reflect.Type, depth int) (map[stri
 	return schema, nil
 }
 
-func (b *schemaBuilder) collectStructFields(t reflect.Type, depth int, inheritedOptional bool) ([]schemaFieldCandidate, error) {
+func (b *schemaBuilder) collectStructFields(
+	t reflect.Type,
+	depth int,
+	inheritedOptional bool,
+) ([]schemaFieldCandidate, error) {
 	candidates := make([]schemaFieldCandidate, 0, t.NumField())
 	for field := range t.Fields() {
 		if shouldSkipSchemaField(field) {
@@ -134,7 +138,11 @@ func (b *schemaBuilder) collectStructFields(t reflect.Type, depth int, inherited
 			}
 
 			b.active[baseFieldType]++
-			embedded, err := b.collectStructFields(baseFieldType, depth+1, inheritedOptional || isPointerType(field.Type))
+			embedded, err := b.collectStructFields(
+				baseFieldType,
+				depth+1,
+				inheritedOptional || isPointerType(field.Type),
+			)
 			b.active[baseFieldType]--
 			if b.active[baseFieldType] == 0 {
 				delete(b.active, baseFieldType)
@@ -195,7 +203,7 @@ func shouldSkipSchemaField(field reflect.StructField) bool {
 	return indirectSchemaType(field.Type).Kind() != reflect.Struct
 }
 
-func parseJSONSchemaTag(tag string) (name string, hasName bool, omitEmpty bool, ignore bool) {
+func parseJSONSchemaTag(tag string) (string, bool, bool, bool) {
 	if tag == "" {
 		return "", false, false, false
 	}
@@ -203,6 +211,8 @@ func parseJSONSchemaTag(tag string) (name string, hasName bool, omitEmpty bool, 
 		return "", false, false, true
 	}
 	head, tail, _ := strings.Cut(tag, ",")
+	var name string
+	hasName := false
 	if head != "" {
 		name = head
 		hasName = true
@@ -210,6 +220,7 @@ func parseJSONSchemaTag(tag string) (name string, hasName bool, omitEmpty bool, 
 	if tail == "" {
 		return name, hasName, false, false
 	}
+	omitEmpty := false
 	for opt := range strings.SplitSeq(tail, ",") {
 		if opt == "omitempty" {
 			omitEmpty = true

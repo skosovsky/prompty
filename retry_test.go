@@ -16,19 +16,24 @@ func TestWithRetry_ValidationErrorAppendsAssistantAndUser(t *testing.T) {
 	callNum := 0
 	var seen []*PromptExecution
 
-	result, err := WithRetry(context.Background(), SimplePrompt("hi"), 1, func(_ context.Context, exec *PromptExecution) (string, error) {
-		callNum++
-		seen = append(seen, clonePromptExecution(exec))
-		if callNum == 1 {
-			msg := NewAssistantMessage(`{invalid`)
-			return "", &ValidationError{
-				RawAssistantMessage: &msg,
-				FeedbackPrompt:      "JSON validation failed: invalid character. Please fix your output.",
-				Err:                 errors.New("invalid character"),
+	result, err := WithRetry(
+		context.Background(),
+		SimplePrompt("hi"),
+		1,
+		func(_ context.Context, exec *PromptExecution) (string, error) {
+			callNum++
+			seen = append(seen, clonePromptExecution(exec))
+			if callNum == 1 {
+				msg := NewAssistantMessage(`{invalid`)
+				return "", &ValidationError{
+					RawAssistantMessage: &msg,
+					FeedbackPrompt:      "JSON validation failed: invalid character. Please fix your output.",
+					Err:                 errors.New("invalid character"),
+				}
 			}
-		}
-		return "ok", nil
-	})
+			return "ok", nil
+		},
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", result)
 	require.Len(t, seen, 2)
@@ -36,7 +41,11 @@ func TestWithRetry_ValidationErrorAppendsAssistantAndUser(t *testing.T) {
 	assert.Equal(t, RoleAssistant, seen[1].Messages[1].Role)
 	assert.Equal(t, `{invalid`, TextFromParts(seen[1].Messages[1].Content))
 	assert.Equal(t, RoleUser, seen[1].Messages[2].Role)
-	assert.Equal(t, "JSON validation failed: invalid character. Please fix your output.", TextFromParts(seen[1].Messages[2].Content))
+	assert.Equal(
+		t,
+		"JSON validation failed: invalid character. Please fix your output.",
+		TextFromParts(seen[1].Messages[2].Content),
+	)
 }
 
 func TestWithRetry_ToolCallErrorAppendsAssistantAndTool(t *testing.T) {
@@ -45,26 +54,31 @@ func TestWithRetry_ToolCallErrorAppendsAssistantAndTool(t *testing.T) {
 	callNum := 0
 	var seen []*PromptExecution
 
-	result, err := WithRetry(context.Background(), SimplePrompt("hi"), 1, func(_ context.Context, exec *PromptExecution) (string, error) {
-		callNum++
-		seen = append(seen, clonePromptExecution(exec))
-		if callNum == 1 {
-			msg := newAssistantMessageWithContent([]ContentPart{
-				TextPart{Text: "Calling tool"},
-				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
-				ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
-			})
-			return "", &ToolCallError{
-				RawAssistantMessage: &msg,
-				ToolResults: []ContentPart{
-					newToolResultPart("tool-1", "lookup", "lookup invalid", true),
-					newToolResultPart("tool-2", "weather", "weather invalid", true),
-				},
-				Err: errors.New("invalid tool batch"),
+	result, err := WithRetry(
+		context.Background(),
+		SimplePrompt("hi"),
+		1,
+		func(_ context.Context, exec *PromptExecution) (string, error) {
+			callNum++
+			seen = append(seen, clonePromptExecution(exec))
+			if callNum == 1 {
+				msg := newAssistantMessageWithContent([]ContentPart{
+					TextPart{Text: "Calling tool"},
+					ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
+					ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
+				})
+				return "", &ToolCallError{
+					RawAssistantMessage: &msg,
+					ToolResults: []ContentPart{
+						newToolResultPart("tool-1", "lookup", "lookup invalid", true),
+						newToolResultPart("tool-2", "weather", "weather invalid", true),
+					},
+					Err: errors.New("invalid tool batch"),
+				}
 			}
-		}
-		return "ok", nil
-	})
+			return "ok", nil
+		},
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", result)
 	require.Len(t, seen, 2)

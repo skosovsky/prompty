@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/ext/otelprompty
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/skosovsky/prompty v0.0.0

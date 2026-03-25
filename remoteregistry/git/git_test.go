@@ -20,6 +20,19 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func gitTestEnv() []string {
+	return append(
+		os.Environ(),
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@test",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=commit.gpgsign",
+		"GIT_CONFIG_VALUE_0=false",
+	)
+}
+
 // initRepo creates a git repo in dir with one commit containing the given files (relative path -> content).
 func initRepo(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
@@ -31,7 +44,7 @@ func initRepo(t *testing.T, dir string, files map[string]string) {
 	for _, c := range []string{"git init", "git branch -M main", "git add .", "git commit -m init"} {
 		cmd := exec.Command("sh", "-c", c) // #nosec G204 -- test helper: c is from fixed list
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+		cmd.Env = gitTestEnv()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "run %q: %s", c, out)
 	}
@@ -52,7 +65,7 @@ func initRepoWithBranches(t *testing.T, dir string, mainFiles map[string]string,
 	for _, c := range []string{"git checkout -b " + branchName, "git add .", "git commit -m branch"} {
 		cmd := exec.Command("sh", "-c", c) // #nosec G204 -- test helper: c is from fixed list
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+		cmd.Env = gitTestEnv()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "run %q: %s", c, out)
 	}

@@ -25,12 +25,12 @@ type Adapter struct {
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
-// WithModel sets the default model used when exec.ModelConfig does not contain "model".
+// WithModel sets the default model used when exec.ModelOptions does not contain Model.
 func WithModel(m anthropic.Model) Option {
 	return func(a *Adapter) { a.defaultModel = m }
 }
 
-// WithClient injects the Anthropic SDK client for Execute. Required for Execute/LLMClient flow.
+// WithClient injects the Anthropic SDK client for Execute. Required for Execute/Invoker flow.
 func WithClient(c *anthropic.Client) Option {
 	return func(a *Adapter) { a.client = c }
 }
@@ -47,7 +47,7 @@ func New(opts ...Option) *Adapter {
 const outputFormatToolName = "output_format"
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
+func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
@@ -58,22 +58,21 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		MaxTokens: defaultMaxTokens,
 		Model:     a.defaultModel,
 	}
-	if exec.ModelConfig != nil {
-		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			params.Model = anthropic.Model(m)
+	if exec.ModelOptions != nil {
+		if exec.ModelOptions.Model != "" {
+			params.Model = anthropic.Model(exec.ModelOptions.Model)
 		}
-		mp := adapter.ExtractModelConfig(exec.ModelConfig)
-		if mp.MaxTokens != nil {
-			params.MaxTokens = *mp.MaxTokens
+		if exec.ModelOptions.MaxTokens != nil {
+			params.MaxTokens = *exec.ModelOptions.MaxTokens
 		}
-		if mp.Temperature != nil {
-			params.Temperature = anthropic.Float(*mp.Temperature)
+		if exec.ModelOptions.Temperature != nil {
+			params.Temperature = anthropic.Float(*exec.ModelOptions.Temperature)
 		}
-		if mp.TopP != nil {
-			params.TopP = anthropic.Float(*mp.TopP)
+		if exec.ModelOptions.TopP != nil {
+			params.TopP = anthropic.Float(*exec.ModelOptions.TopP)
 		}
-		if len(mp.Stop) > 0 {
-			params.StopSequences = mp.Stop
+		if len(exec.ModelOptions.Stop) > 0 {
+			params.StopSequences = exec.ModelOptions.Stop
 		}
 	}
 	var systemBlocks []anthropic.TextBlockParam
@@ -84,7 +83,7 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 			text := prompty.TextFromParts(msg.Content)
 			systemBlocks = append(systemBlocks, a.systemTextBlock(text, msg.CachePoint))
 		case prompty.RoleUser:
-			m, err := a.userMessage(ctx, msg.Content, msg.CachePoint)
+			m, err := a.userMessage(msg.Content, msg.CachePoint)
 			if err != nil {
 				return nil, err
 			}
@@ -216,7 +215,7 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) userMessage(_ context.Context, parts []prompty.ContentPart, cachePoint bool) (anthropic.MessageParam, error) {
+func (a *Adapter) userMessage(parts []prompty.ContentPart, cachePoint bool) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
@@ -323,8 +322,7 @@ func (a *Adapter) Execute(ctx context.Context, req *anthropic.MessageNewParams) 
 }
 
 // ParseResponse converts *anthropic.Message into *prompty.Response.
-func (a *Adapter) ParseResponse(ctx context.Context, msg *anthropic.Message) (*prompty.Response, error) {
-	_ = ctx
+func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, error) {
 	if msg == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
@@ -353,6 +351,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, msg *anthropic.Message) (*p
 		return nil, adapter.ErrEmptyResponse
 	}
 	resp := prompty.NewResponse(out)
+	resp.Usage = usageFromAnthropic(msg.Usage)
 	if msg.StopReason != "" {
 		resp.FinishReason = string(msg.StopReason)
 	}
@@ -370,3 +369,14 @@ func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty
 }
 
 var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] = (*Adapter)(nil)
+
+func usageFromAnthropic(usage anthropic.Usage) prompty.Usage {
+	promptTokens := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	return prompty.Usage{
+		PromptTokens:              int(promptTokens),
+		CompletionTokens:          int(usage.OutputTokens),
+		TotalTokens:               int(promptTokens + usage.OutputTokens),
+		PromptTokensCached:        int(usage.CacheReadInputTokens),
+		PromptTokensCacheCreation: int(usage.CacheCreationInputTokens),
+	}
+}

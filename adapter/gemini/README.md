@@ -15,9 +15,9 @@ go get github.com/skosovsky/prompty/adapter/gemini
 
 ## Capabilities
 
-- **Types:** `Translate` returns `*gemini.Request` (Contents and Config); `ParseResponse(ctx, raw)` expects `*genai.GenerateContentResponse`; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
-- **Messages:** system, user, assistant; tools; images. **Images:** URL is accepted natively in `MediaPart`; no need to call `exec.ResolveMedia` for URLs.
-- **Model config:** temperature, max_tokens, top_p, stop are mapped from `exec.ModelConfig` via `adapter.ExtractModelConfig` into the request Config.
-- **Helpers:** `prompty.TextFromParts`, `adapter.ExtractModelConfig`.
+- **Types:** `Translate` returns `*gemini.Request` (Contents and Config); `ParseResponse(raw)` expects `*genai.GenerateContentResponse`; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
+- **Messages:** system, user, assistant; tools; images. **Images:** URL is accepted natively in `MediaPart`; no need to call `exec.ResolvedMedia` for URLs.
+- **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
+- **Helpers:** `prompty.TextFromParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/gemini) for the full API.

@@ -19,7 +19,7 @@ var (
 	_ prompty.Statter  = (*Registry)(nil)
 )
 
-// Registry loads all manifests from an fs.FS at construction (eager). No mutex. Holds parsed templates by id.
+// Registry loads all manifests from an [fs.FS] at construction (eager). No mutex. Holds parsed templates by id.
 // WithEnvironment(env): GetTemplate tries id.env first, then id (e.g. internal/router.prod before internal/router).
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
@@ -76,7 +76,8 @@ func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
+		if d.IsDir() ||
+			(!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
 			return nil
 		}
 		relPath := path

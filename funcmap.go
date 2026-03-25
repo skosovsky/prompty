@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// defaultFuncMap returns the template.FuncMap used for ChatPromptTemplate rendering.
+// defaultFuncMap returns the [template.FuncMap] used for ChatPromptTemplate rendering.
 func defaultFuncMap(tc TokenCounter) template.FuncMap {
 	if tc == nil {
 		tc = &CharFallbackCounter{}
@@ -28,7 +28,7 @@ func defaultFuncMap(tc TokenCounter) template.FuncMap {
 }
 
 // escapeXML escapes text so that XML/HTML tags are not interpreted (e.g. for isolating user input in prompts).
-// Uses html.EscapeString: <, >, &, ", ' are replaced so the LLM does not treat the text as markup.
+// Uses [html.EscapeString]: <, >, &, ", ' are replaced so the LLM does not treat the text as markup.
 func escapeXML(text string) string {
 	return html.EscapeString(text)
 }

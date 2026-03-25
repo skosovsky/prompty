@@ -3,7 +3,7 @@ package remoteregistry
 import "errors"
 
 // Sentinel errors for remote registry operations.
-// Callers should use errors.Is to check.
+// Callers should use [errors.Is] to check.
 var (
 	// ErrFetchFailed indicates the Fetcher could not retrieve the manifest.
 	ErrFetchFailed = errors.New("remoteregistry: fetch failed")

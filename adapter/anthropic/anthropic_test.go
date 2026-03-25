@@ -28,7 +28,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, _ := a.Translate(context.Background(), exec)
+	params, _ := a.Translate(exec)
 	fmt.Println(params.Messages[0].Content[0].OfText.Text)
 	// Output: Hello
 }
@@ -41,7 +41,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
@@ -59,7 +59,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
@@ -76,7 +76,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.Equal(t, anthropic.MessageParamRoleUser, params.Messages[0].Role)
@@ -96,7 +96,7 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.Equal(t, anthropic.MessageParamRoleUser, params.Messages[0].Role)
@@ -125,7 +125,7 @@ func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 }
@@ -139,7 +139,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
@@ -148,16 +148,19 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	require.Len(t, params.Messages, 1)
 }
 
-func TestTranslate_ModelConfig(t *testing.T) {
+func TestTranslate_ModelOptions(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ModelConfig: map[string]any{"max_tokens": int64(500), "temperature": 0.3},
+		ModelOptions: &prompty.ModelOptions{
+			MaxTokens:   new(int64(500)),
+			Temperature: new(0.3),
+		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	assert.Equal(t, int64(500), params.MaxTokens)
 	assert.True(t, params.Temperature.Valid())
@@ -167,7 +170,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 func TestTranslate_NilExecution(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.Translate(context.Background(), nil)
+	_, err := a.Translate(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
@@ -193,7 +196,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Tools, 1)
 	tool := params.Tools[0].OfTool
@@ -231,7 +234,7 @@ func TestTranslate_ImagePartData(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
@@ -248,7 +251,7 @@ func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing
 			}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
 }
@@ -263,7 +266,7 @@ func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 1)
@@ -281,7 +284,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	require.Len(t, params.Messages[0].Content, 2)
@@ -299,7 +302,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 }
@@ -311,9 +314,9 @@ func TestTranslate_StopSequences(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ModelConfig: map[string]any{"stop": []string{"STOP", "END"}},
+		ModelOptions: &prompty.ModelOptions{Stop: []string{"STOP", "END"}},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"STOP", "END"}, params.StopSequences)
 }
@@ -324,10 +327,33 @@ func TestParseResponse_TextOnly(t *testing.T) {
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{{Type: "text", Text: "Hello back"}},
 	}
-	resp, err := a.ParseResponse(context.Background(), msg)
+	resp, err := a.ParseResponse(msg)
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	assert.Equal(t, "Hello back", resp.Content[0].(prompty.TextPart).Text)
+}
+
+func TestParseResponse_UsageBreakdown(t *testing.T) {
+	t.Parallel()
+	a := New()
+	msg := &anthropic.Message{
+		Content: []anthropic.ContentBlockUnion{{Type: "text", Text: "Hello back"}},
+		Usage: anthropic.Usage{
+			InputTokens:              12,
+			OutputTokens:             5,
+			CacheReadInputTokens:     7,
+			CacheCreationInputTokens: 3,
+		},
+	}
+	resp, err := a.ParseResponse(msg)
+	require.NoError(t, err)
+	assert.Equal(t, prompty.Usage{
+		PromptTokens:              22,
+		CompletionTokens:          5,
+		TotalTokens:               27,
+		PromptTokensCached:        7,
+		PromptTokensCacheCreation: 3,
+	}, resp.Usage)
 }
 
 func TestParseResponse_FinishReason(t *testing.T) {
@@ -337,7 +363,7 @@ func TestParseResponse_FinishReason(t *testing.T) {
 		Content:    []anthropic.ContentBlockUnion{{Type: "text", Text: "done"}},
 		StopReason: anthropic.StopReasonEndTurn,
 	}
-	resp, err := a.ParseResponse(context.Background(), msg)
+	resp, err := a.ParseResponse(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "end_turn", resp.FinishReason)
 }
@@ -345,7 +371,7 @@ func TestParseResponse_FinishReason(t *testing.T) {
 func TestParseResponse_NilMessage(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(context.Background(), nil)
+	_, err := a.ParseResponse(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -362,7 +388,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			Input: json.RawMessage(toolInput),
 		}},
 	}
-	resp, err := a.ParseResponse(context.Background(), msg)
+	resp, err := a.ParseResponse(msg)
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	tc := resp.Content[0].(prompty.ToolCallPart)
@@ -383,7 +409,7 @@ func TestParseResponse_OutputFormatToolUse_ReturnsTextPart(t *testing.T) {
 			Input: json.RawMessage(structuredJSON),
 		}},
 	}
-	resp, err := a.ParseResponse(context.Background(), msg)
+	resp, err := a.ParseResponse(msg)
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	tp := resp.Content[0].(prompty.TextPart)
@@ -394,9 +420,28 @@ func TestParseResponse_EmptyContent(t *testing.T) {
 	t.Parallel()
 	a := New()
 	msg := &anthropic.Message{Content: []anthropic.ContentBlockUnion{}}
-	_, err := a.ParseResponse(context.Background(), msg)
+	_, err := a.ParseResponse(msg)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
+}
+
+func TestUsageFromAnthropic_MapsBreakdownFields(t *testing.T) {
+	t.Parallel()
+
+	got := usageFromAnthropic(anthropic.Usage{
+		InputTokens:              40,
+		OutputTokens:             9,
+		CacheReadInputTokens:     11,
+		CacheCreationInputTokens: 6,
+	})
+
+	assert.Equal(t, prompty.Usage{
+		PromptTokens:              57,
+		CompletionTokens:          9,
+		TotalTokens:               66,
+		PromptTokensCached:        11,
+		PromptTokensCacheCreation: 6,
+	}, got)
 }
 
 func TestTranslate_InvalidToolCallArgs(t *testing.T) {
@@ -409,7 +454,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
@@ -428,7 +473,7 @@ func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrConflictingDirectives)
 	assert.Contains(t, err.Error(), "cannot use both Tools and ResponseFormat")
@@ -446,7 +491,7 @@ func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T
 			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}, "required": []any{"x"}},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, params)
 	require.Len(t, params.Tools, 1)
@@ -475,7 +520,7 @@ func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *te
 			},
 		},
 	}
-	params, err := a.Translate(context.Background(), exec)
+	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Tools, 1)
 	schema := params.Tools[0].OfTool.InputSchema

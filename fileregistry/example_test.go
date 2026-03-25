@@ -6,12 +6,12 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/fileregistry"
-	"github.com/skosovsky/prompty/manifest"
+	"github.com/skosovsky/prompty/parser/yaml"
 )
 
 func ExampleRegistry_GetTemplate() {
 	dir := "testdata/prompts"
-	reg, err := fileregistry.New(dir, fileregistry.WithParser(manifest.NewJSONParser()))
+	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +29,7 @@ func ExampleRegistry_GetTemplate() {
 
 func ExampleNew() {
 	dir := "testdata/prompts"
-	reg, err := fileregistry.New(dir, fileregistry.WithParser(manifest.NewJSONParser()))
+	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	if err != nil {
 		panic(err)
 	}
@@ -41,7 +41,7 @@ func ExampleNew() {
 	type Payload struct {
 		UserName string `prompt:"user_name"`
 	}
-	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Alice"})
+	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice"})
 	if err != nil {
 		panic(err)
 	}

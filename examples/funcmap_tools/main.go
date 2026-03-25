@@ -31,7 +31,7 @@ func main() {
 	type Payload struct {
 		Query string `prompt:"query"`
 	}
-	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is the weather in Paris? (hint: use a tool)"})
+	exec, err := tpl.FormatStruct(&Payload{Query: "What is the weather in Paris? (hint: use a tool)"})
 	if err != nil {
 		log.Fatalf("FormatStruct: %v", err)
 	}

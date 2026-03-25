@@ -8,8 +8,11 @@ import (
 	"testing"
 
 	"github.com/dave/jennifer/jen"
+
 	"github.com/skosovsky/prompty"
 )
+
+const legacyClientTypeName = "LLM" + "Client"
 
 // --- Consts tests ---
 
@@ -68,8 +71,8 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "func AllPromptIDs()") {
 		t.Error("expected AllPromptIDs")
 	}
-	if strings.Contains(out, "LLMClient") {
-		t.Error("DoD: must not contain LLMClient")
+	if strings.Contains(out, legacyClientTypeName) {
+		t.Error("DoD: must not contain the legacy client type")
 	}
 	if strings.Contains(out, "Execute(") {
 		t.Error("DoD: must not contain Execute (legacy agent API)")
@@ -122,11 +125,14 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "string(SupportAgent)") {
 		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
 	}
-	if !strings.Contains(out, "tmpl.Format") {
-		t.Error("expected Format call")
+	if !strings.Contains(out, "tmpl.Format(vars)") {
+		t.Error("expected exact Format(vars) call")
 	}
-	if strings.Contains(out, "LLMClient") {
-		t.Error("DoD: must not contain LLMClient")
+	if strings.Contains(out, "Format(ctx,") {
+		t.Error("DoD: generated code must not use the removed Format(ctx, ...) signature")
+	}
+	if strings.Contains(out, legacyClientTypeName) {
+		t.Error("DoD: must not contain the legacy client type")
 	}
 	if strings.Contains(out, "ExecuteWithStructuredOutput") {
 		t.Error("DoD: must not contain ExecuteWithStructuredOutput")
@@ -510,10 +516,10 @@ func TestGenerateManifestTypes_MinItemsMaxItems(t *testing.T) {
 				"type": "object",
 				"properties": map[string]any{
 					"ids": map[string]any{
-						"type":      "array",
-						"minItems":  1,
-						"maxItems":  10,
-						"items":     map[string]any{"type": "string"},
+						"type":     "array",
+						"minItems": 1,
+						"maxItems": 10,
+						"items":    map[string]any{"type": "string"},
 					},
 				},
 			},
@@ -643,7 +649,7 @@ func TestGenerateManifestTypes_Default(t *testing.T) {
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"name":   map[string]any{"type": "string"},
+					"name": map[string]any{"type": "string"},
 					"greeting": map[string]any{
 						"type":    "string",
 						"default": "Hello",
@@ -785,14 +791,14 @@ func compareGolden(t *testing.T, dir, name string, gen func() (string, error)) {
 	}
 }
 
-// parseGoldenFlag reads -golden or -golden=path from os.Args without flag.Parse (avoids conflict with go test -test.* flags).
+// parseGoldenFlag reads -golden or -golden=path from [os.Args] without [flag.Parse] (avoids conflict with go test -test.* flags).
 func parseGoldenFlag() string {
 	for i, arg := range os.Args {
 		if arg == "-golden" && i+1 < len(os.Args) {
 			return os.Args[i+1]
 		}
-		if strings.HasPrefix(arg, "-golden=") {
-			return strings.TrimPrefix(arg, "-golden=")
+		if after, ok := strings.CutPrefix(arg, "-golden="); ok {
+			return after
 		}
 	}
 	return ""

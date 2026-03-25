@@ -31,7 +31,7 @@ func main() {
 		UserName string `prompt:"user_name"`
 		Query    string `prompt:"query"`
 	}
-	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Alice", Query: "What is 2+2?"})
+	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice", Query: "What is 2+2?"})
 	if err != nil {
 		log.Fatalf("FormatStruct: %v", err)
 	}

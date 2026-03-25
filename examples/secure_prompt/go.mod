@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/examples/secure_prompt
 
-go 1.26.0
+go 1.26.1
 
 require github.com/skosovsky/prompty v0.0.0
 

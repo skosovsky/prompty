@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const legacyClientTypeName = "LLM" + "Client"
+
 func TestIdFromRelativePath(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "proj")
@@ -98,8 +100,8 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	}
 	content, _ := os.ReadFile(manifestPath)
 	c := string(content)
-	if strings.Contains(c, "LLMClient") || strings.Contains(c, "ExecuteWithStructuredOutput") {
-		t.Error("DoD: generated full-mode code must not contain LLMClient or ExecuteWithStructuredOutput")
+	if strings.Contains(c, legacyClientTypeName) || strings.Contains(c, "ExecuteWithStructuredOutput") {
+		t.Error("DoD: generated full-mode code must not contain the legacy client type or ExecuteWithStructuredOutput")
 	}
 	if !strings.Contains(c, "string(SupportAgent)") {
 		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
@@ -320,8 +322,8 @@ input_schema:
 
 	// Fallback from path (no id field) - slash format
 	fallbackPath := filepath.Join(promptsDir, "workers", "image_analyze.yaml")
-	if err := os.MkdirAll(filepath.Dir(fallbackPath), 0755); err != nil {
-		t.Fatal(err)
+	if mkErr := os.MkdirAll(filepath.Dir(fallbackPath), 0750); mkErr != nil {
+		t.Fatal(mkErr)
 	}
 	fallbackManifest := `version: "1"
 messages:
@@ -331,8 +333,8 @@ input_schema:
   type: object
   properties: {}
 `
-	if err := os.WriteFile(fallbackPath, []byte(fallbackManifest), 0644); err != nil {
-		t.Fatal(err)
+	if wErr := os.WriteFile(fallbackPath, []byte(fallbackManifest), 0644); wErr != nil {
+		t.Fatal(wErr)
 	}
 	id, err = loadManifestID(fallbackPath, tmp, []string{"prompts"})
 	if err != nil {

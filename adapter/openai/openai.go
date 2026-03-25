@@ -28,12 +28,12 @@ type Adapter struct {
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
-// WithModel sets the default model used when exec.ModelConfig does not contain "model".
+// WithModel sets the default model used when exec.ModelOptions does not contain Model.
 func WithModel(m shared.ChatModel) Option {
 	return func(a *Adapter) { a.defaultModel = m }
 }
 
-// WithClient injects the OpenAI SDK client for Execute. Required for Execute/LLMClient flow.
+// WithClient injects the OpenAI SDK client for Execute. Required for Execute/Invoker flow.
 func WithClient(c *openai.Client) Option {
 	return func(a *Adapter) { a.client = c }
 }
@@ -196,33 +196,31 @@ func makeStrictPropertyNullable(schema map[string]any) {
 	}
 }
 
-// Translate converts PromptExecution into *openai.ChatCompletionNewParams (populates from exec.ModelConfig).
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
+// Translate converts PromptExecution into *openai.ChatCompletionNewParams.
+func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	_ = ctx // interface requirement; OpenAI accepts image URL natively, no I/O in Translate
 	// CachePoint is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(exec.Messages)),
 		Model:    a.defaultModel,
 	}
-	if exec.ModelConfig != nil {
-		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			params.Model = shared.ChatModel(m) //nolint:unconvert // ChatModel is a distinct type
+	if exec.ModelOptions != nil {
+		if exec.ModelOptions.Model != "" {
+			params.Model = shared.ChatModel(exec.ModelOptions.Model) //nolint:unconvert // ChatModel is a distinct type
 		}
-		mp := adapter.ExtractModelConfig(exec.ModelConfig)
-		if mp.Temperature != nil {
-			params.Temperature = openai.Float(*mp.Temperature)
+		if exec.ModelOptions.Temperature != nil {
+			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
 		}
-		if mp.MaxTokens != nil {
-			params.MaxTokens = openai.Int(*mp.MaxTokens)
+		if exec.ModelOptions.MaxTokens != nil {
+			params.MaxTokens = openai.Int(*exec.ModelOptions.MaxTokens)
 		}
-		if mp.TopP != nil {
-			params.TopP = openai.Float(*mp.TopP)
+		if exec.ModelOptions.TopP != nil {
+			params.TopP = openai.Float(*exec.ModelOptions.TopP)
 		}
-		if len(mp.Stop) > 0 {
-			params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: mp.Stop}
+		if len(exec.ModelOptions.Stop) > 0 {
+			params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: exec.ModelOptions.Stop}
 		}
 	}
 	for _, msg := range exec.Messages {
@@ -397,8 +395,7 @@ func (a *Adapter) toolResultMessages(parts []prompty.ContentPart) ([]openai.Chat
 }
 
 // ParseResponse converts *openai.ChatCompletion into *prompty.Response.
-func (a *Adapter) ParseResponse(ctx context.Context, completion *openai.ChatCompletion) (*prompty.Response, error) {
-	_ = ctx
+func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Response, error) {
 	if completion == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
@@ -422,12 +419,7 @@ func (a *Adapter) ParseResponse(ctx context.Context, completion *openai.ChatComp
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
-	usage := prompty.Usage{}
-	if completion.Usage.PromptTokens != 0 || completion.Usage.CompletionTokens != 0 || completion.Usage.TotalTokens != 0 {
-		usage.PromptTokens = int(completion.Usage.PromptTokens)
-		usage.CompletionTokens = int(completion.Usage.CompletionTokens)
-		usage.TotalTokens = int(completion.Usage.TotalTokens)
-	}
+	usage := usageFromOpenAI(completion.Usage)
 	finishReason := ""
 	if completion.Choices[0].FinishReason != "" {
 		finishReason = completion.Choices[0].FinishReason
@@ -458,12 +450,7 @@ func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionN
 					content = append(content, part)
 				}
 			}
-			usage := prompty.Usage{}
-			if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 || chunk.Usage.TotalTokens != 0 {
-				usage.PromptTokens = int(chunk.Usage.PromptTokens)
-				usage.CompletionTokens = int(chunk.Usage.CompletionTokens)
-				usage.TotalTokens = int(chunk.Usage.TotalTokens)
-			}
+			usage := usageFromOpenAI(chunk.Usage)
 			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
 			finishReason := ""
 			if isFinished && chunk.Choices[0].FinishReason != "" {
@@ -489,3 +476,13 @@ var (
 	_ adapter.ProviderAdapter[*openai.ChatCompletionNewParams, *openai.ChatCompletion] = (*Adapter)(nil)
 	_ adapter.StreamerAdapter[*openai.ChatCompletionNewParams]                         = (*Adapter)(nil)
 )
+
+func usageFromOpenAI(usage openai.CompletionUsage) prompty.Usage {
+	return prompty.Usage{
+		PromptTokens:              int(usage.PromptTokens),
+		CompletionTokens:          int(usage.CompletionTokens),
+		TotalTokens:               int(usage.TotalTokens),
+		PromptTokensCached:        int(usage.PromptTokensDetails.CachedTokens),
+		CompletionTokensReasoning: int(usage.CompletionTokensDetails.ReasoningTokens),
+	}
+}

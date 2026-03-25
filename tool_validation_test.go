@@ -25,11 +25,16 @@ func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testin
 	}
 
 	exec := SimplePrompt("hi")
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, exec, toolValidatorFunc(func(name string, argsJSON string) error {
-		assert.Equal(t, "lookup", name)
-		assert.JSONEq(t, `{"city":1}`, argsJSON)
-		return errors.New("city must be a string")
-	}))
+	result, err := ExecuteWithToolValidation(
+		context.Background(),
+		invoker,
+		exec,
+		toolValidatorFunc(func(name string, argsJSON string) error {
+			assert.Equal(t, "lookup", name)
+			assert.JSONEq(t, `{"city":1}`, argsJSON)
+			return errors.New("city must be a string")
+		}),
+	)
 	require.Error(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, callNum)
@@ -60,9 +65,14 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(name string, _ string) error {
-		return errors.New(name + " invalid")
-	}))
+	result, err := ExecuteWithToolValidation(
+		context.Background(),
+		invoker,
+		SimplePrompt("hi"),
+		toolValidatorFunc(func(name string, _ string) error {
+			return errors.New(name + " invalid")
+		}),
+	)
 	require.Error(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.Messages, 1)
@@ -87,9 +97,14 @@ func TestExecuteWithToolValidation_ValidToolCallReturnsImmediately(t *testing.T)
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(string, string) error {
-		return nil
-	}))
+	result, err := ExecuteWithToolValidation(
+		context.Background(),
+		invoker,
+		SimplePrompt("hi"),
+		toolValidatorFunc(func(string, string) error {
+			return nil
+		}),
+	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, callNum)
@@ -107,10 +122,15 @@ func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testin
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), toolValidatorFunc(func(string, string) error {
-		validatorCalls++
-		return nil
-	}))
+	result, err := ExecuteWithToolValidation(
+		context.Background(),
+		invoker,
+		SimplePrompt("hi"),
+		toolValidatorFunc(func(string, string) error {
+			validatorCalls++
+			return nil
+		}),
+	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.Messages, 2)

@@ -25,6 +25,7 @@ type dualSchemaDetails struct {
 type dualSchemaReflectResult struct {
 	dualSchemaBase
 	*dualSchemaOptional
+
 	Name    string            `json:"name"`
 	Count   int               `json:"count,omitempty"`
 	Tags    []string          `json:"tags"`
@@ -66,6 +67,7 @@ func TestExtractSchema_EmbeddedStructFlattening(t *testing.T) {
 	}
 	type user struct {
 		base
+
 		Name string `json:"name"`
 	}
 
@@ -85,6 +87,7 @@ func TestExtractSchema_EmbeddedStructWithExplicitJSONNameDoesNotFlatten(t *testi
 	}
 	type user struct {
 		base `json:"base"`
+
 		Name string `json:"name"`
 	}
 

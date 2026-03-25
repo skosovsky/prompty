@@ -6,7 +6,7 @@
 //
 // # Usage
 //
-// Create an LLMClient from an adapter using NewClient, then call Generate or GenerateStream:
+// Create an Invoker from an adapter using NewClient, then call Generate or GenerateStream:
 //
 //	adp := openaiadapter.New(openaiadapter.WithClient(openaisdk.NewClient(...)))
 //	client := adapter.NewClient(adp)
@@ -17,26 +17,25 @@
 //
 // Implement ProviderAdapter[Req, Resp] with three methods:
 //
-//  1. Translate(ctx, exec) (Req, error)
+//  1. Translate(exec) (Req, error)
 //     - Map exec.Messages ([]ChatMessage) to the provider's message format.
-//     - Map exec.Tools, exec.ModelConfig. Use ExtractModelConfig for well-known keys.
+//     - Map exec.Tools and exec.ModelOptions.
 //     - Return adapter.ErrUnsupportedRole or ErrUnsupportedContentType when unsupported.
 //
 //  2. Execute(ctx, req) (Resp, error)
 //     - Call the provider API. Inject the SDK client via provider options (e.g. openai.WithClient).
 //     - Return ErrNoClient if client was not set.
 //
-//  3. ParseResponse(ctx, raw Resp) (*prompty.Response, error)
+//  3. ParseResponse(raw Resp) (*prompty.Response, error)
 //     - Build *prompty.Response{Content, Usage} from the provider's response.
 //     - Return ErrInvalidResponse or ErrEmptyResponse on invalid/empty content.
 //
 // Optional: implement StreamerAdapter[Req] with ExecuteStream(ctx, req) for native streaming.
 // If not implemented, GenerateStream falls back to a polyfill (one chunk from Generate).
 //
-// Helper functions: prompty.TextFromParts (extract text from []ContentPart),
-// ExtractModelConfig (temperature, max_tokens, top_p, stop from map[string]any).
+// Helper function: prompty.TextFromParts (extract text from []ContentPart).
 //
 // MediaPart: when both Data and URL are set, Data takes precedence for providers that
 // support base64 (OpenAI, Gemini). For providers that do not accept URL (Anthropic, Ollama),
-// adapters may download the URL in Translate(ctx) and send inline data.
+// callers should resolve media into inline data before Translate.
 package adapter

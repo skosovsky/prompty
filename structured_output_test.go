@@ -124,7 +124,11 @@ func TestExecuteWithStructuredOutput_PreservesExplicitResponseFormat(t *testing.
 		generate: func(_ context.Context, got *PromptExecution) (*Response, error) {
 			require.NotNil(t, got.ResponseFormat)
 			assert.Equal(t, "explicit", got.ResponseFormat.Name)
-			assert.Equal(t, "string", got.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"])
+			assert.Equal(
+				t,
+				"string",
+				got.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+			)
 			return NewResponse([]ContentPart{TextPart{Text: `{"answer":"ok"}`}}), nil
 		},
 	}
@@ -171,7 +175,11 @@ func TestExecuteWithStructuredOutput_StripsJSONFenceWithPrefixAndSuffix(t *testi
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
 			require.NotNil(t, exec.ResponseFormat)
-			return NewResponse([]ContentPart{TextPart{Text: "Here is the requested schema:\n```json\n{\"answer\":\"ok\"}\n```\nThanks."}}), nil
+			return NewResponse(
+				[]ContentPart{
+					TextPart{Text: "Here is the requested schema:\n```json\n{\"answer\":\"ok\"}\n```\nThanks."},
+				},
+			), nil
 		},
 	}
 
@@ -203,7 +211,13 @@ func TestExecuteWithStructuredOutput_FenceParserIgnoresBackticksInsideJSONString
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
 			require.NotNil(t, exec.ResponseFormat)
-			return NewResponse([]ContentPart{TextPart{Text: "prefix\n```json\n{\"answer\":\"ok\",\"code\":\"```go\\nfmt.Println()\\n```\"}\n```\nsuffix\n```note\nignored\n```"}}), nil
+			return NewResponse(
+				[]ContentPart{
+					TextPart{
+						Text: "prefix\n```json\n{\"answer\":\"ok\",\"code\":\"```go\\nfmt.Println()\\n```\"}\n```\nsuffix\n```note\nignored\n```",
+					},
+				},
+			), nil
 		},
 	}
 

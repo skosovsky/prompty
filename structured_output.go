@@ -3,6 +3,7 @@ package prompty
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -77,7 +78,7 @@ func ExecuteWithStructuredOutput[T any](
 	exec *PromptExecution,
 ) (*T, error) {
 	if invoker == nil {
-		return nil, fmt.Errorf("structured output: invoker is nil")
+		return nil, errors.New("structured output: invoker is nil")
 	}
 
 	workExec, err := prepareStructuredExecution[T](exec)
@@ -89,7 +90,7 @@ func ExecuteWithStructuredOutput[T any](
 		return nil, err
 	}
 	if resp == nil {
-		return nil, fmt.Errorf("structured output: nil response")
+		return nil, errors.New("structured output: nil response")
 	}
 
 	assistantMsg := newAssistantMessageWithContent(resp.Content)
@@ -113,7 +114,7 @@ func ExecuteWithStructuredOutput[T any](
 
 func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution, error) {
 	if exec == nil {
-		return nil, fmt.Errorf("structured output: execution is nil")
+		return nil, errors.New("structured output: execution is nil")
 	}
 
 	workExec := clonePromptExecution(exec)
@@ -142,7 +143,7 @@ func decodeStructuredOutput[T any](raw string) (*T, error) {
 		return nil, err
 	}
 	if isNilStructuredValue(result) {
-		return nil, fmt.Errorf("structured output: decoded nil result")
+		return nil, errors.New("structured output: decoded nil result")
 	}
 	return &result, nil
 }
@@ -162,14 +163,14 @@ func isNilStructuredValue[T any](value T) bool {
 
 func validateStructuredValue[T any](result *T) error {
 	if result == nil {
-		return fmt.Errorf("structured output: decoded nil result")
+		return errors.New("structured output: decoded nil result")
 	}
 	value := reflect.ValueOf(result).Elem()
 	if !value.IsValid() {
 		return nil
 	}
 	if value.Kind() == reflect.Pointer && value.IsNil() {
-		return fmt.Errorf("structured output: decoded nil result")
+		return errors.New("structured output: decoded nil result")
 	}
 	if validatable, ok := validatableFromValue(value); ok {
 		return validatable.Validate()

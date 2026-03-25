@@ -1,9 +1,6 @@
 package prompty
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 // Run with: go test -bench=BenchmarkFormatStruct -benchmem to verify allocs/op and B/op (sync.Pool reduces allocations).
 func BenchmarkFormatStruct(b *testing.B) {
@@ -17,11 +14,10 @@ func BenchmarkFormatStruct(b *testing.B) {
 	type P struct {
 		Query string `prompt:"query"`
 	}
-	ctx := context.Background()
 	payload := &P{Query: "What is 2+2?"}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = tpl.FormatStruct(ctx, payload)
+	for range b.N {
+		_, _ = tpl.FormatStruct(payload)
 	}
 }
 
@@ -33,7 +29,7 @@ func BenchmarkGetPayloadFields(b *testing.B) {
 	}
 	payload := &P{A: "x", B: "y", C: "z"}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _, _ = getPayloadFields(payload)
 	}
 }
@@ -44,7 +40,7 @@ func BenchmarkRenderToolsAsXML(b *testing.B) {
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = renderToolsAsXML(tools)
 	}
 }
@@ -55,7 +51,7 @@ func BenchmarkRenderToolsAsJSON(b *testing.B) {
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = renderToolsAsJSON(tools)
 	}
 }

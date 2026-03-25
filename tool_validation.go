@@ -3,7 +3,6 @@ package prompty
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // ToolValidator validates a tool call without coupling prompty to a concrete tool registry.
@@ -19,10 +18,10 @@ func ExecuteWithToolValidation(
 	validator ToolValidator,
 ) (*PromptExecution, error) {
 	if invoker == nil {
-		return nil, fmt.Errorf("tool validation: invoker is nil")
+		return nil, errors.New("tool validation: invoker is nil")
 	}
 	if exec == nil {
-		return nil, fmt.Errorf("tool validation: execution is nil")
+		return nil, errors.New("tool validation: execution is nil")
 	}
 
 	workExec := clonePromptExecution(exec)
@@ -31,7 +30,7 @@ func ExecuteWithToolValidation(
 		return nil, err
 	}
 	if resp == nil {
-		return nil, fmt.Errorf("tool validation: nil response")
+		return nil, errors.New("tool validation: nil response")
 	}
 
 	assistantMsg := newAssistantMessageWithContent(resp.Content)
@@ -40,7 +39,7 @@ func ExecuteWithToolValidation(
 		return workExec.AddMessage(assistantMsg), nil
 	}
 	if validator == nil {
-		return workExec, fmt.Errorf("tool validation: validator is nil")
+		return workExec, errors.New("tool validation: validator is nil")
 	}
 
 	callErrs := make([]error, len(toolCalls))

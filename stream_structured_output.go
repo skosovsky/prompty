@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 )
@@ -26,7 +27,7 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 		var zero T
 
 		if invoker == nil {
-			yield(zero, fmt.Errorf("stream structured output: invoker is nil"))
+			yield(zero, errors.New("stream structured output: invoker is nil"))
 			return
 		}
 
@@ -109,7 +110,7 @@ func newStructuredStreamParser[T any]() *structuredStreamParser[T] {
 
 func (p *structuredStreamParser[T]) feed(text string) ([]T, error) {
 	var out []T
-	for i := 0; i < len(text); i++ {
+	for i := range len(text) {
 		ch := text[i]
 
 		if p.completed {

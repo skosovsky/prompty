@@ -35,7 +35,7 @@ messages:
 	for _, c := range []string{"git init", "git branch -M main", "git add .", "git commit -m init"} {
 		cmd := exec.Command("sh", "-c", c)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+		cmd.Env = gitTestEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			panic(fmt.Sprintf("%s: %v %s", c, err, out))
 		}

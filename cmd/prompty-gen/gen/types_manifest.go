@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/dave/jennifer/jen"
+
 	"github.com/skosovsky/prompty"
 )
 
@@ -19,7 +20,7 @@ func isStructSchema(rf *prompty.SchemaDefinition) bool {
 		return false
 	}
 	typ, _ := rf.Schema["type"].(string)
-	if typ != "object" {
+	if typ != jsonSchemaTypeObject {
 		return false
 	}
 	props, _ := rf.Schema["properties"].(map[string]any)
@@ -79,12 +80,18 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 
 	// func (p *Prompts) Render<Name>(ctx, input) (*prompty.PromptExecution, error)
 	renderName := "Render" + rootName
-	varsBlocks, propsCount := buildVarsBlocks(spec, inputType)
+	varsBlocks, propsCount := buildVarsBlocks(spec)
 	body := []jen.Code{
-		jen.If(jen.Id("err").Op(":=").Id("validate").Dot("Struct").Call(jen.Op("&").Id("input")).Op(";").Id("err").Op("!=").Nil()).Block(
-			jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validate input: %w"), jen.Id("err")))),
-		),
-		jen.List(jen.Id("tmpl"), jen.Id("err")).Op(":=").Id("p").Dot("registry").Dot("GetTemplate").Call(jen.Id("ctx"), jen.Id("string").Call(jen.Id(constName))),
+		jen.If(jen.Id("err").Op(":=").Id("validate").Dot("Struct").Call(jen.Op("&").Id("input")).Op(";").Id("err").Op("!=").Nil()).
+			Block(
+				jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validate input: %w"), jen.Id("err")))),
+			),
+		jen.List(jen.Id("tmpl"), jen.Id("err")).
+			Op(":=").
+			Id("p").
+			Dot("registry").
+			Dot("GetTemplate").
+			Call(jen.Id("ctx"), jen.Id("string").Call(jen.Id(constName))),
 		jen.If(jen.Id("err").Op("!=").Nil()).Block(
 			jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("get template: %w"), jen.Id("err")))),
 		),
@@ -92,7 +99,7 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 	}
 	body = append(body, varsBlocks...)
 	body = append(body,
-		jen.List(jen.Id("exec"), jen.Id("err")).Op(":=").Id("tmpl").Dot("Format").Call(jen.Id("ctx"), jen.Id("vars")),
+		jen.List(jen.Id("exec"), jen.Id("err")).Op(":=").Id("tmpl").Dot("Format").Call(jen.Id("vars")),
 		jen.If(jen.Id("err").Op("!=").Nil()).Block(
 			jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("format template: %w"), jen.Id("err")))),
 		),
@@ -108,7 +115,7 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 }
 
 // buildVarsBlocks returns jen blocks to populate vars map and the initial map capacity.
-func buildVarsBlocks(spec *PromptSpec, inputType string) ([]jen.Code, int) {
+func buildVarsBlocks(spec *PromptSpec) ([]jen.Code, int) {
 	var varsBlocks []jen.Code
 	var propsCount int
 	if spec.InputSchema == nil || spec.InputSchema.Schema == nil {
@@ -127,16 +134,20 @@ func buildVarsBlocks(spec *PromptSpec, inputType string) ([]jen.Code, int) {
 		propSchema, _ := propVal.(map[string]any)
 		typ, _ := propSchema["type"].(string)
 		objProps, _ := propSchema["properties"].(map[string]any)
-		isPointerOptional := optional && (typ == "string" || typ == "integer" || typ == "number" || typ == "boolean" || (typ == "object" && objProps != nil))
-		isRefTypeNoDeref := optional && (typ == "array" || (typ == "object" && objProps == nil) || typ == "")
-		isRequiredBool := !optional && typ == "boolean"
+		isPointerOptional := optional &&
+			(typ == jsonSchemaTypeString || typ == jsonSchemaTypeInteger || typ == jsonSchemaTypeNumber || typ == jsonSchemaTypeBoolean ||
+				(typ == jsonSchemaTypeObject && objProps != nil))
+		isRefTypeNoDeref := optional &&
+			(typ == jsonSchemaTypeArray || (typ == jsonSchemaTypeObject && objProps == nil) || typ == "")
+		isRequiredBool := !optional && typ == jsonSchemaTypeBoolean
 		defaultLit, hasDefault := defaultToJenLit(propSchema)
-		if isRequiredBool {
+		switch {
+		case isRequiredBool:
 			// required bool: field is *bool, pass value to vars (not pointer)
 			varsBlocks = append(varsBlocks,
 				jen.Id("vars").Index(jen.Lit(propName)).Op("=").Op("*").Id("input").Dot(goName),
 			)
-		} else if isPointerOptional {
+		case isPointerOptional:
 			blk := jen.If(jen.Id("input").Dot(goName).Op("!=").Nil()).Block(
 				jen.Id("vars").Index(jen.Lit(propName)).Op("=").Op("*").Id("input").Dot(goName),
 			)
@@ -144,7 +155,7 @@ func buildVarsBlocks(spec *PromptSpec, inputType string) ([]jen.Code, int) {
 				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(defaultLit))
 			}
 			varsBlocks = append(varsBlocks, blk)
-		} else if isRefTypeNoDeref {
+		case isRefTypeNoDeref:
 			blk := jen.If(jen.Id("input").Dot(goName).Op("!=").Nil()).Block(
 				jen.Id("vars").Index(jen.Lit(propName)).Op("=").Id("input").Dot(goName),
 			)
@@ -152,7 +163,7 @@ func buildVarsBlocks(spec *PromptSpec, inputType string) ([]jen.Code, int) {
 				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(defaultLit))
 			}
 			varsBlocks = append(varsBlocks, blk)
-		} else {
+		default:
 			varsBlocks = append(varsBlocks,
 				jen.Id("vars").Index(jen.Lit(propName)).Op("=").Id("input").Dot(goName),
 			)

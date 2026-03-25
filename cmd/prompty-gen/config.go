@@ -10,6 +10,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	extYAML    = ".yaml"
+	extYML     = ".yml"
+	extJSON    = ".json"
+	modeConsts = "consts"
+	modeTypes  = "types"
+)
+
 // Config is the prompty-gen configuration (prompty.yaml).
 type Config struct {
 	Version  string    `yaml:"version"`
@@ -19,22 +27,22 @@ type Config struct {
 // Package defines one output package with its manifest sources and options.
 // Strict break: max_retries/enable_validation removed; unknown fields fail via KnownFields.
 type Package struct {
-	Name        string   `yaml:"name"`     // e.g. "prompts"
-	Path        string   `yaml:"path"`     // output directory for generated code
-	Queries     []string `yaml:"queries"`  // paths or globs for manifest files
-	PackageName string   `yaml:"package"`  // Go package name (default: name)
-	Mode        string   `yaml:"mode"`     // "consts" | "types" (default: "types")
+	Name        string   `yaml:"name"`    // e.g. "prompts"
+	Path        string   `yaml:"path"`    // output directory for generated code
+	Queries     []string `yaml:"queries"` // paths or globs for manifest files
+	PackageName string   `yaml:"package"` // Go package name (default: name)
+	Mode        string   `yaml:"mode"`    // "consts" | "types" (default: "types")
 }
 
 // IsConsts returns true when mode is "consts".
 func (p *Package) IsConsts() bool {
-	return strings.ToLower(p.Mode) == "consts"
+	return strings.ToLower(p.Mode) == modeConsts
 }
 
 // IsTypes returns true when mode is "types" or empty (default).
 func (p *Package) IsTypes() bool {
 	m := strings.ToLower(p.Mode)
-	return m == "" || m == "types"
+	return m == "" || m == modeTypes
 }
 
 // LoadConfig reads and parses prompty.yaml from path.
@@ -59,10 +67,10 @@ func LoadConfig(path string) (*Config, error) {
 			p.PackageName = p.Name
 		}
 		if p.Mode == "" {
-			p.Mode = "types"
+			p.Mode = modeTypes
 		}
 		m := strings.ToLower(p.Mode)
-		if m != "consts" && m != "types" {
+		if m != modeConsts && m != modeTypes {
 			return nil, fmt.Errorf("package %q: invalid mode %q (use consts or types)", p.Name, p.Mode)
 		}
 	}
@@ -81,15 +89,15 @@ func (p *Package) ResolveSources(configDir string) ([]string, error) {
 		trimmed := strings.TrimSuffix(glob, "/")
 		isDirPath := trimmed != glob || isDir
 		if isDirPath || isDir {
-			err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return err
+			walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, walkEntryErr error) error {
+				if walkEntryErr != nil {
+					return walkEntryErr
 				}
 				if d.IsDir() {
 					return nil
 				}
 				ext := strings.ToLower(filepath.Ext(path))
-				if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+				if ext != extYAML && ext != extYML && ext != extJSON {
 					return nil
 				}
 				if !seen[path] {
@@ -98,8 +106,8 @@ func (p *Package) ResolveSources(configDir string) ([]string, error) {
 				}
 				return nil
 			})
-			if err != nil {
-				return nil, fmt.Errorf("walk %q: %w", base, err)
+			if walkErr != nil {
+				return nil, fmt.Errorf("walk %q: %w", base, walkErr)
 			}
 			continue
 		}
@@ -113,7 +121,7 @@ func (p *Package) ResolveSources(configDir string) ([]string, error) {
 				continue
 			}
 			ext := strings.ToLower(filepath.Ext(m))
-			if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+			if ext != extYAML && ext != extYML && ext != extJSON {
 				continue
 			}
 			if !seen[m] {

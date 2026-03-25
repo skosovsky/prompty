@@ -7,7 +7,7 @@ import (
 	"text/template/parse"
 )
 
-// isNilNode returns true if node is nil or an interface holding a nil pointer (e.g. *parse.ListNode).
+// isNilNode returns true if node is nil or an interface holding a nil *[parse.ListNode].
 func isNilNode(node parse.Node) bool {
 	if node == nil {
 		return true
@@ -34,7 +34,7 @@ var payloadCache sync.Map // reflect.Type -> *payloadSchema
 // chatMessageSliceType is cached reflect type for payload parser ([]ChatMessage history field).
 var chatMessageSliceType = reflect.TypeFor[[]ChatMessage]()
 
-func getPayloadFields(payload any) (vars map[string]any, history []ChatMessage, err error) {
+func getPayloadFields(payload any) (map[string]any, []ChatMessage, error) {
 	if payload == nil {
 		return nil, nil, ErrInvalidPayload
 	}
@@ -54,10 +54,13 @@ func getPayloadFields(payload any) (vars map[string]any, history []ChatMessage, 
 	}
 	var schema *payloadSchema
 	if cached, ok := payloadCache.Load(typ); ok {
-		schema = cached.(*payloadSchema)
-	} else {
+		if s, typeOK := cached.(*payloadSchema); typeOK {
+			schema = s
+		}
+	}
+	if schema == nil {
 		schema = &payloadSchema{}
-		for i := 0; i < typ.NumField(); i++ {
+		for i := range typ.NumField() {
 			f := typ.Field(i)
 			tag := f.Tag.Get("prompt")
 			if tag == "" || tag == "-" {
@@ -82,7 +85,8 @@ func getPayloadFields(payload any) (vars map[string]any, history []ChatMessage, 
 		}
 		payloadCache.Store(typ, schema)
 	}
-	vars = make(map[string]any)
+	vars := make(map[string]any)
+	var history []ChatMessage
 	for _, fi := range schema.fields {
 		val := v.Field(fi.index)
 		if fi.isHistory {

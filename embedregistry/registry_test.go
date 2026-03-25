@@ -109,17 +109,48 @@ func TestEmbedRegistry_List_BaseIDNormalization(t *testing.T) {
 		root   string
 		wantID string
 	}{
-		{"base+env json", fstest.MapFS{
-			"p/agent.json":      &fstest.MapFile{Data: []byte(`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`)},
-			"p/agent.prod.json": &fstest.MapFile{Data: []byte(`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`)},
-		}, "p", "agent"},
-		{"nested slash path json", fstest.MapFS{
-			"q/internal/router.prod.json": &fstest.MapFile{Data: []byte(`{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"Router"}]}]}`)},
-		}, "q", "internal/router"},
-		{"extensions yaml yml", fstest.MapFS{
-			"r/foo.yaml": &fstest.MapFile{Data: []byte(`{"id":"foo","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`)},
-			"r/bar.yml":  &fstest.MapFile{Data: []byte(`{"id":"bar","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`)},
-		}, "r", "foo"},
+		{
+			"base+env json",
+			fstest.MapFS{
+				"p/agent.json": &fstest.MapFile{
+					Data: []byte(
+						`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`,
+					),
+				},
+				"p/agent.prod.json": &fstest.MapFile{
+					Data: []byte(
+						`{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`,
+					),
+				},
+			},
+			"p",
+			"agent",
+		},
+		{
+			"nested slash path json",
+			fstest.MapFS{
+				"q/internal/router.prod.json": &fstest.MapFile{
+					Data: []byte(
+						`{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"Router"}]}]}`,
+					),
+				},
+			},
+			"q",
+			"internal/router",
+		},
+		{
+			"extensions yaml yml",
+			fstest.MapFS{
+				"r/foo.yaml": &fstest.MapFile{
+					Data: []byte(`{"id":"foo","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`),
+				},
+				"r/bar.yml": &fstest.MapFile{
+					Data: []byte(`{"id":"bar","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`),
+				},
+			},
+			"r",
+			"foo",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,9 +169,15 @@ func TestEmbedRegistry_List_BaseIDNormalization(t *testing.T) {
 func TestEmbedRegistry_List_ExcludesPartials(t *testing.T) {
 	t.Parallel()
 	mapFS := fstest.MapFS{
-		"prompts/main.json":                &fstest.MapFile{Data: []byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`)},
-		"prompts/partials/dummy.tmpl":      &fstest.MapFile{Data: []byte(`{{ define "dummy" }}x{{ end }}`)},
-		"prompts/partials/accidental.yaml": &fstest.MapFile{Data: []byte(`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Should not appear"}]}]}`)},
+		"prompts/main.json": &fstest.MapFile{
+			Data: []byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`),
+		},
+		"prompts/partials/dummy.tmpl": &fstest.MapFile{Data: []byte(`{{ define "dummy" }}x{{ end }}`)},
+		"prompts/partials/accidental.yaml": &fstest.MapFile{
+			Data: []byte(
+				`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Should not appear"}]}]}`,
+			),
+		},
 	}
 	reg, err := New(mapFS, "prompts", WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -167,7 +204,11 @@ func TestEmbedRegistry_Stat_EnvFallback(t *testing.T) {
 	t.Parallel()
 	// Only env variant exists; Stat should find it via same candidate lookup as GetTemplate.
 	mapFS := fstest.MapFS{
-		"p/agent.prod.json": &fstest.MapFile{Data: []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod only"}]}]}`)},
+		"p/agent.prod.json": &fstest.MapFile{
+			Data: []byte(
+				`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod only"}]}]}`,
+			),
+		},
 	}
 	reg, err := New(mapFS, "p", WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
@@ -184,7 +225,13 @@ func TestEmbedRegistry_Stat_EnvFallback(t *testing.T) {
 
 func TestEmbedRegistry_WithVersion(t *testing.T) {
 	t.Parallel()
-	mapFS := fstest.MapFS{"v/agent.json": &fstest.MapFile{Data: []byte(`{"id":"agent","version":"","messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)}}
+	mapFS := fstest.MapFS{
+		"v/agent.json": &fstest.MapFile{
+			Data: []byte(
+				`{"id":"agent","version":"","messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`,
+			),
+		},
+	}
 	reg, err := New(mapFS, "v", WithVersion("abc123"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -202,7 +249,9 @@ func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
 	// Use MapFS to simulate an embed with a manifest and partials; no real embed needed.
 	mapFS := fstest.MapFS{
 		"prompts/doctor.json": &fstest.MapFile{
-			Data: []byte(`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`),
+			Data: []byte(
+				`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+			),
 		},
 		"prompts/partials/safety.tmpl": &fstest.MapFile{
 			Data: []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`),
@@ -215,7 +264,7 @@ func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
 	tpl, err := reg.GetTemplate(ctx, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(ctx, &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)

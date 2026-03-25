@@ -1,6 +1,6 @@
 package prompty
 
-// Middleware wraps Invoker (LLMClient), allowing cross-cutting behavior
+// Middleware wraps Invoker, allowing cross-cutting behavior
 // for Generate and GenerateStream (logging, metrics, tracing, etc.).
 type Middleware func(next Invoker) Invoker
 

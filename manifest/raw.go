@@ -32,7 +32,7 @@ type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
-	ModelConfig    map[string]any            `json:"model_config"`
+	ModelOptions   *prompty.ModelOptions     `json:"model_config"`
 	Metadata       map[string]any            `json:"metadata"`
 	InputSchema    *prompty.SchemaDefinition `json:"input_schema"`
 	Tools          []prompty.ToolDefinition  `json:"tools"`

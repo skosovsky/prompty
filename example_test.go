@@ -28,8 +28,7 @@ func ExampleChatPromptTemplate_FormatStruct() {
 	type Payload struct {
 		Name string `prompt:"name"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Name: "Alice"})
+	exec, err := tpl.FormatStruct(&Payload{Name: "Alice"})
 	if err != nil {
 		panic(err)
 	}
@@ -65,8 +64,7 @@ func Example() {
 	type Payload struct {
 		Query string `prompt:"query"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "What is 2+2?"})
+	exec, err := tpl.FormatStruct(&Payload{Query: "What is 2+2?"})
 	if err != nil {
 		panic(err)
 	}
@@ -85,7 +83,10 @@ func (exampleStructuredInvoker) Generate(context.Context, *prompty.PromptExecuti
 	}), nil
 }
 
-func (exampleStructuredInvoker) GenerateStream(ctx context.Context, exec *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+func (exampleStructuredInvoker) GenerateStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
 		resp, err := exampleStructuredInvoker{}.Generate(ctx, exec)
 		if err != nil {

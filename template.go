@@ -2,7 +2,6 @@ package prompty
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -16,6 +15,9 @@ import (
 // maxRenderBufferCap is the maximum buffer capacity to return to the pool; larger buffers are dropped to avoid pool poisoning (OOM).
 const maxRenderBufferCap = 64 * 1024
 
+// partKindText is the canonical content kind for plain text template parts (message content and rendered output).
+const partKindText = "text"
+
 var renderPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
@@ -27,7 +29,7 @@ type ChatPromptTemplate struct {
 	Messages         []MessageTemplate
 	PartialVariables map[string]any
 	Tools            []ToolDefinition
-	ModelConfig      map[string]any
+	ModelOptions     *ModelOptions
 	Metadata         PromptMetadata
 	ResponseFormat   *SchemaDefinition // JSON Schema for structured output (passed to PromptExecution)
 	InputSchema      *SchemaDefinition // JSON Schema for template input (prompty-gen, required/partial derivation)
@@ -60,7 +62,7 @@ type parsedMessage struct {
 // Returns ErrTemplateParse if any message content fails to parse.
 func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOption) (*ChatPromptTemplate, error) {
 	tpl := &ChatPromptTemplate{
-		Messages: slices.Clone(messages),
+		Messages: cloneMessageTemplates(messages),
 	}
 	for _, opt := range opts {
 		opt(tpl)
@@ -69,14 +71,15 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 		tpl.PartialVariables = maps.Clone(tpl.PartialVariables)
 	}
 	if tpl.Tools != nil {
-		tpl.Tools = slices.Clone(tpl.Tools)
-	}
-	if tpl.ModelConfig != nil {
-		tpl.ModelConfig = maps.Clone(tpl.ModelConfig)
+		tpl.Tools = cloneToolDefinitions(tpl.Tools)
 	}
 	if tpl.RequiredVars != nil {
 		tpl.RequiredVars = slices.Clone(tpl.RequiredVars)
 	}
+	tpl.ModelOptions = cloneModelOptions(tpl.ModelOptions)
+	tpl.Metadata = clonePromptMetadata(tpl.Metadata)
+	tpl.ResponseFormat = cloneSchemaDefinition(tpl.ResponseFormat)
+	tpl.InputSchema = cloneSchemaDefinition(tpl.InputSchema)
 	tc := tpl.tokenCounter
 	if tc == nil {
 		tc = &CharFallbackCounter{}
@@ -106,7 +109,7 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 			name := fmt.Sprintf("msg_%d_part_%d", i, j)
 			var src string
 			switch part.Type {
-			case "text":
+			case partKindText:
 				src = part.Text
 			case "image_url":
 				src = part.URL
@@ -119,7 +122,7 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 			}
 			kind := part.Type
 			if kind == "" {
-				kind = "text"
+				kind = partKindText
 			}
 			parsedParts = append(parsedParts, parsedPart{kind: kind, tpl: msgTmpl})
 			allVars = append(allVars, extractVarsFromTree(msgTmpl.Tree)...)
@@ -147,49 +150,86 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	if c == nil {
 		return nil
 	}
-	clonedMessages := slices.Clone(c.Messages)
-	for i := range clonedMessages {
-		clonedMessages[i].Content = slices.Clone(clonedMessages[i].Content)
-	}
 	out := &ChatPromptTemplate{
-		Messages:        clonedMessages,
-		Tools:           slices.Clone(c.Tools),
+		Messages:        cloneMessageTemplates(c.Messages),
+		Tools:           cloneToolDefinitions(c.Tools),
 		RequiredVars:    slices.Clone(c.RequiredVars),
 		requiredFromAST: c.requiredFromAST,
-		Metadata:        c.Metadata,
+		Metadata:        clonePromptMetadata(c.Metadata),
 		tokenCounter:    c.tokenCounter,
 		parsedTemplates: c.parsedTemplates,
 		partialsGlob:    c.partialsGlob,
 		partialsFS:      c.partialsFS,
 	}
 	if c.ResponseFormat != nil {
-		clonedFormat := &SchemaDefinition{
-			Name:        c.ResponseFormat.Name,
-			Description: c.ResponseFormat.Description,
-		}
-		if c.ResponseFormat.Schema != nil {
-			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
-		}
-		out.ResponseFormat = clonedFormat
+		out.ResponseFormat = cloneSchemaDefinition(c.ResponseFormat)
 	}
 	if c.PartialVariables != nil {
 		out.PartialVariables = maps.Clone(c.PartialVariables)
 	}
-	if c.ModelConfig != nil {
-		out.ModelConfig = maps.Clone(c.ModelConfig)
-	}
-	if len(c.Metadata.Tags) > 0 {
-		out.Metadata.Tags = slices.Clone(c.Metadata.Tags)
-	}
-	if c.Metadata.Extras != nil {
-		out.Metadata.Extras = maps.Clone(c.Metadata.Extras)
-	}
+	out.InputSchema = cloneSchemaDefinition(c.InputSchema)
+	out.ModelOptions = cloneModelOptions(c.ModelOptions)
 	return out
+}
+
+func (c *ChatPromptTemplate) renderTemplates(
+	mergedVars map[string]any,
+	history []ChatMessage,
+) (*PromptExecution, error) {
+	var out []ChatMessage
+	for i, pm := range c.parsedTemplates {
+		optionalSkip := pm.optional && allVarsZeroForMessage(mergedVars, pm.vars)
+		if optionalSkip {
+			continue
+		}
+		var contentParts []ContentPart
+		for j, part := range pm.parts {
+			rawBuf := renderPool.Get()
+			buf, ok := rawBuf.(*bytes.Buffer)
+			if !ok || buf == nil {
+				buf = new(bytes.Buffer)
+			}
+			if err := part.tpl.Execute(buf, mergedVars); err != nil {
+				if buf.Cap() <= maxRenderBufferCap {
+					buf.Reset()
+					renderPool.Put(buf)
+				}
+				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
+			}
+			rendered := buf.String()
+			if buf.Cap() <= maxRenderBufferCap {
+				buf.Reset()
+				renderPool.Put(buf)
+			}
+			switch part.kind {
+			case partKindText:
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			case "image_url":
+				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
+			default:
+				contentParts = append(contentParts, TextPart{Text: rendered})
+			}
+		}
+		out = append(out, ChatMessage{
+			Role:       pm.role,
+			Content:    contentParts,
+			CachePoint: pm.cachePoint,
+			Metadata:   maps.Clone(pm.metadata),
+		})
+	}
+	out = spliceHistory(out, cloneMessages(history))
+	return &PromptExecution{
+		Messages:       out,
+		Tools:          cloneToolDefinitions(c.Tools),
+		ModelOptions:   cloneModelOptions(c.ModelOptions),
+		Metadata:       clonePromptMetadata(c.Metadata),
+		ResponseFormat: cloneSchemaDefinition(c.ResponseFormat),
+	}, nil
 }
 
 // Format renders the template using the given input map (reflection-free).
 // Same merge and validation as FormatStruct. History is not supported.
-func (c *ChatPromptTemplate) Format(ctx context.Context, vars map[string]any) (*PromptExecution, error) {
+func (c *ChatPromptTemplate) Format(vars map[string]any) (*PromptExecution, error) {
 	if vars == nil {
 		vars = make(map[string]any)
 	}
@@ -205,73 +245,11 @@ func (c *ChatPromptTemplate) Format(ctx context.Context, vars map[string]any) (*
 			return nil, &VariableError{Variable: name, Template: c.Metadata.ID, Err: ErrMissingVariable}
 		}
 	}
-	var out []ChatMessage
-	for i, pm := range c.parsedTemplates {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		optionalSkip := pm.optional && allVarsZeroForMessage(merged, pm.vars)
-		if optionalSkip {
-			continue
-		}
-		var contentParts []ContentPart
-		for j, part := range pm.parts {
-			buf := renderPool.Get().(*bytes.Buffer)
-			if err := part.tpl.Execute(buf, merged); err != nil {
-				if buf.Cap() <= maxRenderBufferCap {
-					buf.Reset()
-					renderPool.Put(buf)
-				}
-				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
-			}
-			rendered := buf.String()
-			if buf.Cap() <= maxRenderBufferCap {
-				buf.Reset()
-				renderPool.Put(buf)
-			}
-			switch part.kind {
-			case "text":
-				contentParts = append(contentParts, TextPart{Text: rendered})
-			case "image_url":
-				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
-			default:
-				contentParts = append(contentParts, TextPart{Text: rendered})
-			}
-		}
-		msgMeta := maps.Clone(pm.metadata)
-		out = append(out, ChatMessage{
-			Role:       pm.role,
-			Content:    contentParts,
-			CachePoint: pm.cachePoint,
-			Metadata:   msgMeta,
-		})
-	}
-	meta := c.Metadata
-	meta.Tags = slices.Clone(meta.Tags)
-	if meta.Extras != nil {
-		meta.Extras = maps.Clone(meta.Extras)
-	}
-	var clonedFormat *SchemaDefinition
-	if c.ResponseFormat != nil {
-		clonedFormat = &SchemaDefinition{
-			Name:        c.ResponseFormat.Name,
-			Description: c.ResponseFormat.Description,
-		}
-		if c.ResponseFormat.Schema != nil {
-			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
-		}
-	}
-	return &PromptExecution{
-		Messages:       out,
-		Tools:          slices.Clone(c.Tools),
-		ModelConfig:    maps.Clone(c.ModelConfig),
-		Metadata:       meta,
-		ResponseFormat: clonedFormat,
-	}, nil
+	return c.renderTemplates(merged, nil)
 }
 
 // FormatStruct renders the template using payload struct (prompt tags), merges input fields, validates, splices history.
-func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*PromptExecution, error) {
+func (c *ChatPromptTemplate) FormatStruct(payload any) (*PromptExecution, error) {
 	vars, history, err := getPayloadFields(payload)
 	if err != nil {
 		return nil, err
@@ -288,70 +266,7 @@ func (c *ChatPromptTemplate) FormatStruct(ctx context.Context, payload any) (*Pr
 			return nil, &VariableError{Variable: name, Template: c.Metadata.ID, Err: ErrMissingVariable}
 		}
 	}
-	var out []ChatMessage
-	for i, pm := range c.parsedTemplates {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		optionalSkip := pm.optional && allVarsZeroForMessage(merged, pm.vars)
-		if optionalSkip {
-			continue
-		}
-		var contentParts []ContentPart
-		for j, part := range pm.parts {
-			buf := renderPool.Get().(*bytes.Buffer)
-			if err := part.tpl.Execute(buf, merged); err != nil {
-				if buf.Cap() <= maxRenderBufferCap {
-					buf.Reset()
-					renderPool.Put(buf)
-				}
-				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
-			}
-			rendered := buf.String()
-			if buf.Cap() <= maxRenderBufferCap {
-				buf.Reset()
-				renderPool.Put(buf)
-			}
-			switch part.kind {
-			case "text":
-				contentParts = append(contentParts, TextPart{Text: rendered})
-			case "image_url":
-				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
-			default:
-				contentParts = append(contentParts, TextPart{Text: rendered})
-			}
-		}
-		msgMeta := maps.Clone(pm.metadata)
-		out = append(out, ChatMessage{
-			Role:       pm.role,
-			Content:    contentParts,
-			CachePoint: pm.cachePoint,
-			Metadata:   msgMeta,
-		})
-	}
-	out = spliceHistory(out, history)
-	meta := c.Metadata
-	meta.Tags = slices.Clone(meta.Tags)
-	if meta.Extras != nil {
-		meta.Extras = maps.Clone(meta.Extras)
-	}
-	var clonedFormat *SchemaDefinition
-	if c.ResponseFormat != nil {
-		clonedFormat = &SchemaDefinition{
-			Name:        c.ResponseFormat.Name,
-			Description: c.ResponseFormat.Description,
-		}
-		if c.ResponseFormat.Schema != nil {
-			clonedFormat.Schema = maps.Clone(c.ResponseFormat.Schema)
-		}
-	}
-	return &PromptExecution{
-		Messages:       out,
-		Tools:          slices.Clone(c.Tools),
-		ModelConfig:    maps.Clone(c.ModelConfig),
-		Metadata:       meta,
-		ResponseFormat: clonedFormat,
-	}, nil
+	return c.renderTemplates(merged, history)
 }
 
 // ValidateVariables runs a dry-run execute with the given data (same merge as FormatStruct: PartialVariables + data + Tools).

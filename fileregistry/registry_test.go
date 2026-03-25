@@ -22,7 +22,9 @@ func TestFileRegistry_GetTemplate_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "support_agent.json")
-	data := []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`)
+	data := []byte(
+		`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`,
+	)
 	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -37,7 +39,16 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "support_agent.json")
-	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base {{ .user_name }}"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			basePath,
+			[]byte(
+				`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base {{ .user_name }}"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -52,8 +63,26 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "support_agent.production.json"), []byte(`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "support_agent.json"),
+			[]byte(
+				`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`,
+			),
+			0600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "support_agent.production.json"),
+			[]byte(
+				`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("production"))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -67,7 +96,14 @@ func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
 func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "p.json"),
+			[]byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`),
+			0600,
+		),
+	)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.prod.json"), []byte(`{"id":"p","messages":[unclosed`), 0600))
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
@@ -82,7 +118,9 @@ func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "agent.json")
-	data := []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"From .json file"}]}]}`)
+	data := []byte(
+		`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"From .json file"}]}]}`,
+	)
 	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -98,7 +136,16 @@ func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
 func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "safe.json"), []byte(`{"id":"safe","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Original"}]}],"tools":[{"name":"only_tool","description":"Only","parameters":{}}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "safe.json"),
+			[]byte(
+				`{"id":"safe","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Original"}]}],"tools":[{"name":"only_tool","description":"Only","parameters":{}}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -111,7 +158,12 @@ func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
 	require.Len(t, tpl2.Messages[0].Content, 1)
-	assert.Equal(t, "Original", tpl2.Messages[0].Content[0].Text, "cache must return unchanged template after caller mutated previous copy")
+	assert.Equal(
+		t,
+		"Original",
+		tpl2.Messages[0].Content[0].Text,
+		"cache must return unchanged template after caller mutated previous copy",
+	)
 	assert.Len(t, tpl2.Tools, 1)
 	assert.Equal(t, "only_tool", tpl2.Tools[0].Name)
 }
@@ -122,8 +174,26 @@ func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal"), 0755))
 	basePath := filepath.Join(dir, "internal", "router.json")
 	envPath := filepath.Join(dir, "internal", "router.prod.json")
-	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base router"}]}]}`), 0600))
-	require.NoError(t, os.WriteFile(envPath, []byte(`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod router"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			basePath,
+			[]byte(
+				`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base router"}]}]}`,
+			),
+			0600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			envPath,
+			[]byte(
+				`{"id":"router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Prod router"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -138,7 +208,16 @@ func TestFileRegistry_GetTemplate_WithEnvironment_FallbackToBase(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "agent.json")
-	require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base only"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			basePath,
+			[]byte(
+				`{"id":"agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base only"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -182,11 +261,29 @@ func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
 			dir := t.TempDir()
 			basePath := filepath.Join(dir, tt.id+tt.ext)
 			require.NoError(t, os.MkdirAll(filepath.Dir(basePath), 0755))
-			require.NoError(t, os.WriteFile(basePath, []byte(`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.baseText+`"}]}]}`), 0600))
+			require.NoError(
+				t,
+				os.WriteFile(
+					basePath,
+					[]byte(
+						`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.baseText+`"}]}]}`,
+					),
+					0600,
+				),
+			)
 			if tt.envText != "" {
 				envPath := filepath.Join(dir, tt.id+"."+tt.env+tt.ext)
 				require.NoError(t, os.MkdirAll(filepath.Dir(envPath), 0755))
-				require.NoError(t, os.WriteFile(envPath, []byte(`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.envText+`"}]}]}`), 0600))
+				require.NoError(
+					t,
+					os.WriteFile(
+						envPath,
+						[]byte(
+							`{"id":"`+tt.id+`","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"`+tt.envText+`"}]}]}`,
+						),
+						0600,
+					),
+				)
 			}
 			reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment(tt.env))
 			require.NoError(t, err)
@@ -203,8 +300,22 @@ func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
 func TestFileRegistry_List(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.json"), []byte(`{"id":"a","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.json"), []byte(`{"id":"b","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "a.json"),
+			[]byte(`{"id":"a","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`),
+			0600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "b.json"),
+			[]byte(`{"id":"b","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -219,7 +330,16 @@ func TestFileRegistry_List_SlashIdsNested(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal/router.yaml"), []byte(`{"id":"internal/router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "internal/router.yaml"),
+			[]byte(
+				`{"id":"internal/router","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"y"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -235,22 +355,34 @@ func TestFileRegistry_List_BaseIDNormalization(t *testing.T) {
 		files  map[string]string // path -> json content
 		wantID string
 	}{
-		{"base+env yields base only", map[string]string{
-			"agent.json":      `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`,
-			"agent.prod.json": `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`,
-		}, "agent"},
-		{"nested slash path", map[string]string{
-			"internal/router.prod.json": `{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"R"}]}]}`,
-		}, "internal/router"},
+		{
+			"base+env yields base only",
+			map[string]string{
+				"agent.json":      `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Base"}]}]}`,
+				"agent.prod.json": `{"id":"agent","messages":[{"role":"system","content":[{"type":"text","text":"Prod"}]}]}`,
+			},
+			"agent",
+		},
+		{
+			"nested slash path",
+			map[string]string{
+				"internal/router.prod.json": `{"id":"internal/router","messages":[{"role":"system","content":[{"type":"text","text":"R"}]}]}`,
+			},
+			"internal/router",
+		},
 		{"extensions yaml yml json", map[string]string{
 			"foo.yaml": `{"id":"foo","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`,
 			"bar.yml":  `{"id":"bar","messages":[{"role":"system","content":[{"type":"text","text":"Y"}]}]}`,
 			"baz.json": `{"id":"baz","messages":[{"role":"system","content":[{"type":"text","text":"J"}]}]}`,
 		}, "foo"},
-		{"excludes partials", map[string]string{
-			"main.json":                `{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"M"}]}]}`,
-			"partials/accidental.json": `{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"X"}]}]}`,
-		}, "main"},
+		{
+			"excludes partials",
+			map[string]string{
+				"main.json":                `{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"M"}]}]}`,
+				"partials/accidental.json": `{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"X"}]}]}`,
+			},
+			"main",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,8 +414,22 @@ func TestFileRegistry_List_ExcludesPartials(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.json"), []byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials/accidental.json"), []byte(`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Excluded"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "main.json"),
+			[]byte(`{"id":"main","messages":[{"role":"system","content":[{"type":"text","text":"Main"}]}]}`),
+			0600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "partials/accidental.json"),
+			[]byte(`{"id":"accidental","messages":[{"role":"system","content":[{"type":"text","text":"Excluded"}]}]}`),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ids, err := reg.List(context.Background())
@@ -296,7 +442,16 @@ func TestFileRegistry_Stat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stat_test.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"id":"stat_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"z"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			path,
+			[]byte(
+				`{"id":"stat_test","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"z"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -309,7 +464,14 @@ func TestFileRegistry_Stat(t *testing.T) {
 func TestFileRegistry_Reload(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v1"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "p.json"),
+			[]byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v1"}]}]}`),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -318,7 +480,14 @@ func TestFileRegistry_Reload(t *testing.T) {
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	reg.Reload()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v2"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "p.json"),
+			[]byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"v2"}]}]}`),
+			0600,
+		),
+	)
 	tpl2, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
@@ -328,7 +497,14 @@ func TestFileRegistry_Reload(t *testing.T) {
 func TestFileRegistry_Concurrent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.json"), []byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "p.json"),
+			[]byte(`{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -357,15 +533,31 @@ func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "doctor.json"), []byte(`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "partials", "safety.tmpl"),
+			[]byte(`{{ define "safety" }}Never give medical diagnoses.{{ end }}`),
+			0600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "doctor.json"),
+			[]byte(
+				`{"id":"doctor","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a doctor assistant.\n{{ template \"safety\" }}"}]},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+			),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(ctx, &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -381,7 +573,14 @@ func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
 func TestFileRegistry_ConcurrentReloadAndGet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "q.json"), []byte(`{"id":"q","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"q"}]}]}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "q.json"),
+			[]byte(`{"id":"q","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"q"}]}]}`),
+			0600,
+		),
+	)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()

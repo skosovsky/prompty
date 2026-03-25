@@ -51,3 +51,27 @@ func TestCharFallbackCounter_ZeroValue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }
+
+func TestCharFallbackCounter_CountMessage(t *testing.T) {
+	t.Parallel()
+
+	counter := &CharFallbackCounter{CharsPerToken: 4}
+	msg := ChatMessage{
+		Role: RoleAssistant,
+		Content: []ContentPart{
+			TextPart{Text: "hello"},
+			ReasoningPart{Text: "world"},
+			ToolCallPart{Args: `{"x":1}`},
+			ToolResultPart{
+				Content: []ContentPart{
+					TextPart{Text: "nested"},
+					MediaPart{MediaType: "image", MIMEType: "image/png"},
+				},
+			},
+		},
+	}
+
+	got, err := counter.CountMessage(msg)
+	require.NoError(t, err)
+	assert.Equal(t, 264, got) // 2 + 2 + 2 + 2 + 256
+}

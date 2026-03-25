@@ -56,7 +56,7 @@ func WithPartialsGlob(glob string) ParseOption {
 	return func(o *parseOpts) { o.partialsGlob = glob }
 }
 
-// WithPartialsFS sets fs.FS and pattern for partials (e.g. embed and "partials/*.tmpl").
+// WithPartialsFS sets [fs.FS] and pattern for partials (e.g. embed and "partials/*.tmpl").
 func WithPartialsFS(fsys fs.FS, pattern string) ParseOption {
 	return func(o *parseOpts) {
 		o.partialsFS = fsys
@@ -130,8 +130,8 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	if len(raw.Tools) > 0 {
 		opts = append(opts, prompty.WithTools(raw.Tools))
 	}
-	if len(raw.ModelConfig) > 0 {
-		opts = append(opts, prompty.WithConfig(raw.ModelConfig))
+	if raw.ModelOptions != nil {
+		opts = append(opts, prompty.WithModelOptions(raw.ModelOptions))
 	}
 	if raw.ResponseFormat != nil {
 		opts = append(opts, prompty.WithResponseFormat(raw.ResponseFormat))
@@ -154,7 +154,7 @@ func ParseFile(path string, u Unmarshaler, opts ...ParseOption) (*prompty.ChatPr
 	return Parse(data, u, opts...)
 }
 
-// ParseFS reads from fs.FS and calls Parse.
+// ParseFS reads from [fs.FS] and calls Parse.
 func ParseFS(fsys fs.FS, name string, u Unmarshaler, opts ...ParseOption) (*prompty.ChatPromptTemplate, error) {
 	data, err := fs.ReadFile(fsys, name)
 	if err != nil {

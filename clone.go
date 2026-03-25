@@ -17,10 +17,47 @@ func clonePromptExecution(exec *PromptExecution) *PromptExecution {
 	return &PromptExecution{
 		Messages:       cloneMessages(exec.Messages),
 		Tools:          cloneToolDefinitions(exec.Tools),
-		ModelConfig:    cloneMapAny(exec.ModelConfig),
+		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
 	}
+}
+
+func cloneExecutionWithMessages(exec *PromptExecution, messages []ChatMessage) *PromptExecution {
+	if exec == nil {
+		return nil
+	}
+	return &PromptExecution{
+		Messages:       messages,
+		Tools:          cloneToolDefinitions(exec.Tools),
+		ModelOptions:   cloneModelOptions(exec.ModelOptions),
+		Metadata:       clonePromptMetadata(exec.Metadata),
+		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
+	}
+}
+
+func cloneModelOptions(opts *ModelOptions) *ModelOptions {
+	if opts == nil {
+		return nil
+	}
+	out := &ModelOptions{
+		Model:            opts.Model,
+		Stop:             cloneStringSlice(opts.Stop),
+		ProviderSettings: cloneMapAny(opts.ProviderSettings),
+	}
+	if opts.Temperature != nil {
+		v := *opts.Temperature
+		out.Temperature = &v
+	}
+	if opts.MaxTokens != nil {
+		v := *opts.MaxTokens
+		out.MaxTokens = &v
+	}
+	if opts.TopP != nil {
+		v := *opts.TopP
+		out.TopP = &v
+	}
+	return out
 }
 
 func clonePromptMetadata(meta PromptMetadata) PromptMetadata {
@@ -57,6 +94,32 @@ func cloneToolDefinitions(tools []ToolDefinition) []ToolDefinition {
 			Parameters:  cloneMapAny(tool.Parameters),
 		}
 	}
+	return out
+}
+
+func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
+	if messages == nil {
+		return nil
+	}
+	out := make([]MessageTemplate, len(messages))
+	for i, msg := range messages {
+		out[i] = MessageTemplate{
+			Role:       msg.Role,
+			Content:    slicesCloneTemplateParts(msg.Content),
+			Optional:   msg.Optional,
+			CachePoint: msg.CachePoint,
+			Metadata:   cloneMapAny(msg.Metadata),
+		}
+	}
+	return out
+}
+
+func slicesCloneTemplateParts(parts []TemplatePart) []TemplatePart {
+	if parts == nil {
+		return nil
+	}
+	out := make([]TemplatePart, len(parts))
+	copy(out, parts)
 	return out
 }
 
@@ -208,13 +271,13 @@ func cloneReflectValue(value reflect.Value) reflect.Value {
 			return reflect.ValueOf(bytes.Clone(value.Bytes())).Convert(value.Type())
 		}
 		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-		for i := 0; i < value.Len(); i++ {
+		for i := range value.Len() {
 			out.Index(i).Set(cloneReflectValue(value.Index(i)))
 		}
 		return out
 	case reflect.Array:
 		out := reflect.New(value.Type()).Elem()
-		for i := 0; i < value.Len(); i++ {
+		for i := range value.Len() {
 			out.Index(i).Set(cloneReflectValue(value.Index(i)))
 		}
 		return out

@@ -84,7 +84,7 @@ prompty-gen list
 - **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Prompts`, `func NewPrompts(r prompty.Registry) *Prompts`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `func (p *Prompts) RenderXxx(ctx, input) (*prompty.PromptExecution, error)`.
 
-Render выполняет: validate input → GetTemplate → vars map → `tmpl.Format(ctx, vars)`. Без Execute и LLMClient.
+Render выполняет: validate input → GetTemplate → vars map → `tmpl.Format(vars)`. Без Execute и Invoker.
 
 ## Mapping JSON Schema → Go
 

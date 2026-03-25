@@ -1,18 +1,20 @@
 package gen
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/dave/jennifer/jen"
+
 	"github.com/skosovsky/prompty"
 )
 
 // ValidatePromptID returns an error if id is empty, invalid (per prompty.ValidateID), or reserved.
 func ValidatePromptID(id string) error {
 	if id == "" {
-		return fmt.Errorf("manifest id must be non-empty")
+		return errors.New("manifest id must be non-empty")
 	}
 	if err := prompty.ValidateID(id); err != nil {
 		return err

@@ -25,7 +25,7 @@ func ExampleAdapter_Translate() {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	req, _ := a.Translate(context.Background(), exec)
+	req, _ := a.Translate(exec)
 	fmt.Println(req.Contents[0].Parts[0].Text)
 	// Output: Hello
 }
@@ -38,7 +38,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	assert.Len(t, req.Contents[0].Parts, 1)
@@ -55,7 +55,7 @@ func TestTranslate_SystemMessage(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.SystemInstruction)
 	require.Len(t, req.Config.SystemInstruction.Parts, 1)
@@ -75,7 +75,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Config.Tools, 1)
 	decls := req.Config.Tools[0].FunctionDeclarations
@@ -92,7 +92,7 @@ func TestTranslate_GeminiSearchGroundingMetadata(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}}, Metadata: map[string]any{"gemini_search_grounding": true}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.Tools)
 	var hasGoogleSearch bool
@@ -115,7 +115,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	require.Len(t, req.Contents[0].Parts, 1)
@@ -135,7 +135,7 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	require.Len(t, req.Contents[0].Parts, 2)
@@ -147,19 +147,19 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	assert.Equal(t, "12:00", req.Contents[0].Parts[1].FunctionResponse.Response["result"])
 }
 
-func TestTranslate_ModelConfig(t *testing.T) {
+func TestTranslate_ModelOptions(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ModelConfig: map[string]any{
-			"temperature": 0.5,
-			"max_tokens":  int64(100),
+		ModelOptions: &prompty.ModelOptions{
+			Temperature: new(0.5),
+			MaxTokens:   new(int64(100)),
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.Temperature)
 	assert.InDelta(t, 0.5, float64(*req.Config.Temperature), 1e-9)
@@ -169,7 +169,7 @@ func TestTranslate_ModelConfig(t *testing.T) {
 func TestTranslate_NilExecution(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.Translate(context.Background(), nil)
+	_, err := a.Translate(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
@@ -186,7 +186,7 @@ func TestTranslate_ImagePartData(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	require.Len(t, req.Contents[0].Parts, 2)
@@ -205,7 +205,7 @@ func TestTranslate_ImagePartURL(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	require.Len(t, req.Contents[0].Parts, 1)
@@ -223,7 +223,7 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
@@ -239,7 +239,7 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 			}},
 		},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Contents, 1)
 	assert.Equal(t, string(genai.RoleModel), req.Contents[0].Role)
@@ -257,7 +257,7 @@ func TestTranslate_UnsupportedRole(t *testing.T) {
 			{Role: "unknown_role", Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrUnsupportedRole)
 }
@@ -269,9 +269,9 @@ func TestTranslate_MaxTokensTruncationGuard(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ModelConfig: map[string]any{"max_tokens": int64(999_999_999_999)},
+		ModelOptions: &prompty.ModelOptions{MaxTokens: new(int64(999_999_999_999))},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2147483647), req.Config.MaxOutputTokens)
 }
@@ -286,7 +286,7 @@ func TestParseResponse_TextOnly(t *testing.T) {
 			},
 		}},
 	}
-	pResp, err := a.ParseResponse(context.Background(), resp)
+	pResp, err := a.ParseResponse(resp)
 	require.NoError(t, err)
 	require.Len(t, pResp.Content, 1)
 	assert.Equal(t, "Hello back", pResp.Content[0].(prompty.TextPart).Text)
@@ -308,7 +308,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 			},
 		}},
 	}
-	pResp, err := a.ParseResponse(context.Background(), resp)
+	pResp, err := a.ParseResponse(resp)
 	require.NoError(t, err)
 	require.Len(t, pResp.Content, 1)
 	tc := pResp.Content[0].(prompty.ToolCallPart)
@@ -321,7 +321,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 func TestParseResponse_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(context.Background(), nil)
+	_, err := a.ParseResponse(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }
@@ -329,7 +329,7 @@ func TestParseResponse_InvalidType(t *testing.T) {
 func TestParseResponse_EmptyCandidates(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseResponse(context.Background(), &genai.GenerateContentResponse{Candidates: nil})
+	_, err := a.ParseResponse(&genai.GenerateContentResponse{Candidates: nil})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
@@ -342,7 +342,7 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 			Content: &genai.Content{Parts: []*genai.Part{{Text: ""}}},
 		}},
 	}
-	_, err := a.ParseResponse(context.Background(), resp)
+	_, err := a.ParseResponse(resp)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
@@ -357,7 +357,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.Translate(context.Background(), exec)
+	_, err := a.Translate(exec)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
@@ -366,7 +366,7 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{Messages: nil}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req)
 	assert.Empty(t, req.Contents)
@@ -382,7 +382,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Name: "out", Schema: schema},
 	}
-	req, err := a.Translate(context.Background(), exec)
+	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotEmpty(t, req.Config.ResponseMIMEType)
 	assert.Equal(t, "application/json", req.Config.ResponseMIMEType)

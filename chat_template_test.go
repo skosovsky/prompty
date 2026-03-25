@@ -2,7 +2,7 @@ package prompty
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,9 +26,97 @@ func TestNewChatPromptTemplate_DefensiveCopy(t *testing.T) {
 	assert.Equal(t, "Hi {{ .name }}", tpl.Messages[0].Content[0].Text)
 }
 
+func TestNewChatPromptTemplate_DefensiveCopy_NestedState(t *testing.T) {
+	t.Parallel()
+	msgs := []MessageTemplate{
+		{
+			Role:     "system",
+			Content:  TextContent("Hi"),
+			Metadata: map[string]any{"nested": map[string]any{"env": "dev"}},
+		},
+	}
+	tools := []ToolDefinition{
+		{
+			Name:        "lookup",
+			Description: "Lookup data",
+			Parameters: map[string]any{
+				"properties": map[string]any{
+					"city": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+	meta := PromptMetadata{
+		ID:     "tpl",
+		Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+	}
+	tpl, err := NewChatPromptTemplate(msgs, WithTools(tools), WithMetadata(meta))
+	require.NoError(t, err)
+
+	msgs[0].Metadata["nested"].(map[string]any)["env"] = "prod"
+	tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
+	meta.Extras["trace"].(map[string]any)["env"] = "prod"
+
+	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
+	assert.Equal(t, "string", tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"])
+	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
+}
+
+func TestNewChatPromptTemplate_DefensiveCopy_Schemas(t *testing.T) {
+	t.Parallel()
+	responseSchema := &SchemaDefinition{
+		Name: "response",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"answer": map[string]any{"type": "string"},
+			},
+		},
+	}
+	inputSchema := &SchemaDefinition{
+		Name: "input",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"question": map[string]any{"type": "string"},
+			},
+		},
+	}
+
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+		WithResponseFormat(responseSchema),
+		WithInputSchema(inputSchema),
+	)
+	require.NoError(t, err)
+
+	responseSchema.Name = "mutated-response"
+	responseSchema.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
+	inputSchema.Name = "mutated-input"
+	inputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
+
+	require.NotNil(t, tpl.ResponseFormat)
+	require.NotNil(t, tpl.InputSchema)
+	assert.Equal(t, "response", tpl.ResponseFormat.Name)
+	assert.Equal(
+		t,
+		"string",
+		tpl.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+	)
+	assert.Equal(t, "input", tpl.InputSchema.Name)
+	assert.Equal(
+		t,
+		"string",
+		tpl.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"],
+	)
+}
+
 func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 	t.Parallel()
-	msgs := []MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .name }}")}, {Role: "user", Content: TextContent("{{ end }}")}}
+	msgs := []MessageTemplate{
+		{Role: "system", Content: TextContent("Hi {{ .name }}")},
+		{Role: "user", Content: TextContent("{{ end }}")},
+	}
 	_, err := NewChatPromptTemplate(msgs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTemplateParse)
@@ -43,8 +131,7 @@ func TestFormatStruct_SimpleVars(t *testing.T) {
 	type Payload struct {
 		UserName string `prompt:"user_name"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Alice"})
+	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
@@ -61,8 +148,7 @@ func TestFormatStruct_PartialVariables(t *testing.T) {
 	type Payload struct {
 		Msg string `prompt:"msg"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Msg: "overridden"})
+	exec, err := tpl.FormatStruct(&Payload{Msg: "overridden"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
@@ -79,8 +165,7 @@ func TestFormatStruct_MissingRequired(t *testing.T) {
 	type Payload struct {
 		Other string `prompt:"other"`
 	}
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, &Payload{Other: "x"})
+	_, err = tpl.FormatStruct(&Payload{Other: "x"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingVariable)
 	var ve *VariableError
@@ -99,7 +184,7 @@ func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 	type P struct {
 		Other string `prompt:"other"`
 	}
-	_, err = tpl.FormatStruct(context.Background(), &P{Other: "x"})
+	_, err = tpl.FormatStruct(&P{Other: "x"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingVariable)
 }
@@ -111,8 +196,7 @@ func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	type PayloadWithTools struct {
 		Tools string `prompt:"Tools"` // reserved
 	}
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, &PayloadWithTools{Tools: "x"})
+	_, err = tpl.FormatStruct(&PayloadWithTools{Tools: "x"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReservedVariable)
 }
@@ -127,11 +211,10 @@ func TestFormatStruct_ResponseFormatClone(t *testing.T) {
 		WithResponseFormat(&SchemaDefinition{Name: "original", Description: "desc", Schema: schema}),
 	)
 	require.NoError(t, err)
-	ctx := context.Background()
 	type emptyPayload struct {
 		X string `prompt:"x"` // unused by template; needed for getPayloadFields
 	}
-	exec, err := tpl.FormatStruct(ctx, &emptyPayload{})
+	exec, err := tpl.FormatStruct(&emptyPayload{})
 	require.NoError(t, err)
 	require.NotNil(t, exec.ResponseFormat)
 	require.NotNil(t, tpl.ResponseFormat)
@@ -181,6 +264,91 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 	assert.False(t, hasNew, "original Schema must not share map with clone")
 }
 
+func TestCloneTemplate_SchemaDefinitionsAreIndependent(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+		WithResponseFormat(&SchemaDefinition{
+			Name: "response",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+				},
+			},
+		}),
+		WithInputSchema(&SchemaDefinition{
+			Name: "input",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"question": map[string]any{"type": "string"},
+				},
+			},
+		}),
+	)
+	require.NoError(t, err)
+
+	clone := CloneTemplate(tpl)
+	require.NotNil(t, clone)
+	require.NotNil(t, clone.ResponseFormat)
+	require.NotNil(t, clone.InputSchema)
+
+	clone.ResponseFormat.Name = "mutated-response"
+	clone.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
+	clone.InputSchema.Name = "mutated-input"
+	clone.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
+
+	assert.Equal(t, "response", tpl.ResponseFormat.Name)
+	assert.Equal(
+		t,
+		"string",
+		tpl.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+	)
+	assert.Equal(t, "input", tpl.InputSchema.Name)
+	assert.Equal(
+		t,
+		"string",
+		tpl.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"],
+	)
+}
+
+func TestCloneTemplate_DoesNotMutateOriginalNestedState(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{
+			Role:     "system",
+			Content:  TextContent("Hi"),
+			Metadata: map[string]any{"nested": map[string]any{"env": "dev"}},
+		}},
+		WithTools([]ToolDefinition{{
+			Name:        "lookup",
+			Description: "Lookup data",
+			Parameters: map[string]any{
+				"properties": map[string]any{
+					"city": map[string]any{"type": "string"},
+				},
+			},
+		}}),
+		WithMetadata(PromptMetadata{
+			ID:     "tpl",
+			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+		}),
+	)
+	require.NoError(t, err)
+
+	clone := CloneTemplate(tpl)
+	require.NotNil(t, clone)
+
+	clone.Messages[0].Metadata["nested"].(map[string]any)["env"] = "prod"
+	clone.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
+	clone.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
+
+	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
+	assert.Equal(t, "string", tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"])
+	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
+}
+
 func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -191,8 +359,7 @@ func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 		UserName string `prompt:"user_name"`
 	}
 	p := &Payload{UserName: "Alice"}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &p) // pass **Payload
+	exec, err := tpl.FormatStruct(&p) // pass **Payload
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "Hello, Alice!", exec.Messages[0].Content[0].(TextPart).Text)
@@ -205,8 +372,7 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 	}
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, &NoTags{X: "y"})
+	_, err = tpl.FormatStruct(&NoTags{X: "y"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -221,8 +387,7 @@ func TestFormatStruct_JsonTagFallback(t *testing.T) {
 	type Payload struct {
 		UserName string `json:"user_name,omitempty"` // no prompt tag; fallback to json first part
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Bob"})
+	exec, err := tpl.FormatStruct(&Payload{UserName: "Bob"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "Hello, Bob!", exec.Messages[0].Content[0].(TextPart).Text)
@@ -232,8 +397,7 @@ func TestFormatStruct_NilPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, nil)
+	_, err = tpl.FormatStruct(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -246,8 +410,7 @@ func TestFormatStruct_NilPointerPayload(t *testing.T) {
 		X string `prompt:"x"`
 	}
 	var p *P // nil pointer
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, p)
+	_, err = tpl.FormatStruct(p)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -256,11 +419,10 @@ func TestFormatStruct_NonStructPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
 	require.NoError(t, err)
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, 42)
+	_, err = tpl.FormatStruct(42)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
-	_, err = tpl.FormatStruct(ctx, "string")
+	_, err = tpl.FormatStruct("string")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -286,20 +448,6 @@ func TestValidateVariables_MissingVar(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTemplateRender)
 }
 
-func TestFormatStruct_CancelledContext(t *testing.T) {
-	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
-	require.NoError(t, err)
-	type P struct {
-		X string `prompt:"x"`
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = tpl.FormatStruct(ctx, &P{X: "v"})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
-}
-
 func TestFormatStruct_OptionalMessage(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -310,8 +458,7 @@ func TestFormatStruct_OptionalMessage(t *testing.T) {
 	type Payload struct {
 		Extra string `prompt:"extra"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Extra: ""})
+	exec, err := tpl.FormatStruct(&Payload{Extra: ""})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "System", exec.Messages[0].Content[0].(TextPart).Text)
@@ -332,8 +479,7 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 		Query   string        `prompt:"query"`
 		History []ChatMessage `prompt:"history"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "last", History: history})
+	exec, err := tpl.FormatStruct(&Payload{Query: "last", History: history})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 4) // system, history[0], history[1], user
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
@@ -359,8 +505,7 @@ func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 		Query   string        `prompt:"query"`
 		History []ChatMessage `prompt:"history"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{Query: "last", History: history})
+	exec, err := tpl.FormatStruct(&Payload{Query: "last", History: history})
 	require.NoError(t, err)
 	// Expected: system, developer, history[0], user
 	require.Len(t, exec.Messages, 4)
@@ -381,8 +526,7 @@ func TestFormatStruct_ToolsInjection(t *testing.T) {
 	type Payload struct {
 		X string `prompt:"x"` // not referenced in template; payload must have at least one prompt tag
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &Payload{})
+	exec, err := tpl.FormatStruct(&Payload{})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
@@ -394,7 +538,11 @@ func TestFormatStruct_ToolsInjection(t *testing.T) {
 type failingTokenCounter struct{}
 
 func (failingTokenCounter) Count(string) (int, error) {
-	return 0, fmt.Errorf("token counter failure")
+	return 0, errors.New("token counter failure")
+}
+
+func (failingTokenCounter) CountMessage(ChatMessage) (int, error) {
+	return 0, errors.New("token counter failure")
 }
 
 func TestFormatStruct_ErrTemplateRender(t *testing.T) {
@@ -407,8 +555,7 @@ func TestFormatStruct_ErrTemplateRender(t *testing.T) {
 	type P struct {
 		Text string `prompt:"text"`
 	}
-	ctx := context.Background()
-	_, err = tpl.FormatStruct(ctx, &P{Text: "hello"})
+	_, err = tpl.FormatStruct(&P{Text: "hello"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTemplateRender)
 }
@@ -423,8 +570,7 @@ func TestWithTokenCounter_Nil(t *testing.T) {
 	type P struct {
 		Text string `prompt:"text"`
 	}
-	ctx := context.Background()
-	exec, err := tpl.FormatStruct(ctx, &P{Text: "12345678"}) // 8 chars -> 2 tokens, no truncation
+	exec, err := tpl.FormatStruct(&P{Text: "12345678"}) // 8 chars -> 2 tokens, no truncation
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "12345678", exec.Messages[0].Content[0].(TextPart).Text)
@@ -434,7 +580,14 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "partials", "safety.tmpl"), []byte(`{{ define "safety" }}Never give medical advice.{{ end }}`), 0600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(dir, "partials", "safety.tmpl"),
+			[]byte(`{{ define "safety" }}Never give medical advice.{{ end }}`),
+			0600,
+		),
+	)
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{
 			{Role: RoleSystem, Content: TextContent("You are a doctor.\n{{ template \"safety\" }}")},
@@ -444,7 +597,7 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -464,18 +617,17 @@ func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	type P struct {
 		X string `prompt:"x"`
 	}
-	ctx := context.Background()
 	const n = 100
 	errCh := make(chan error, n)
 	for range n {
 		go func() {
-			exec, err := tpl.FormatStruct(ctx, &P{X: "v"})
+			exec, err := tpl.FormatStruct(&P{X: "v"})
 			if err != nil {
 				errCh <- err
 				return
 			}
 			if len(exec.Messages) != 1 || exec.Messages[0].Content[0].(TextPart).Text != "v" {
-				errCh <- fmt.Errorf("unexpected result")
+				errCh <- errors.New("unexpected result")
 				return
 			}
 			errCh <- nil
@@ -499,7 +651,16 @@ func (m mockFetcher) Fetch(_ context.Context, _ string) ([]byte, string, error) 
 	return m.data, m.mime, nil
 }
 
-func TestPromptExecution_ResolveMedia(t *testing.T) {
+type typedNilFetcher struct{}
+
+func (f *typedNilFetcher) Fetch(_ context.Context, _ string) ([]byte, string, error) {
+	if f == nil {
+		panic("typed nil fetcher called")
+	}
+	return nil, "", nil
+}
+
+func TestPromptExecution_ResolvedMedia(t *testing.T) {
 	t.Parallel()
 	imageBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a} // PNG magic
 	fetcher := mockFetcher{data: imageBytes, mime: "image/png"}
@@ -511,14 +672,20 @@ func TestPromptExecution_ResolveMedia(t *testing.T) {
 			}},
 		},
 	}
-	err := exec.ResolveMedia(context.Background(), fetcher)
+	resolved, err := exec.ResolvedMedia(context.Background(), fetcher)
 	require.NoError(t, err)
-	part := exec.Messages[0].Content[0].(MediaPart)
+	require.NotNil(t, resolved)
+
+	origPart := exec.Messages[0].Content[0].(MediaPart)
+	assert.Empty(t, origPart.Data)
+	assert.Empty(t, origPart.MIMEType)
+
+	part := resolved.Messages[0].Content[0].(MediaPart)
 	assert.Equal(t, imageBytes, part.Data)
 	assert.Equal(t, "image/png", part.MIMEType)
 }
 
-func TestPromptExecution_ResolveMedia_NonImageFailFast(t *testing.T) {
+func TestPromptExecution_ResolvedMedia_NonImageFailFast(t *testing.T) {
 	t.Parallel()
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
@@ -527,10 +694,78 @@ func TestPromptExecution_ResolveMedia_NonImageFailFast(t *testing.T) {
 			}},
 		},
 	}
-	err := exec.ResolveMedia(context.Background(), mockFetcher{})
+	resolved, err := exec.ResolvedMedia(context.Background(), mockFetcher{})
 	require.Error(t, err)
+	assert.Nil(t, resolved)
 	assert.Contains(t, err.Error(), "currently only 'image' media type is supported")
 	assert.Contains(t, err.Error(), "audio")
+}
+
+func TestPromptExecution_ResolvedMedia_NilFetcherReturnsErrNoFetcher(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "image", URL: "https://example.com/image.png"},
+			}},
+		},
+	}
+	resolved, err := exec.ResolvedMedia(context.Background(), nil)
+	require.Error(t, err)
+	assert.Nil(t, resolved)
+	require.ErrorIs(t, err, ErrNoFetcher)
+
+	part := exec.Messages[0].Content[0].(MediaPart)
+	assert.Empty(t, part.Data)
+	assert.Empty(t, part.MIMEType)
+}
+
+func TestPromptExecution_ResolvedMedia_NilFetcherOnNoOpPath(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "image", URL: "https://example.com/image.png", Data: []byte("already-resolved")},
+			}},
+		},
+	}
+	resolved, err := exec.ResolvedMedia(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.NotSame(t, exec, resolved)
+	assert.Equal(t, []byte("already-resolved"), resolved.Messages[0].Content[0].(MediaPart).Data)
+}
+
+func TestPromptExecution_ResolvedMedia_TypedNilFetcherReturnsErrNoFetcher(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "image", URL: "https://example.com/image.png"},
+			}},
+		},
+	}
+	var fetcher *typedNilFetcher
+	resolved, err := exec.ResolvedMedia(context.Background(), fetcher)
+	require.Error(t, err)
+	assert.Nil(t, resolved)
+	require.ErrorIs(t, err, ErrNoFetcher)
+}
+
+func TestPromptExecution_ResolvedMedia_TypedNilFetcherOnNoOpPath(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "image", URL: "https://example.com/image.png", Data: []byte("already-resolved")},
+			}},
+		},
+	}
+	var fetcher *typedNilFetcher
+	resolved, err := exec.ResolvedMedia(context.Background(), fetcher)
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.Equal(t, []byte("already-resolved"), resolved.Messages[0].Content[0].(MediaPart).Data)
 }
 
 func TestPromptExecution_Normalize(t *testing.T) {
@@ -549,4 +784,54 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	text := out.Messages[0].Content[0].(TextPart).Text
 	assert.Equal(t, "First system.\n\nSecond system.", text)
 	assert.Equal(t, "User query", out.Messages[1].Content[0].(TextPart).Text)
+}
+
+func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{
+				Role: RoleSystem,
+				Content: []ContentPart{
+					TextPart{Text: "First system."},
+					MediaPart{MediaType: "image", URL: "https://example.com/first.png", Data: []byte("one")},
+				},
+				Metadata: map[string]any{"scope": "first"},
+			},
+			{
+				Role: RoleDeveloper,
+				Content: []ContentPart{
+					TextPart{Text: "Second system."},
+					MediaPart{MediaType: "image", URL: "https://example.com/second.png", Data: []byte("two")},
+				},
+				Metadata: map[string]any{"scope": "second"},
+			},
+			{
+				Role:     RoleUser,
+				Content:  []ContentPart{TextPart{Text: "User query"}},
+				Metadata: map[string]any{"origin": "user"},
+			},
+		},
+		Metadata: PromptMetadata{
+			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+		},
+	}
+
+	out := exec.Normalize()
+	require.Len(t, out.Messages, 2)
+
+	out.Messages[0].Metadata["scope"] = "changed"
+	mergedMedia := out.Messages[0].Content[1].(MediaPart)
+	mergedMedia.Data[0] = 'X'
+	out.Messages[0].Content[1] = mergedMedia
+
+	out.Messages[1].Metadata["origin"] = "changed"
+	out.Messages[1].Content[0] = TextPart{Text: "Changed user query"}
+	out.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
+
+	assert.Equal(t, "first", exec.Messages[0].Metadata["scope"])
+	assert.Equal(t, byte('o'), exec.Messages[0].Content[1].(MediaPart).Data[0])
+	assert.Equal(t, "user", exec.Messages[2].Metadata["origin"])
+	assert.Equal(t, "User query", exec.Messages[2].Content[0].(TextPart).Text)
+	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
 }

@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"context"
 	"embed"
 	"strings"
 	"testing"
@@ -24,7 +23,9 @@ func TestMain(m *testing.M) {
 
 func TestParse_ValidSimple(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"simple_prompt","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello, {{ .user_name }}."}]}]}`)
+	data := []byte(
+		`{"id":"simple_prompt","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello, {{ .user_name }}."}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -91,7 +92,9 @@ func TestParse_InvalidJSON(t *testing.T) {
 
 func TestParse_MetadataTagsAndExtras(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"x","version":"1","metadata":{"tags":["a","b"],"domain":"medical","version":"2"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"x","version":"1","metadata":{"tags":["a","b"],"domain":"medical","version":"2"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -103,7 +106,9 @@ func TestParse_MetadataTagsAndExtras(t *testing.T) {
 
 func TestParse_MetadataEnvironmentTyped(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"x","version":"1","metadata":{"environment":"prod","tags":["a"],"custom":"val"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"x","version":"1","metadata":{"environment":"prod","tags":["a"],"custom":"val"},"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -115,9 +120,58 @@ func TestParse_MetadataEnvironmentTyped(t *testing.T) {
 	assert.NotContains(t, tpl.Metadata.Extras, "tags")
 }
 
+func TestParse_ModelOptions_JSON(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"model_opts",
+		"version":"1",
+		"model_config":{
+			"model":"gpt-4o",
+			"temperature":0.7,
+			"max_tokens":2048,
+			"top_p":0.8,
+			"stop":["END"],
+			"frequency_penalty":0.2,
+			"provider_settings":{"frequency_penalty":0.5,"custom_flag":true}
+		},
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	require.NotNil(t, tpl.ModelOptions)
+	assert.Equal(t, "gpt-4o", tpl.ModelOptions.Model)
+	require.NotNil(t, tpl.ModelOptions.Temperature)
+	assert.InDelta(t, 0.7, *tpl.ModelOptions.Temperature, 1e-9)
+	require.NotNil(t, tpl.ModelOptions.MaxTokens)
+	assert.Equal(t, int64(2048), *tpl.ModelOptions.MaxTokens)
+	require.NotNil(t, tpl.ModelOptions.TopP)
+	assert.InDelta(t, 0.8, *tpl.ModelOptions.TopP, 1e-9)
+	assert.Equal(t, []string{"END"}, tpl.ModelOptions.Stop)
+	require.NotNil(t, tpl.ModelOptions.ProviderSettings)
+	assert.InDelta(t, 0.5, tpl.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
+	assert.Equal(t, true, tpl.ModelOptions.ProviderSettings["custom_flag"])
+}
+
+func TestParse_ModelOptions_JSON_EmptyBlockReturnsNil(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"empty_model_opts",
+		"version":"1",
+		"model_config":{},
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Nil(t, tpl.ModelOptions)
+}
+
 func TestParse_AcceptsCustomRole(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"x","version":"1","messages":[{"role":"custom_alien","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"x","version":"1","messages":[{"role":"custom_alien","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -127,14 +181,16 @@ func TestParse_AcceptsCustomRole(t *testing.T) {
 
 func TestParse_ContentScalar(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"scalar_content","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Ты ассистент"}]}]}`)
+	data := []byte(
+		`{"id":"scalar_content","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Ты ассистент"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages, 1)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
 	assert.Equal(t, "Ты ассистент", tpl.Messages[0].Content[0].Text)
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -144,7 +200,9 @@ func TestParse_ContentScalar(t *testing.T) {
 
 func TestParse_ContentMultimodalArray(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .x }}"},{"type":"image_url","url":"{{ .img }}"}]}]}`)
+	data := []byte(
+		`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .x }}"},{"type":"image_url","url":"{{ .img }}"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages, 1)
@@ -153,7 +211,7 @@ func TestParse_ContentMultimodalArray(t *testing.T) {
 	assert.Equal(t, "Look: {{ .x }}", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, "image_url", tpl.Messages[0].Content[1].Type)
 	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X   string `json:"x"`
 		Img string `json:"img"`
 	}{X: "done", Img: "https://example.com/photo.png"})
@@ -183,7 +241,9 @@ func TestParseFS(t *testing.T) {
 
 func TestParse_ResponseFormat(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"with_schema","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Return JSON"}]}],"response_format":{"name":"my_schema","schema":{"type":"object","properties":{"key":{"type":"string"}}}}}`)
+	data := []byte(
+		`{"id":"with_schema","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Return JSON"}]}],"response_format":{"name":"my_schema","schema":{"type":"object","properties":{"key":{"type":"string"}}}}}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -191,7 +251,7 @@ func TestParse_ResponseFormat(t *testing.T) {
 	assert.Equal(t, "my_schema", tpl.ResponseFormat.Name)
 	require.NotNil(t, tpl.ResponseFormat.Schema)
 	assert.Equal(t, "object", tpl.ResponseFormat.Schema["type"])
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -201,7 +261,9 @@ func TestParse_ResponseFormat(t *testing.T) {
 
 func TestParse_MetadataPassThrough_ArbitraryKeys(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"with_metadata_arbitrary","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper."}],"metadata":{"custom_user_id":"u-123"}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"with_metadata_arbitrary","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper."}],"metadata":{"custom_user_id":"u-123"}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -213,23 +275,32 @@ func TestParse_MetadataPassThrough_ArbitraryKeys(t *testing.T) {
 
 func TestParse_MetadataPassThrough(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"with_metadata_pass","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper. {{ .x }}"}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"with_metadata_pass","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper. {{ .x }}"}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{X: "ok"})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
 	require.NotNil(t, exec.Messages[0].Metadata)
-	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"], "metadata from manifest must reach PromptExecution")
+	assert.Equal(
+		t,
+		true,
+		exec.Messages[0].Metadata["gemini_search_grounding"],
+		"metadata from manifest must reach PromptExecution",
+	)
 }
 
 func TestParse_CacheTrueAndMetadata(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper."}],"cache":true,"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`)
+	data := []byte(
+		`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper."}],"cache":true,"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
@@ -237,7 +308,7 @@ func TestParse_CacheTrueAndMetadata(t *testing.T) {
 	assert.True(t, tpl.Messages[0].CachePoint)
 	require.NotNil(t, tpl.Messages[0].Metadata)
 	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -250,11 +321,13 @@ func TestParse_CacheTrueAndMetadata(t *testing.T) {
 
 func TestParse_FuncMapHelpersManifestPath(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"id":"secure","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"{{ $d := randomHex 8 }}\\n<data_{{ $d }}>{{ .user_input | escapeXML }}</data_{{ $d }}"}]}]}`)
+	data := []byte(
+		`{"id":"secure","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"{{ $d := randomHex 8 }}\\n<data_{{ $d }}>{{ .user_input | escapeXML }}</data_{{ $d }}"}]}]}`,
+	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(context.Background(), &struct {
+	exec, err := tpl.FormatStruct(&struct {
 		UserInput string `prompt:"user_input"`
 	}{UserInput: "</patient_input>"})
 	require.NoError(t, err)

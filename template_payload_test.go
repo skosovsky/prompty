@@ -17,9 +17,33 @@ func TestSpliceHistory(t *testing.T) {
 		wantLen     int
 		firstUserAt int // index of first non-system in result
 	}{
-		{"empty history", []ChatMessage{{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}}, {Role: "user", Content: []ContentPart{TextPart{Text: "U"}}}}, nil, 2, 1},
-		{"all system then history", []ChatMessage{{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}}}, []ChatMessage{{Role: "user", Content: []ContentPart{TextPart{Text: "H"}}}}, 2, 1},
-		{"system then user then history", []ChatMessage{{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}}, {Role: "user", Content: []ContentPart{TextPart{Text: "U"}}}}, []ChatMessage{{Role: "assistant", Content: []ContentPart{TextPart{Text: "A"}}}}, 3, 1},
+		{
+			"empty history",
+			[]ChatMessage{
+				{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}},
+				{Role: "user", Content: []ContentPart{TextPart{Text: "U"}}},
+			},
+			nil,
+			2,
+			1,
+		},
+		{
+			"all system then history",
+			[]ChatMessage{{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}}},
+			[]ChatMessage{{Role: "user", Content: []ContentPart{TextPart{Text: "H"}}}},
+			2,
+			1,
+		},
+		{
+			"system then user then history",
+			[]ChatMessage{
+				{Role: "system", Content: []ContentPart{TextPart{Text: "S"}}},
+				{Role: "user", Content: []ContentPart{TextPart{Text: "U"}}},
+			},
+			[]ChatMessage{{Role: "assistant", Content: []ContentPart{TextPart{Text: "A"}}}},
+			3,
+			1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

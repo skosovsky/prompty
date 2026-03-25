@@ -15,9 +15,12 @@ func TextFromParts(parts []ContentPart) string {
 
 // Usage contains token statistics for the model response.
 type Usage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
+	PromptTokens              int
+	CompletionTokens          int
+	TotalTokens               int
+	PromptTokensCached        int
+	PromptTokensCacheCreation int
+	CompletionTokensReasoning int
 }
 
 // Response is the canonical full model response for sync calls.

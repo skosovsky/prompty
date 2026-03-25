@@ -23,6 +23,97 @@ func (m *mockCounter) Count(text string) (int, error) {
 	return len(text) / 4, nil
 }
 
+func (m *mockCounter) CountMessage(msg prompty.ChatMessage) (int, error) {
+	return countMessageTokens(msg, m)
+}
+
+func countMessageTokens(msg prompty.ChatMessage, counter *mockCounter) (int, error) {
+	return countPartsTokens(msg.Content, counter)
+}
+
+func countPartsTokens(parts []prompty.ContentPart, counter *mockCounter) (int, error) {
+	total := 0
+	for _, part := range parts {
+		switch x := part.(type) {
+		case prompty.TextPart:
+			n, err := counter.Count(x.Text)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case prompty.ReasoningPart:
+			n, err := counter.Count(x.Text)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case prompty.ToolCallPart:
+			args := x.Args
+			if args == "" {
+				args = x.ArgsChunk
+			}
+			n, err := counter.Count(args)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case prompty.ToolResultPart:
+			n, err := countPartsTokens(x.Content, counter)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case prompty.MediaPart:
+			total += 256
+		case *prompty.TextPart:
+			if x == nil {
+				continue
+			}
+			n, err := counter.Count(x.Text)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case *prompty.ReasoningPart:
+			if x == nil {
+				continue
+			}
+			n, err := counter.Count(x.Text)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case *prompty.ToolCallPart:
+			if x == nil {
+				continue
+			}
+			args := x.Args
+			if args == "" {
+				args = x.ArgsChunk
+			}
+			n, err := counter.Count(args)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case *prompty.ToolResultPart:
+			if x == nil {
+				continue
+			}
+			n, err := countPartsTokens(x.Content, counter)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		case *prompty.MediaPart:
+			if x != nil {
+				total += 256
+			}
+		}
+	}
+	return total, nil
+}
+
 func TestWithTokenBudget_TrimsWhenOverLimit(t *testing.T) {
 	t.Parallel()
 	callCount := 0
@@ -139,7 +230,11 @@ func TestWithTokenBudget_KeepsToolWithAssistant(t *testing.T) {
 				prompty.ToolCallPart{ID: "c1", Name: "f", Args: "{}"},
 			}},
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "c1", Name: "f", Content: []prompty.ContentPart{prompty.TextPart{Text: "r1"}}},
+				prompty.ToolResultPart{
+					ToolCallID: "c1",
+					Name:       "f",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "r1"}},
+				},
 			}},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u2"}}},
 		},
@@ -159,10 +254,16 @@ func TestWithTokenBudget_PropagatesCounterError(t *testing.T) {
 	countErr := errors.New("counter error")
 	counter := &mockCounter{count: func(string) (int, error) { return 0, countErr }}
 	mw := WithTokenBudget(10, counter)
-	inv := mw(&invokerFunc{generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) { return nil, nil }})
+	inv := mw(
+		&invokerFunc{
+			generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) { return nil, nil },
+		},
+	)
 
 	_, err := inv.Generate(context.Background(), &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "x"}}}},
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "x"}}},
+		},
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, countErr)
@@ -198,7 +299,11 @@ func TestWithTokenBudget_ToolHeavyTurn_CountsArgsAndResult(t *testing.T) {
 				prompty.ToolCallPart{ID: "c1", Name: "f", Args: `{"x":"long_args"}`},
 			}},
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "c1", Name: "f", Content: []prompty.ContentPart{prompty.TextPart{Text: "long_result"}}},
+				prompty.ToolResultPart{
+					ToolCallID: "c1",
+					Name:       "f",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "long_result"}},
+				},
 			}},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u2"}}},
 		},
@@ -371,7 +476,10 @@ func (i *invokerFunc) Generate(ctx context.Context, exec *prompty.PromptExecutio
 	return i.generate(ctx, exec)
 }
 
-func (i *invokerFunc) GenerateStream(ctx context.Context, exec *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+func (i *invokerFunc) GenerateStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
 		resp, err := i.generate(ctx, exec)
 		if err != nil {

@@ -2,7 +2,7 @@ package prompty
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
 // Option configures a PromptExecution for convenience helpers.
@@ -34,7 +34,7 @@ func SimplePrompt(user string) *PromptExecution {
 // For production, use prompty-gen and typed facade executions to maintain observability.
 func GenerateText(ctx context.Context, invoker Invoker, prompt string, opts ...Option) (string, error) {
 	if invoker == nil {
-		return "", fmt.Errorf("generate text: invoker is nil")
+		return "", errors.New("generate text: invoker is nil")
 	}
 
 	exec := NewExecution([]ChatMessage{NewUserMessage(prompt)})
@@ -49,7 +49,7 @@ func GenerateText(ctx context.Context, invoker Invoker, prompt string, opts ...O
 		return "", err
 	}
 	if resp == nil {
-		return "", fmt.Errorf("generate text: nil response")
+		return "", errors.New("generate text: nil response")
 	}
 	return resp.Text(), nil
 }
@@ -72,7 +72,7 @@ func GenerateStructured[T any](ctx context.Context, invoker Invoker, prompt stri
 	var zero T
 
 	if invoker == nil {
-		return zero, fmt.Errorf("generate structured: invoker is nil")
+		return zero, errors.New("generate structured: invoker is nil")
 	}
 
 	cfg := generateStructuredConfig{}
@@ -90,7 +90,7 @@ func GenerateStructured[T any](ctx context.Context, invoker Invoker, prompt stri
 		return zero, err
 	}
 	if result == nil {
-		return zero, fmt.Errorf("generate structured: nil result")
+		return zero, errors.New("generate structured: nil result")
 	}
 	return *result, nil
 }

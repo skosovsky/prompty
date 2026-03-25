@@ -7,11 +7,12 @@ import (
 	"iter"
 	"time"
 
-	"github.com/skosovsky/prompty"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/prompty"
 )
 
 const tracerName = "github.com/skosovsky/prompty/ext/otelprompty"
@@ -72,9 +73,12 @@ func (t *tracingInvoker) Generate(ctx context.Context, exec *prompty.PromptExecu
 	return resp, nil
 }
 
-func (t *tracingInvoker) GenerateStream(ctx context.Context, exec *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+func (t *tracingInvoker) GenerateStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		ctx, span := t.tracer.Start(ctx, "prompty.GenerateStream")
+		streamCtx, span := t.tracer.Start(ctx, "prompty.GenerateStream")
 		defer span.End()
 		attrs := execAttrs(exec)
 		span.SetAttributes(attrs...)
@@ -90,7 +94,7 @@ func (t *tracingInvoker) GenerateStream(ctx context.Context, exec *prompty.Promp
 				span.SetAttributes(attribute.String("prompty.finish_reason", finishReason))
 			}
 		}()
-		seq := t.next.GenerateStream(ctx, exec)
+		seq := t.next.GenerateStream(streamCtx, exec)
 		for chunk, err := range seq {
 			if err != nil {
 				span.RecordError(err)
@@ -118,10 +122,8 @@ func execAttrs(exec *prompty.PromptExecution) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String("prompty.prompt_id", exec.Metadata.ID),
 	}
-	if exec.ModelConfig != nil {
-		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			attrs = append(attrs, attribute.String("prompty.model", m))
-		}
+	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
+		attrs = append(attrs, attribute.String("prompty.model", exec.ModelOptions.Model))
 	}
 	return attrs
 }

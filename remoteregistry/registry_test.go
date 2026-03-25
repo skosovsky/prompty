@@ -91,7 +91,12 @@ func TestRegistry_GetTemplate_EnvFallbackBaseAndStaging(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "Staging", tpl.Messages[0].Content[0].Text, "env variant env_test.staging should be preferred over base")
+	assert.Equal(
+		t,
+		"Staging",
+		tpl.Messages[0].Content[0].Text,
+		"env variant env_test.staging should be preferred over base",
+	)
 }
 
 func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {

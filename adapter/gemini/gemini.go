@@ -30,12 +30,12 @@ type Adapter struct {
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
-// WithModel sets the default model used when exec.ModelConfig does not contain "model".
+// WithModel sets the default model used when exec.ModelOptions does not contain Model.
 func WithModel(m string) Option {
 	return func(a *Adapter) { a.defaultModel = m }
 }
 
-// WithClient injects the genai client for Execute. Required for Execute/LLMClient flow.
+// WithClient injects the genai client for Execute. Required for Execute/Invoker flow.
 func WithClient(c *genai.Client) Option {
 	return func(a *Adapter) { a.client = c }
 }
@@ -50,32 +50,30 @@ func New(opts ...Option) *Adapter {
 }
 
 // Translate converts PromptExecution into *Request (Contents + Config).
-func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) (*Request, error) {
+func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	_ = ctx
 	config := &genai.GenerateContentConfig{}
-	// Model is set on the genai client, not in Config; we do not read "model" from ModelConfig.
-	if exec.ModelConfig != nil {
-		mp := adapter.ExtractModelConfig(exec.ModelConfig)
-		if mp.Temperature != nil {
-			t := float32(*mp.Temperature)
+	// Model is set on the genai request, not inside Config.
+	if exec.ModelOptions != nil {
+		if exec.ModelOptions.Temperature != nil {
+			t := float32(*exec.ModelOptions.Temperature)
 			config.Temperature = &t
 		}
-		if mp.MaxTokens != nil {
-			if *mp.MaxTokens > math.MaxInt32 {
+		if exec.ModelOptions.MaxTokens != nil {
+			if *exec.ModelOptions.MaxTokens > math.MaxInt32 {
 				config.MaxOutputTokens = math.MaxInt32
 			} else {
-				config.MaxOutputTokens = int32(*mp.MaxTokens)
+				config.MaxOutputTokens = int32(*exec.ModelOptions.MaxTokens)
 			}
 		}
-		if mp.TopP != nil {
-			p := float32(*mp.TopP)
+		if exec.ModelOptions.TopP != nil {
+			p := float32(*exec.ModelOptions.TopP)
 			config.TopP = &p
 		}
-		if len(mp.Stop) > 0 {
-			config.StopSequences = mp.Stop
+		if len(exec.ModelOptions.Stop) > 0 {
+			config.StopSequences = exec.ModelOptions.Stop
 		}
 	}
 	var systemParts []string
@@ -152,10 +150,8 @@ func (a *Adapter) Translate(ctx context.Context, exec *prompty.PromptExecution) 
 		}
 	}
 	model := a.defaultModel
-	if exec.ModelConfig != nil {
-		if m, ok := exec.ModelConfig["model"].(string); ok && m != "" {
-			model = m
-		}
+	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
+		model = exec.ModelOptions.Model
 	}
 	return &Request{Model: model, Contents: contents, Config: config}, nil
 }
@@ -252,8 +248,7 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 }
 
 // ParseResponse converts *genai.GenerateContentResponse into *prompty.Response.
-func (a *Adapter) ParseResponse(ctx context.Context, resp *genai.GenerateContentResponse) (*prompty.Response, error) {
-	_ = ctx
+func (a *Adapter) ParseResponse(resp *genai.GenerateContentResponse) (*prompty.Response, error) {
 	if resp == nil {
 		return nil, adapter.ErrInvalidResponse
 	}

@@ -35,7 +35,7 @@ func ToFloat64(v any) (float64, bool) {
 	}
 }
 
-// ToInt64 converts a numeric value to int64. Clamps uint64/uint to math.MaxInt64 when out of range.
+// ToInt64 converts a numeric value to int64. Clamps uint64/uint to [math.MaxInt64] when out of range.
 func ToInt64(v any) (int64, bool) {
 	switch x := v.(type) {
 	case int64:

@@ -1,48 +1,86 @@
 package prompty
 
+import "reflect"
+
 const defaultMediaTokenPenalty = 256
 
-type mediaPenaltyProvider interface {
-	MediaTokenPenalty() int
-}
-
 type truncateConfig struct {
-	maxTokens    int
-	counter      TokenCounter
-	mediaPenalty int
+	maxTokens int
+	counter   TokenCounter
 }
 
-// Truncate trims the execution history in place until it fits the requested token budget.
-func (e *PromptExecution) Truncate(maxTokens int, counter TokenCounter) error {
-	if e == nil || maxTokens <= 0 || counter == nil {
-		return nil
-	}
+// TruncationStrategy trims a message history to fit a token budget.
+// Implementations should return messages detached from the input slice and its nested mutable content.
+type TruncationStrategy interface {
+	Truncate(messages []ChatMessage, maxTokens int, counter TokenCounter) ([]ChatMessage, error)
+}
 
-	trimmed, err := truncateMessages(e.Messages, &truncateConfig{
-		maxTokens:    maxTokens,
-		counter:      counter,
-		mediaPenalty: mediaPenaltyFromCounter(counter),
-	})
+// DropOldestStrategy removes the oldest removable turns until the history fits the budget.
+type DropOldestStrategy struct{}
+
+// Truncated returns a new execution trimmed to fit the requested token budget.
+func (e *PromptExecution) Truncated(
+	maxTokens int,
+	counter TokenCounter,
+	strategy TruncationStrategy,
+) (*PromptExecution, error) {
+	if e == nil {
+		return nil, nil
+	}
+	if maxTokens <= 0 || counter == nil {
+		return e.Clone(), nil
+	}
+	strategy = normalizeTruncationStrategy(strategy)
+	newMessages, err := strategy.Truncate(e.Messages, maxTokens, counter)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	e.Messages = trimmed
-	return nil
+	if !ownsTruncationResult(strategy) {
+		newMessages = cloneMessages(newMessages)
+	}
+	return cloneExecutionWithMessages(e, newMessages), nil
 }
 
-func mediaPenaltyFromCounter(counter TokenCounter) int {
-	if counter == nil {
-		return defaultMediaTokenPenalty
+// Truncate trims messages to fit maxTokens while preserving protected system/tool invariants.
+func (DropOldestStrategy) Truncate(messages []ChatMessage, maxTokens int, counter TokenCounter) ([]ChatMessage, error) {
+	return truncateMessages(messages, &truncateConfig{
+		maxTokens: maxTokens,
+		counter:   counter,
+	})
+}
+
+func normalizeTruncationStrategy(strategy TruncationStrategy) TruncationStrategy {
+	if isNilTruncationStrategy(strategy) {
+		return DropOldestStrategy{}
 	}
-	if provider, ok := counter.(mediaPenaltyProvider); ok {
-		return provider.MediaTokenPenalty()
+	return strategy
+}
+
+func isNilTruncationStrategy(strategy TruncationStrategy) bool {
+	if strategy == nil {
+		return true
 	}
-	return defaultMediaTokenPenalty
+	value := reflect.ValueOf(strategy)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func ownsTruncationResult(strategy TruncationStrategy) bool {
+	switch strategy.(type) {
+	case DropOldestStrategy, *DropOldestStrategy:
+		return true
+	default:
+		return false
+	}
 }
 
 func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessage, error) {
 	if cfg == nil || cfg.maxTokens <= 0 || cfg.counter == nil {
-		return messages, nil
+		return cloneMessages(messages), nil
 	}
 
 	total, err := countMessagesTokens(messages, cfg)
@@ -50,7 +88,7 @@ func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessag
 		return nil, err
 	}
 	if total <= cfg.maxTokens {
-		return messages, nil
+		return cloneMessages(messages), nil
 	}
 
 	blocks, err := removableBlocks(messages, cfg)
@@ -58,7 +96,7 @@ func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessag
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return messages, nil
+		return cloneMessages(messages), nil
 	}
 
 	removed := make([]bool, len(messages))
@@ -75,7 +113,7 @@ func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessag
 	}
 
 	if !removedAny {
-		return messages, nil
+		return cloneMessages(messages), nil
 	}
 
 	trimmed := make([]ChatMessage, 0, len(messages))
@@ -83,7 +121,7 @@ func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessag
 		if removed[i] {
 			continue
 		}
-		trimmed = append(trimmed, message)
+		trimmed = append(trimmed, cloneChatMessage(message))
 	}
 	return trimmed, nil
 }
@@ -189,84 +227,7 @@ func countMessageTokens(message *ChatMessage, cfg *truncateConfig) (int, error) 
 	if cfg == nil || message == nil {
 		return 0, nil
 	}
-	return countContentPartsTokens(message.Content, cfg)
-}
-
-func countContentPartsTokens(parts []ContentPart, cfg *truncateConfig) (int, error) {
-	total := 0
-	for _, part := range parts {
-		switch x := part.(type) {
-		case TextPart:
-			n, err := countIfNonEmpty(cfg.counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *TextPart:
-			if x == nil {
-				continue
-			}
-			n, err := countIfNonEmpty(cfg.counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ReasoningPart:
-			n, err := countIfNonEmpty(cfg.counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ReasoningPart:
-			if x == nil {
-				continue
-			}
-			n, err := countIfNonEmpty(cfg.counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ToolCallPart:
-			n, err := countIfNonEmpty(cfg.counter, toolCallArgsText(x))
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ToolCallPart:
-			if x == nil {
-				continue
-			}
-			n, err := countIfNonEmpty(cfg.counter, toolCallArgsText(*x))
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ToolResultPart:
-			n, err := countContentPartsTokens(x.Content, cfg)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ToolResultPart:
-			if x == nil {
-				continue
-			}
-			n, err := countContentPartsTokens(x.Content, cfg)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case MediaPart:
-			if cfg.mediaPenalty > 0 {
-				total += cfg.mediaPenalty
-			}
-		case *MediaPart:
-			if x != nil && cfg.mediaPenalty > 0 {
-				total += cfg.mediaPenalty
-			}
-		}
-	}
-	return total, nil
+	return cfg.counter.CountMessage(*message)
 }
 
 func toolCallArgsText(part ToolCallPart) string {
@@ -274,11 +235,4 @@ func toolCallArgsText(part ToolCallPart) string {
 		return part.Args
 	}
 	return part.ArgsChunk
-}
-
-func countIfNonEmpty(counter TokenCounter, text string) (int, error) {
-	if text == "" || counter == nil {
-		return 0, nil
-	}
-	return counter.Count(text)
 }

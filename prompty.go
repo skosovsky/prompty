@@ -3,8 +3,8 @@ package prompty
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
+	"reflect"
+	"strings"
 	"time"
 )
 
@@ -37,7 +37,7 @@ type TextPart struct {
 func (TextPart) isContentPart() {}
 
 // MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
-// Adapters that do not accept URL natively may download the URL in Translate(ctx) and send inline data.
+// Adapters that do not accept URL natively may require callers to resolve URLs into inline data first.
 type MediaPart struct {
 	MediaType string // "image", "audio", "video", "document"
 	MIMEType  string // e.g. "application/pdf", "image/jpeg"
@@ -88,16 +88,16 @@ type ChatMessage struct {
 // ToolDefinition is the universal tool schema.
 // JSON tags are required for template functions (e.g. render_tools_as_json) that marshal tools.
 type ToolDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters,omitempty"` // JSON Schema for parameters
+	Name        string         `json:"name"                 yaml:"name"`
+	Description string         `json:"description"          yaml:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
 }
 
 // SchemaDefinition describes a structured output (JSON Schema) for response format.
 type SchemaDefinition struct {
-	Name        string         `json:"name,omitempty" yaml:"name,omitempty"`
+	Name        string         `json:"name,omitempty"        yaml:"name,omitempty"`
 	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Schema      map[string]any `json:"schema" yaml:"schema"` // JSON Schema
+	Schema      map[string]any `json:"schema"                yaml:"schema"` // JSON Schema
 }
 
 // PromptMetadata holds observability metadata (v2.0 DTO).
@@ -112,11 +112,22 @@ type PromptMetadata struct {
 	Extras      map[string]any `json:"extras,omitempty"`
 }
 
+// ModelOptions holds typed, cross-provider model settings for one template/execution.
+// ProviderSettings preserves provider-specific manifest keys without requiring generic SDK mapping.
+type ModelOptions struct {
+	Model            string         `json:"model,omitempty"             yaml:"model,omitempty"`
+	Temperature      *float64       `json:"temperature,omitempty"       yaml:"temperature,omitempty"`
+	MaxTokens        *int64         `json:"max_tokens,omitempty"        yaml:"max_tokens,omitempty"`
+	TopP             *float64       `json:"top_p,omitempty"             yaml:"top_p,omitempty"`
+	Stop             []string       `json:"stop,omitempty"              yaml:"stop,omitempty"`
+	ProviderSettings map[string]any `json:"provider_settings,omitempty" yaml:"provider_settings,omitempty"`
+}
+
 // PromptExecution is the result of formatting a template; immutable after creation.
 type PromptExecution struct {
 	Messages       []ChatMessage
 	Tools          []ToolDefinition
-	ModelConfig    map[string]any
+	ModelOptions   *ModelOptions
 	Metadata       PromptMetadata
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
 }
@@ -124,20 +135,26 @@ type PromptExecution struct {
 // NewExecution creates a new prompt execution from a set of messages.
 func NewExecution(messages []ChatMessage) *PromptExecution {
 	return &PromptExecution{
-		Messages: slices.Clone(messages),
+		Messages: cloneMessages(messages),
 	}
 }
 
-// WithHistory appends history messages after system/developer block. Clones Messages before append; returns e for chaining.
+// WithHistory returns a new execution with cloned history messages appended.
 func (e *PromptExecution) WithHistory(history []ChatMessage) *PromptExecution {
-	e.Messages = append(slices.Clone(e.Messages), history...)
-	return e
+	if e == nil {
+		return nil
+	}
+	messages := append(cloneMessages(e.Messages), cloneMessages(history)...)
+	return cloneExecutionWithMessages(e, messages)
 }
 
-// AddMessage appends one message. Clones Messages before append; returns e for chaining.
+// AddMessage returns a new execution with one cloned message appended.
 func (e *PromptExecution) AddMessage(msg ChatMessage) *PromptExecution {
-	e.Messages = append(slices.Clone(e.Messages), msg)
-	return e
+	if e == nil {
+		return nil
+	}
+	messages := append(cloneMessages(e.Messages), cloneChatMessage(msg))
+	return cloneExecutionWithMessages(e, messages)
 }
 
 // Normalize returns a new PromptExecution with consecutive system/developer messages merged into one.
@@ -151,30 +168,23 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 	for i := 0; i < len(e.Messages); i++ {
 		cur := e.Messages[i]
 		if cur.Role != RoleSystem && cur.Role != RoleDeveloper {
-			out = append(out, cur)
+			out = append(out, cloneChatMessage(cur))
 			continue
 		}
 		// Merge all consecutive system/developer messages into one.
-		merged := cur
+		merged := cloneChatMessage(cur)
 		for j := i + 1; j < len(e.Messages) && (e.Messages[j].Role == RoleSystem || e.Messages[j].Role == RoleDeveloper); j++ {
 			merged = mergeSystemMessages(merged, e.Messages[j])
 			i = j
 		}
 		out = append(out, merged)
 	}
-	meta := e.Metadata
-	if meta.Tags != nil {
-		meta.Tags = slices.Clone(meta.Tags)
-	}
-	if meta.Extras != nil {
-		meta.Extras = maps.Clone(meta.Extras)
-	}
 	return &PromptExecution{
 		Messages:       out,
-		Tools:          e.Tools,
-		ModelConfig:    e.ModelConfig,
-		Metadata:       meta,
-		ResponseFormat: e.ResponseFormat,
+		Tools:          cloneToolDefinitions(e.Tools),
+		ModelOptions:   cloneModelOptions(e.ModelOptions),
+		Metadata:       clonePromptMetadata(e.Metadata),
+		ResponseFormat: cloneSchemaDefinition(e.ResponseFormat),
 	}
 }
 
@@ -182,32 +192,32 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 	texts := textFromParts(a.Content)
 	texts = append(texts, textFromParts(b.Content)...)
-	mergedText := ""
+	var mergedText strings.Builder
 	for i, t := range texts {
 		if i > 0 {
-			mergedText += "\n\n"
+			mergedText.WriteString("\n\n")
 		}
-		mergedText += t
+		mergedText.WriteString(t)
 	}
 	content := make([]ContentPart, 0, 1+len(a.Content)+len(b.Content))
-	if mergedText != "" {
-		content = append(content, TextPart{Text: mergedText})
+	if mergedText.String() != "" {
+		content = append(content, TextPart{Text: mergedText.String()})
 	}
 	for _, p := range a.Content {
 		if _, ok := p.(TextPart); !ok {
-			content = append(content, p)
+			content = append(content, cloneContentPart(p))
 		}
 	}
 	for _, p := range b.Content {
 		if _, ok := p.(TextPart); !ok {
-			content = append(content, p)
+			content = append(content, cloneContentPart(p))
 		}
 	}
 	return ChatMessage{
 		Role:       a.Role,
 		Content:    content,
 		CachePoint: a.CachePoint || b.CachePoint,
-		Metadata:   a.Metadata,
+		Metadata:   cloneMapAny(a.Metadata),
 	}
 }
 
@@ -226,10 +236,14 @@ type Fetcher interface {
 	Fetch(ctx context.Context, url string) (data []byte, mimeType string, err error)
 }
 
-// ResolveMedia fills Data and MIMEType for all MediaParts that have a URL but no Data, using the provided Fetcher.
+// ResolvedMedia returns a cloned execution where MediaParts with URL and empty Data are fetched via Fetcher.
 // Only "image" media type is supported; other types with URL and empty Data return an error (fail-fast).
-func (e *PromptExecution) ResolveMedia(ctx context.Context, fetcher Fetcher) error {
-	for i, msg := range e.Messages {
+func (e *PromptExecution) ResolvedMedia(ctx context.Context, fetcher Fetcher) (*PromptExecution, error) {
+	if e == nil {
+		return nil, nil
+	}
+	out := e.Clone()
+	for i, msg := range out.Messages {
 		for j, part := range msg.Content {
 			mp, ok := part.(MediaPart)
 			if !ok {
@@ -239,18 +253,38 @@ func (e *PromptExecution) ResolveMedia(ctx context.Context, fetcher Fetcher) err
 				continue
 			}
 			if mp.MediaType != "image" {
-				return fmt.Errorf("resolve media %s: currently only 'image' media type is supported for downloading, got %q", mp.URL, mp.MediaType)
+				return nil, fmt.Errorf(
+					"resolve media %s: currently only 'image' media type is supported for downloading, got %q",
+					mp.URL,
+					mp.MediaType,
+				)
+			}
+			if isNilFetcher(fetcher) {
+				return nil, fmt.Errorf("resolve media %s: %w", mp.URL, ErrNoFetcher)
 			}
 			data, contentType, err := fetcher.Fetch(ctx, mp.URL)
 			if err != nil {
-				return fmt.Errorf("resolve media %s: %w", mp.URL, err)
+				return nil, fmt.Errorf("resolve media %s: %w", mp.URL, err)
 			}
 			mp.Data = data
 			mp.MIMEType = contentType
-			e.Messages[i].Content[j] = mp
+			out.Messages[i].Content[j] = mp
 		}
 	}
-	return nil
+	return out, nil
+}
+
+func isNilFetcher(fetcher Fetcher) bool {
+	if fetcher == nil {
+		return true
+	}
+	value := reflect.ValueOf(fetcher)
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 // NewSystemMessage creates a single system message with text content.
@@ -355,6 +389,3 @@ type Lister interface {
 type Statter interface {
 	Stat(ctx context.Context, id string) (TemplateInfo, error)
 }
-
-// PromptRegistry is an alias for Registry for backward compatibility; prefer Registry.
-type PromptRegistry = Registry

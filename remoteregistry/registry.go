@@ -145,7 +145,11 @@ func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.Cha
 		}
 		tpl.Metadata.Environment = ""
 		if statter, ok := r.fetcher.(Statter); ok {
-			if info, statErr := statter.Stat(fetchCtx, id); statErr == nil && info.Version != "" && tpl.Metadata.Version == "" {
+			if info, statErr := statter.Stat(
+				fetchCtx,
+				id,
+			); statErr == nil && info.Version != "" &&
+				tpl.Metadata.Version == "" {
 				tpl.Metadata.Version = info.Version
 			}
 		}
@@ -154,7 +158,10 @@ func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.Cha
 	if err != nil {
 		return nil, err
 	}
-	tpl := v.(*prompty.ChatPromptTemplate)
+	tpl, tplOK := v.(*prompty.ChatPromptTemplate)
+	if !tplOK || tpl == nil {
+		return nil, fmt.Errorf("remoteregistry: unexpected value from singleflight: %T", v)
+	}
 
 	r.mu.Lock()
 	now = time.Now()

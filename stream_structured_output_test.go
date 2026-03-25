@@ -36,7 +36,9 @@ func TestStreamStructuredOutput_Object(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, "ok", items[0].Answer)
@@ -66,7 +68,9 @@ func TestStreamStructuredOutput_ArrayAcrossChunks(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.NoError(t, err)
 	require.Len(t, items, 2)
 	assert.Equal(t, "a", items[0].Answer)
@@ -89,7 +93,9 @@ func TestStreamStructuredOutput_EscapedQuotesAndBracesInsideStrings(t *testing.T
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, `He said: "Hello, {world}"`, items[0].Answer)
@@ -114,7 +120,9 @@ func TestStreamStructuredOutput_MarkdownFencedJSON(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, "ok", items[0].Answer)
@@ -134,7 +142,9 @@ func TestStreamStructuredOutput_IncompleteJSONIncludesPreview(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.Error(t, err)
 	assert.Empty(t, items)
 	assert.Contains(t, err.Error(), "incomplete JSON")
@@ -162,7 +172,9 @@ func TestStreamStructuredOutput_ObjectTooLarge(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.Error(t, err)
 	assert.Empty(t, items)
 	assert.Contains(t, err.Error(), "stream object too large")
@@ -183,7 +195,9 @@ func TestStreamStructuredOutput_ArrayOfPrimitivesUnsupported(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")))
+	items, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.Error(t, err)
 	assert.Empty(t, items)
 	assert.Contains(t, err.Error(), "unsupported non-object item")
@@ -210,7 +224,9 @@ func TestStreamStructuredOutput_SemanticValidationCancelsContext(t *testing.T) {
 		},
 	}
 
-	_, err := collectSeq(StreamStructuredOutput[validatedStreamResult](context.Background(), invoker, SimplePrompt("hi")))
+	_, err := collectSeq(
+		StreamStructuredOutput[validatedStreamResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "semantic validation failed")
 	select {

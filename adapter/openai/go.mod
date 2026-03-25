@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/adapter/openai
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/openai/openai-go/v3 v3.24.0

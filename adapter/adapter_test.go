@@ -49,102 +49,18 @@ func TestTextFromParts(t *testing.T) {
 	}
 }
 
-func TestExtractModelConfig(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		cfg   map[string]any
-		check func(t *testing.T, mp ModelParams)
-	}{
-		{"nil map", nil, func(t *testing.T, mp ModelParams) {
-			assert.Nil(t, mp.Temperature)
-			assert.Nil(t, mp.MaxTokens)
-			assert.Nil(t, mp.TopP)
-			assert.Nil(t, mp.Stop)
-		}},
-		{"empty map", map[string]any{}, func(t *testing.T, mp ModelParams) {
-			assert.Nil(t, mp.Temperature)
-			assert.Nil(t, mp.MaxTokens)
-			assert.Nil(t, mp.TopP)
-			assert.Nil(t, mp.Stop)
-		}},
-		{"temperature float64", map[string]any{"temperature": 0.7}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.Temperature)
-			assert.InDelta(t, 0.7, *mp.Temperature, 1e-9)
-		}},
-		{"temperature float32", map[string]any{"temperature": float32(0.5)}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.Temperature)
-			assert.InDelta(t, 0.5, *mp.Temperature, 1e-9)
-		}},
-		{"temperature int", map[string]any{"temperature": 1}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.Temperature)
-			assert.InDelta(t, float64(1), *mp.Temperature, 1e-9)
-		}},
-		{"max_tokens int64", map[string]any{"max_tokens": int64(100)}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.MaxTokens)
-			assert.Equal(t, int64(100), *mp.MaxTokens)
-		}},
-		{"max_tokens int", map[string]any{"max_tokens": 200}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.MaxTokens)
-			assert.Equal(t, int64(200), *mp.MaxTokens)
-		}},
-		{"max_tokens float64", map[string]any{"max_tokens": float64(300)}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.MaxTokens)
-			assert.Equal(t, int64(300), *mp.MaxTokens)
-		}},
-		{"top_p", map[string]any{"top_p": 0.9}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.TopP)
-			assert.InDelta(t, 0.9, *mp.TopP, 1e-9)
-		}},
-		{"stop []string", map[string]any{"stop": []string{"A", "B"}}, func(t *testing.T, mp ModelParams) {
-			assert.Equal(t, []string{"A", "B"}, mp.Stop)
-		}},
-		{"stop []any strings", map[string]any{"stop": []any{"x", "y"}}, func(t *testing.T, mp ModelParams) {
-			assert.Equal(t, []string{"x", "y"}, mp.Stop)
-		}},
-		{"all keys", map[string]any{
-			"temperature": 0.5,
-			"max_tokens":  int64(50),
-			"top_p":       0.95,
-			"stop":        []string{"END"},
-		}, func(t *testing.T, mp ModelParams) {
-			require.NotNil(t, mp.Temperature)
-			assert.InDelta(t, 0.5, *mp.Temperature, 1e-9)
-			require.NotNil(t, mp.MaxTokens)
-			assert.Equal(t, int64(50), *mp.MaxTokens)
-			require.NotNil(t, mp.TopP)
-			assert.InDelta(t, 0.95, *mp.TopP, 1e-9)
-			assert.Equal(t, []string{"END"}, mp.Stop)
-		}},
-		{"unknown key ignored", map[string]any{"model": "gpt-4", "foo": 1}, func(t *testing.T, mp ModelParams) {
-			assert.Nil(t, mp.Temperature)
-			assert.Nil(t, mp.MaxTokens)
-		}},
-		{"temperature invalid type", map[string]any{"temperature": "high"}, func(t *testing.T, mp ModelParams) {
-			assert.Nil(t, mp.Temperature)
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := ExtractModelConfig(tt.cfg)
-			tt.check(t, got)
-		})
-	}
-}
-
 func TestNewClient_Generate(t *testing.T) {
 	t.Parallel()
 	type mockReq struct{ text string }
 	type mockResp struct{ text string }
 	mock := &mockAdapter[mockReq, mockResp]{
-		translate: func(_ context.Context, _ *prompty.PromptExecution) (mockReq, error) {
+		translate: func(_ *prompty.PromptExecution) (mockReq, error) {
 			return mockReq{text: "req"}, nil
 		},
 		execute: func(_ context.Context, req mockReq) (mockResp, error) {
 			return mockResp{text: "resp-" + req.text}, nil
 		},
-		parseResponse: func(_ context.Context, raw mockResp) (*prompty.Response, error) {
+		parseResponse: func(raw mockResp) (*prompty.Response, error) {
 			return &prompty.Response{
 				Content: []prompty.ContentPart{prompty.TextPart{Text: raw.text}},
 			}, nil
@@ -167,13 +83,13 @@ func TestNewClient_GenerateStream_Polyfill(t *testing.T) {
 	type mockReq struct{}
 	type mockResp struct{}
 	mock := &mockAdapter[mockReq, mockResp]{
-		translate: func(_ context.Context, _ *prompty.PromptExecution) (mockReq, error) {
+		translate: func(_ *prompty.PromptExecution) (mockReq, error) {
 			return mockReq{}, nil
 		},
 		execute: func(_ context.Context, _ mockReq) (mockResp, error) {
 			return mockResp{}, nil
 		},
-		parseResponse: func(_ context.Context, _ mockResp) (*prompty.Response, error) {
+		parseResponse: func(_ mockResp) (*prompty.Response, error) {
 			return &prompty.Response{
 				Content: []prompty.ContentPart{prompty.TextPart{Text: "chunk"}},
 			}, nil
@@ -197,19 +113,17 @@ func TestNewClient_GenerateStream_Polyfill(t *testing.T) {
 }
 
 type mockAdapter[Req, Resp any] struct {
-	translate     func(context.Context, *prompty.PromptExecution) (Req, error)
+	translate     func(*prompty.PromptExecution) (Req, error)
 	execute       func(context.Context, Req) (Resp, error)
-	parseResponse func(context.Context, Resp) (*prompty.Response, error)
+	parseResponse func(Resp) (*prompty.Response, error)
 }
 
-func (m *mockAdapter[Req, Resp]) Translate(ctx context.Context, exec *prompty.PromptExecution) (Req, error) {
-	return m.translate(ctx, exec)
+func (m *mockAdapter[Req, Resp]) Translate(exec *prompty.PromptExecution) (Req, error) {
+	return m.translate(exec)
 }
 func (m *mockAdapter[Req, Resp]) Execute(ctx context.Context, req Req) (Resp, error) {
 	return m.execute(ctx, req)
 }
-func (m *mockAdapter[Req, Resp]) ParseResponse(ctx context.Context, raw Resp) (*prompty.Response, error) {
-	return m.parseResponse(ctx, raw)
+func (m *mockAdapter[Req, Resp]) ParseResponse(raw Resp) (*prompty.Response, error) {
+	return m.parseResponse(raw)
 }
-
-// Cast helpers are tested in internal/cast.

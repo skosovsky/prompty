@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -20,12 +21,12 @@ import (
 	"github.com/skosovsky/prompty/remoteregistry/git"
 )
 
-func setupTempRepo() (string, error) {
+func setupTempRepo(ctx context.Context) (string, error) {
 	dir, err := os.MkdirTemp("", "prompty-git-prompts-*")
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	// Temp dir is left on disk for the lifetime of the process so file:// URLs remain valid.
 	manifest := []byte(`id: demo
 version: "1"
 messages:
@@ -34,24 +35,31 @@ messages:
   - role: user
     content: "{{ .question }}"
 `)
-	if err := os.WriteFile(filepath.Join(dir, "demo.yaml"), manifest, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "demo.yaml"), manifest, 0600); err != nil {
 		return "", fmt.Errorf("WriteFile: %w", err)
 	}
 	for _, c := range []string{"git init", "git branch -M main", "git add .", "git commit -m init"} {
-		cmd := exec.Command("sh", "-c", c)
+		cmd := exec.CommandContext(ctx, "sh", "-c", c)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+		cmd.Env = append(
+			os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test",
+		)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("%s: %v %s", c, err, out)
+			return "", fmt.Errorf("%s: %w %s", c, err, out)
 		}
 	}
 	return "file://" + dir, nil
 }
 
 func run() error {
+	ctx := context.Background()
 	repoURL := os.Getenv("GIT_REPO_URL")
 	if repoURL == "" {
-		url, err := setupTempRepo()
+		url, err := setupTempRepo(ctx)
 		if err != nil {
 			return fmt.Errorf("setupTempRepo: %w", err)
 		}
@@ -67,7 +75,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("remoteregistry.New: %w", err)
 	}
-	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "demo")
 	if err != nil {
 		return fmt.Errorf("GetTemplate: %w", err)
@@ -76,13 +83,13 @@ func run() error {
 		Topic    string `prompt:"topic"`
 		Question string `prompt:"question"`
 	}
-	exec, err := tpl.FormatStruct(ctx, &Payload{Topic: "math", Question: "What is 3+3?"})
+	exec, err := tpl.FormatStruct(&Payload{Topic: "math", Question: "What is 3+3?"})
 	if err != nil {
 		return fmt.Errorf("FormatStruct: %w", err)
 	}
 
 	if os.Getenv("GEMINI_API_KEY") == "" {
-		return fmt.Errorf("GEMINI_API_KEY is not set")
+		return errors.New("GEMINI_API_KEY is not set")
 	}
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: os.Getenv("GEMINI_API_KEY")})
 	if err != nil {

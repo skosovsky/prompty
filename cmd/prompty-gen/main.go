@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -64,7 +65,7 @@ func runGenerate(configPath string) error {
 		if !filepath.IsAbs(outDir) {
 			outDir = filepath.Join(configDir, outDir)
 		}
-		if err := os.MkdirAll(outDir, 0755); err != nil {
+		if err := os.MkdirAll(outDir, 0750); err != nil {
 			return fmt.Errorf("package %q mkdir: %w", pkg.Name, err)
 		}
 
@@ -83,7 +84,7 @@ func runGenerate(configPath string) error {
 
 // idFromRelativePath computes a fallback PromptID from file path relative to query bases.
 // Uses the longest matching base from queries; strips extension, returns slash format (canonical ID).
-// Example: base=prompts/, fpath=prompts/workers/image_analyze.yaml -> "workers/image_analyze"
+// Example: base=prompts/, fpath=prompts/workers/image_analyze.yaml -> "workers/image_analyze".
 func idFromRelativePath(fpath string, configDir string, queries []string) string {
 	fpath = filepath.Clean(fpath)
 	configDir = filepath.Clean(configDir)
@@ -140,7 +141,7 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 	if err := outFile.Save(outPath); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
-	fmt.Printf("Generated %s\n", outPath)
+	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	return nil
 }
 
@@ -177,7 +178,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 	if err := sharedFile.Save(sharedPath); err != nil {
 		return fmt.Errorf("write %s: %w", sharedPath, err)
 	}
-	fmt.Printf("Generated %s\n", sharedPath)
+	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", sharedPath)
 
 	// Per-manifest files: const, Input/Output, Render<Name>
 	for i, fpath := range files {
@@ -191,7 +192,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		if err := manifestFile.Save(outPath); err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
-		fmt.Printf("Generated %s\n", outPath)
+		_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	}
 	return nil
 }
@@ -219,7 +220,7 @@ func runList(configPath string) error {
 				fmt.Fprintf(os.Stderr, "  %s: %v\n", fpath, err)
 				continue
 			}
-			fmt.Printf("%s (id=%s)\n", fpath, spec.ID)
+			_, _ = fmt.Fprintf(os.Stdout, "%s (id=%s)\n", fpath, spec.ID)
 		}
 	}
 	return nil
@@ -233,30 +234,30 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 
 	var u manifest.Unmarshaler
 	switch strings.ToLower(filepath.Ext(fpath)) {
-	case ".yaml", ".yml":
+	case extYAML, extYML:
 		u = yaml.New()
-	case ".json":
+	case extJSON:
 		u = manifest.NewJSONParser()
 	default:
-		return nil, fmt.Errorf("unsupported manifest format")
+		return nil, errors.New("unsupported manifest format")
 	}
 
 	var raw manifest.RawManifest
-	if err := u.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%w", err)
+	if unmarshalErr := u.Unmarshal(data, &raw); unmarshalErr != nil {
+		return nil, fmt.Errorf("%w", unmarshalErr)
 	}
 	if raw.ID == "" {
 		raw.ID = idFromRelativePath(fpath, configDir, queries)
 		if raw.ID == "" {
-			return nil, fmt.Errorf("manifest has no id field and could not derive id from path")
+			return nil, errors.New("manifest has no id field and could not derive id from path")
 		}
 	}
 	// Clean Break v2.0: types mode requires messages and input_schema
 	if len(raw.Messages) == 0 {
-		return nil, fmt.Errorf("manifest missing messages block (v2.0 required)")
+		return nil, errors.New("manifest missing messages block (v2.0 required)")
 	}
 	if raw.InputSchema == nil {
-		return nil, fmt.Errorf("manifest missing input_schema block (v2.0 required)")
+		return nil, errors.New("manifest missing input_schema block (v2.0 required)")
 	}
 
 	tpl, err := manifest.BuildFromRaw(&raw, nil)
@@ -280,35 +281,35 @@ func loadManifestID(fpath string, configDir string, queries []string) (string, e
 		return "", err
 	}
 	var v2Check struct {
-		ID          string `yaml:"id" json:"id"`
-		Messages    []any  `yaml:"messages" json:"messages"`
-		InputSchema any    `yaml:"input_schema" json:"input_schema"`
+		ID          string `json:"id"           yaml:"id"`
+		Messages    []any  `json:"messages"     yaml:"messages"`
+		InputSchema any    `json:"input_schema" yaml:"input_schema"`
 	}
 	switch strings.ToLower(filepath.Ext(fpath)) {
-	case ".yaml", ".yml":
+	case extYAML, extYML:
 		if err := yamlv3.Unmarshal(data, &v2Check); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
-	case ".json":
+	case extJSON:
 		if err := json.Unmarshal(data, &v2Check); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
 	default:
-		return "", fmt.Errorf("unsupported manifest format")
+		return "", errors.New("unsupported manifest format")
 	}
 	// Clean Break v2.0: consts mode requires messages and input_schema
 	if len(v2Check.Messages) == 0 {
-		return "", fmt.Errorf("manifest missing messages block (v2.0 required)")
+		return "", errors.New("manifest missing messages block (v2.0 required)")
 	}
 	if v2Check.InputSchema == nil {
-		return "", fmt.Errorf("manifest missing input_schema block (v2.0 required)")
+		return "", errors.New("manifest missing input_schema block (v2.0 required)")
 	}
 	if v2Check.ID != "" {
 		return v2Check.ID, nil
 	}
 	id := idFromRelativePath(fpath, configDir, queries)
 	if id == "" {
-		return "", fmt.Errorf("manifest has no id field and path not under queries (add to queries or set id)")
+		return "", errors.New("manifest has no id field and path not under queries (add to queries or set id)")
 	}
 	return id, nil
 }

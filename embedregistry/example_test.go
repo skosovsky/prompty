@@ -42,7 +42,7 @@ func ExampleRegistry_GetTemplate() {
 	type Payload struct {
 		UserName string `prompt:"user_name"`
 	}
-	exec, err := tpl.FormatStruct(ctx, &Payload{UserName: "Bob"})
+	exec, err := tpl.FormatStruct(&Payload{UserName: "Bob"})
 	if err != nil {
 		panic(err)
 	}

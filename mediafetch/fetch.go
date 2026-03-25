@@ -39,7 +39,7 @@ type DefaultFetcher struct {
 }
 
 // Fetch downloads the URL and returns body and Content-Type. Only https is allowed; response is limited to MaxBodySize (or DefaultMaxBodySize if 0).
-func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) (data []byte, mimeType string, err error) {
+func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
 	maxBytes := f.MaxBodySize
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBodySize
@@ -63,7 +63,7 @@ func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) (data []byte, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("mediafetch: status %s", resp.Status)
 	}
-	mimeType = resp.Header.Get("Content-Type")
+	mimeType := resp.Header.Get("Content-Type")
 	if idx := strings.Index(mimeType, ";"); idx >= 0 {
 		mimeType = strings.TrimSpace(mimeType[:idx])
 	}
@@ -77,7 +77,7 @@ func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) (data []byte, 
 	if mimeType != "" && !allowed {
 		return nil, "", fmt.Errorf("%w: %s", ErrUnsupportedType, mimeType)
 	}
-	data, err = io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: read body: %w", err)
 	}
@@ -88,6 +88,6 @@ func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) (data []byte, 
 }
 
 // FetchImage downloads a URL with ctx, size limit, and optional MIME check. Only https is allowed.
-func FetchImage(ctx context.Context, rawURL string, maxBytes int64) (data []byte, contentType string, err error) {
+func FetchImage(ctx context.Context, rawURL string, maxBytes int64) ([]byte, string, error) {
 	return DefaultFetcher{MaxBodySize: maxBytes}.Fetch(ctx, rawURL)
 }

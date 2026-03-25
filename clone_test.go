@@ -42,10 +42,12 @@ func TestClonePromptExecution_DeepCopy(t *testing.T) {
 				},
 			},
 		},
-		ModelConfig: map[string]any{
-			"stop": []string{"STOP"},
-			"nested": map[string]any{
-				"values": []any{"one", "two"},
+		ModelOptions: &ModelOptions{
+			Stop: []string{"STOP"},
+			ProviderSettings: map[string]any{
+				"nested": map[string]any{
+					"values": []any{"one", "two"},
+				},
 			},
 		},
 		Metadata: PromptMetadata{
@@ -70,8 +72,8 @@ func TestClonePromptExecution_DeepCopy(t *testing.T) {
 	clone.Messages[0].Content[0].(*MediaPart).Data[0] = 'X'
 	clone.Messages[0].Content[1].(*ToolResultPart).Content[0].(*TextPart).Text = "changed"
 	clone.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
-	clone.ModelConfig["stop"].([]string)[0] = "END"
-	clone.ModelConfig["nested"].(map[string]any)["values"].([]any)[1] = "changed"
+	clone.ModelOptions.Stop[0] = "END"
+	clone.ModelOptions.ProviderSettings["nested"].(map[string]any)["values"].([]any)[1] = "changed"
 	clone.Metadata.Tags[0] = "tag-2"
 	clone.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
 	clone.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "integer"
@@ -80,9 +82,13 @@ func TestClonePromptExecution_DeepCopy(t *testing.T) {
 	assert.Equal(t, byte('i'), exec.Messages[0].Content[0].(*MediaPart).Data[0])
 	assert.Equal(t, "ok", exec.Messages[0].Content[1].(*ToolResultPart).Content[0].(*TextPart).Text)
 	assert.Equal(t, "string", exec.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"])
-	assert.Equal(t, "STOP", exec.ModelConfig["stop"].([]string)[0])
-	assert.Equal(t, "two", exec.ModelConfig["nested"].(map[string]any)["values"].([]any)[1])
+	assert.Equal(t, "STOP", exec.ModelOptions.Stop[0])
+	assert.Equal(t, "two", exec.ModelOptions.ProviderSettings["nested"].(map[string]any)["values"].([]any)[1])
 	assert.Equal(t, "tag-1", exec.Metadata.Tags[0])
 	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
-	assert.Equal(t, "string", exec.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"])
+	assert.Equal(
+		t,
+		"string",
+		exec.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+	)
 }
