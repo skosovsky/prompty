@@ -1,7 +1,6 @@
 package ollama
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -160,13 +159,47 @@ func TestTranslate_ImagePartData(t *testing.T) {
 	assert.Equal(t, api.ImageData([]byte{0xff, 0xd8}), req.Messages[0].Images[0])
 }
 
+func TestTranslate_ImagePartData_MIMEFallbackWhenMediaTypeEmpty(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+			}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Messages, 1)
+	assert.Len(t, req.Messages[0].Images, 1)
+	assert.Equal(t, api.ImageData([]byte{0x89, 0x50, 0x4e, 0x47}), req.Messages[0].Images[0])
+}
+
+func TestTranslate_ImagePartData_MIMEWinsOverConflictingMediaType(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+			}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Messages, 1)
+	assert.Len(t, req.Messages[0].Images, 1)
+	assert.Equal(t, api.ImageData([]byte{0x89, 0x50, 0x4e, 0x47}), req.Messages[0].Images[0])
+}
+
 func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png"},
+				prompty.MediaPart{URL: "https://example.com/img.png", MIMEType: "image/png"},
 			}},
 		},
 	}
@@ -181,7 +214,7 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image"},
+				prompty.MediaPart{MIMEType: "image/png"},
 			}},
 		},
 	}
@@ -189,6 +222,38 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
+}
+
+func TestTranslate_UserAudioPartRejected(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "audio", MIMEType: "audio/mpeg", Data: []byte{0x01, 0x02}},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	assert.Contains(t, err.Error(), "only supports image media")
+}
+
+func TestTranslate_UserMediaPartNonImageMIMERejected_EvenWithImageMediaType(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "image", MIMEType: "application/pdf", Data: []byte("%PDF-1.7")},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	assert.Contains(t, err.Error(), "only supports image media")
 }
 
 func TestTranslate_NilExecution(t *testing.T) {
@@ -348,7 +413,7 @@ func TestParseStreamChunk_Text(t *testing.T) {
 		Message: api.Message{Content: "Hello "},
 		Done:    false,
 	}
-	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	parts, err := a.ParseStreamChunk(chunk)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	assert.Equal(t, "Hello ", parts[0].(prompty.TextPart).Text)
@@ -357,7 +422,7 @@ func TestParseStreamChunk_Text(t *testing.T) {
 func TestParseStreamChunk_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseStreamChunk(context.Background(), nil)
+	_, err := a.ParseStreamChunk(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }

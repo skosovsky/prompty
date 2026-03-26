@@ -24,7 +24,7 @@ messages:
 ## Capabilities
 
 - **Types:** `Translate` returns `*anthropic.MessageNewParams`; `ParseResponse(raw)` expects the Anthropic message response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
-- **Messages:** system, user, assistant; tools and tool use. **Images:** only base64. For image URLs you must call `exec.ResolvedMedia(ctx, fetcher)` before `Translate` (e.g. with `mediafetch.DefaultFetcher{}`); otherwise the adapter returns `adapter.ErrMediaNotResolved`.
+- **Messages:** system, user, assistant; tools and tool use. **Media:** images and PDF documents via base64. For media URLs you must call `exec.ResolvedMedia(ctx, fetcher)` before `Translate` (e.g. with `mediafetch.DefaultFetcher{}`); otherwise the adapter returns `adapter.ErrMediaNotResolved`.
 - **Tool results:** multimodal `ToolResultPart.Content`; if media in tool results is not supported, the adapter returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
 - **Helpers:** `prompty.TextFromParts`.

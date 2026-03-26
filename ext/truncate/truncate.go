@@ -1,62 +1,80 @@
-package prompty
+package truncate
 
-import "reflect"
+import (
+	"reflect"
 
-const defaultMediaTokenPenalty = 256
+	"github.com/skosovsky/prompty"
+)
 
 type truncateConfig struct {
 	maxTokens int
-	counter   TokenCounter
+	counter   prompty.TokenCounter
 }
 
-// TruncationStrategy trims a message history to fit a token budget.
-// Implementations should return messages detached from the input slice and its nested mutable content.
-type TruncationStrategy interface {
-	Truncate(messages []ChatMessage, maxTokens int, counter TokenCounter) ([]ChatMessage, error)
+// Strategy trims message history to fit token budget.
+type Strategy interface {
+	Truncate(
+		messages []prompty.ChatMessage,
+		maxTokens int,
+		counter prompty.TokenCounter,
+	) ([]prompty.ChatMessage, error)
 }
 
-// DropOldestStrategy removes the oldest removable turns until the history fits the budget.
+// DropOldestStrategy removes the oldest removable turns until history fits budget.
 type DropOldestStrategy struct{}
 
-// Truncated returns a new execution trimmed to fit the requested token budget.
-func (e *PromptExecution) Truncated(
+// DropOldest is a convenience function using DropOldestStrategy.
+func DropOldest(
+	messages []prompty.ChatMessage,
 	maxTokens int,
-	counter TokenCounter,
-	strategy TruncationStrategy,
-) (*PromptExecution, error) {
-	if e == nil {
-		return nil, nil
-	}
-	if maxTokens <= 0 || counter == nil {
-		return e.Clone(), nil
-	}
-	strategy = normalizeTruncationStrategy(strategy)
-	newMessages, err := strategy.Truncate(e.Messages, maxTokens, counter)
-	if err != nil {
-		return nil, err
-	}
-	if !ownsTruncationResult(strategy) {
-		newMessages = cloneMessages(newMessages)
-	}
-	return cloneExecutionWithMessages(e, newMessages), nil
+	counter prompty.TokenCounter,
+) ([]prompty.ChatMessage, error) {
+	return DropOldestStrategy{}.Truncate(messages, maxTokens, counter)
 }
 
 // Truncate trims messages to fit maxTokens while preserving protected system/tool invariants.
-func (DropOldestStrategy) Truncate(messages []ChatMessage, maxTokens int, counter TokenCounter) ([]ChatMessage, error) {
+func (DropOldestStrategy) Truncate(
+	messages []prompty.ChatMessage,
+	maxTokens int,
+	counter prompty.TokenCounter,
+) ([]prompty.ChatMessage, error) {
 	return truncateMessages(messages, &truncateConfig{
 		maxTokens: maxTokens,
 		counter:   counter,
 	})
 }
 
-func normalizeTruncationStrategy(strategy TruncationStrategy) TruncationStrategy {
-	if isNilTruncationStrategy(strategy) {
+// TruncateWithStrategy applies strategy; nil strategy defaults to DropOldestStrategy.
+//
+//nolint:revive // stutter kept for explicit public API naming in ext/truncate.
+func TruncateWithStrategy(
+	messages []prompty.ChatMessage,
+	maxTokens int,
+	counter prompty.TokenCounter,
+	strategy Strategy,
+) ([]prompty.ChatMessage, error) {
+	if maxTokens <= 0 || counter == nil {
+		return cloneMessages(messages), nil
+	}
+	strategy = normalizeStrategy(strategy)
+	out, err := strategy.Truncate(messages, maxTokens, counter)
+	if err != nil {
+		return nil, err
+	}
+	if !ownsResult(strategy) {
+		out = cloneMessages(out)
+	}
+	return out, nil
+}
+
+func normalizeStrategy(strategy Strategy) Strategy {
+	if isNilStrategy(strategy) {
 		return DropOldestStrategy{}
 	}
 	return strategy
 }
 
-func isNilTruncationStrategy(strategy TruncationStrategy) bool {
+func isNilStrategy(strategy Strategy) bool {
 	if strategy == nil {
 		return true
 	}
@@ -69,7 +87,7 @@ func isNilTruncationStrategy(strategy TruncationStrategy) bool {
 	}
 }
 
-func ownsTruncationResult(strategy TruncationStrategy) bool {
+func ownsResult(strategy Strategy) bool {
 	switch strategy.(type) {
 	case DropOldestStrategy, *DropOldestStrategy:
 		return true
@@ -78,7 +96,10 @@ func ownsTruncationResult(strategy TruncationStrategy) bool {
 	}
 }
 
-func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessage, error) {
+func truncateMessages(
+	messages []prompty.ChatMessage,
+	cfg *truncateConfig,
+) ([]prompty.ChatMessage, error) {
 	if cfg == nil || cfg.maxTokens <= 0 || cfg.counter == nil {
 		return cloneMessages(messages), nil
 	}
@@ -116,14 +137,14 @@ func truncateMessages(messages []ChatMessage, cfg *truncateConfig) ([]ChatMessag
 		return cloneMessages(messages), nil
 	}
 
-	trimmed := make([]ChatMessage, 0, len(messages))
+	trimmed := make([]prompty.ChatMessage, 0, len(messages))
 	for i, message := range messages {
 		if removed[i] {
 			continue
 		}
-		trimmed = append(trimmed, cloneChatMessage(message))
+		trimmed = append(trimmed, message)
 	}
-	return trimmed, nil
+	return cloneMessages(trimmed), nil
 }
 
 type removableBlock struct {
@@ -132,7 +153,10 @@ type removableBlock struct {
 	tokens int
 }
 
-func removableBlocks(messages []ChatMessage, cfg *truncateConfig) ([]removableBlock, error) {
+func removableBlocks(
+	messages []prompty.ChatMessage,
+	cfg *truncateConfig,
+) ([]removableBlock, error) {
 	protected := protectedMessages(messages)
 	var blocks []removableBlock
 
@@ -155,39 +179,43 @@ func removableBlocks(messages []ChatMessage, cfg *truncateConfig) ([]removableBl
 	return blocks, nil
 }
 
-func protectedMessages(messages []ChatMessage) []bool {
+func protectedMessages(messages []prompty.ChatMessage) []bool {
 	protected := make([]bool, len(messages))
 	prefixEnd := protectedPrefixEnd(messages)
 	for i := range prefixEnd {
 		protected[i] = true
 	}
 	for i := prefixEnd; i < len(messages); i++ {
-		if messages[i].Role == RoleSystem {
+		if messages[i].Role == prompty.RoleSystem || messages[i].Role == prompty.RoleDeveloper {
 			protected[i] = true
 		}
 	}
 	return protected
 }
 
-func protectedPrefixEnd(messages []ChatMessage) int {
+func protectedPrefixEnd(messages []prompty.ChatMessage) int {
 	end := 0
-	for end < len(messages) && (messages[end].Role == RoleSystem || messages[end].Role == RoleDeveloper) {
+	for end < len(messages) && (messages[end].Role == prompty.RoleSystem || messages[end].Role == prompty.RoleDeveloper) {
 		end++
 	}
 	return end
 }
 
-func removableBlocksInSegment(messages []ChatMessage, start, end int, cfg *truncateConfig) ([]removableBlock, error) {
+func removableBlocksInSegment(
+	messages []prompty.ChatMessage,
+	start, end int,
+	cfg *truncateConfig,
+) ([]removableBlock, error) {
 	if start >= end {
 		return nil, nil
 	}
 
 	var starts []int
-	if messages[start].Role != RoleUser {
+	if messages[start].Role != prompty.RoleUser {
 		starts = append(starts, start)
 	}
 	for i := start; i < end; i++ {
-		if messages[i].Role == RoleUser {
+		if messages[i].Role == prompty.RoleUser {
 			starts = append(starts, i)
 		}
 	}
@@ -211,7 +239,7 @@ func removableBlocksInSegment(messages []ChatMessage, start, end int, cfg *trunc
 	return blocks, nil
 }
 
-func countMessagesTokens(messages []ChatMessage, cfg *truncateConfig) (int, error) {
+func countMessagesTokens(messages []prompty.ChatMessage, cfg *truncateConfig) (int, error) {
 	total := 0
 	for i := range messages {
 		n, err := countMessageTokens(&messages[i], cfg)
@@ -223,16 +251,16 @@ func countMessagesTokens(messages []ChatMessage, cfg *truncateConfig) (int, erro
 	return total, nil
 }
 
-func countMessageTokens(message *ChatMessage, cfg *truncateConfig) (int, error) {
+func countMessageTokens(message *prompty.ChatMessage, cfg *truncateConfig) (int, error) {
 	if cfg == nil || message == nil {
 		return 0, nil
 	}
 	return cfg.counter.CountMessage(*message)
 }
 
-func toolCallArgsText(part ToolCallPart) string {
-	if part.Args != "" {
-		return part.Args
+func cloneMessages(messages []prompty.ChatMessage) []prompty.ChatMessage {
+	if messages == nil {
+		return nil
 	}
-	return part.ArgsChunk
+	return prompty.NewExecution(messages).Messages
 }

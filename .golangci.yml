@@ -276,8 +276,6 @@ linters:
         # jsonschema-go: schemas are built incrementally; full struct literals are impractical.
         - ^github.com/google/jsonschema-go/jsonschema\.Schema$
         - ^github.com/google/jsonschema-go/jsonschema\.ForOptions$
-        # Chunks are filled incrementally by the registry and tools.
-        - ^github.com/skosovsky/toolsy\.Chunk$
         # gRPC reflection / file descriptors: filled via oneof or proto.Unmarshal, not struct literals.
         - ^google\.golang\.org/grpc/reflection/grpc_reflection_v1\.ServerReflectionRequest$
         - ^google\.golang\.org/protobuf/types/descriptorpb\.FileDescriptorProto$

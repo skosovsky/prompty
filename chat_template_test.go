@@ -139,6 +139,103 @@ func TestFormatStruct_SimpleVars(t *testing.T) {
 	assert.Equal(t, "Hello, Alice!", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
+func TestFormatStruct_MediaPart(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role: RoleUser,
+			Content: []TemplatePart{
+				{Type: "text", Text: "Analyze this:"},
+				{
+					Type:      "media",
+					MediaType: "{{ .kind }}",
+					MIMEType:  "{{ .mime }}",
+					URL:       "{{ .url }}",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	type Payload struct {
+		Kind string `prompt:"kind"`
+		MIME string `prompt:"mime"`
+		URL  string `prompt:"url"`
+	}
+	exec, err := tpl.FormatStruct(&Payload{
+		Kind: "document",
+		MIME: "application/pdf",
+		URL:  "https://example.com/report.pdf",
+	})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	require.Len(t, exec.Messages[0].Content, 2)
+
+	text := exec.Messages[0].Content[0].(TextPart)
+	assert.Equal(t, "Analyze this:", text.Text)
+
+	media := exec.Messages[0].Content[1].(MediaPart)
+	assert.Equal(t, "document", media.MediaType)
+	assert.Equal(t, "application/pdf", media.MIMEType)
+	assert.Equal(t, "https://example.com/report.pdf", media.URL)
+}
+
+func TestFormatStruct_MediaPart_InferTypeFromMIME(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role: RoleUser,
+			Content: []TemplatePart{
+				{Type: "text", Text: "Analyze this:"},
+				{
+					Type:     "media",
+					MIMEType: "{{ .mime }}",
+					URL:      "{{ .url }}",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	type Payload struct {
+		MIME string `prompt:"mime"`
+		URL  string `prompt:"url"`
+	}
+	exec, err := tpl.FormatStruct(&Payload{
+		MIME: "application/pdf",
+		URL:  "https://example.com/report.pdf",
+	})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	require.Len(t, exec.Messages[0].Content, 2)
+
+	media := exec.Messages[0].Content[1].(MediaPart)
+	assert.Equal(t, "document", media.MediaType)
+	assert.Equal(t, "application/pdf", media.MIMEType)
+	assert.Equal(t, "https://example.com/report.pdf", media.URL)
+}
+
+func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role: RoleUser,
+			Content: []TemplatePart{
+				{
+					Type: "media",
+					URL:  "{{ .url }}",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	type Payload struct {
+		URL string `prompt:"url"`
+	}
+	_, err = tpl.FormatStruct(&Payload{URL: "https://example.com/file.bin"})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTemplateRender)
+	assert.Contains(t, err.Error(), "media_type is required")
+}
+
 func TestFormatStruct_PartialVariables(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -171,6 +268,52 @@ func TestFormatStruct_MissingRequired(t *testing.T) {
 	var ve *VariableError
 	require.ErrorAs(t, err, &ve)
 	assert.Equal(t, "user_name", ve.Variable)
+}
+
+func TestValidateVariables_MediaPart(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role: RoleUser,
+			Content: []TemplatePart{
+				{Type: "media", MediaType: "{{ .kind }}", MIMEType: "{{ .mime }}", URL: "{{ .url }}"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	err = tpl.ValidateVariables(map[string]any{
+		"kind": "image",
+		"mime": "image/png",
+		"url":  "https://example.com/img.png",
+	})
+	require.NoError(t, err)
+
+	err = tpl.ValidateVariables(map[string]any{
+		"kind": "image",
+		"mime": "image/png",
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTemplateRender)
+}
+
+func TestValidateVariables_MediaPart_MissingTypeAndUnknownMIME(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role: RoleUser,
+			Content: []TemplatePart{
+				{Type: "media", MIMEType: "{{ .mime }}", URL: "{{ .url }}"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	err = tpl.ValidateVariables(map[string]any{
+		"mime": "application/octet-stream",
+		"url":  "https://example.com/file.bin",
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTemplateRender)
+	assert.Contains(t, err.Error(), "media_type is required")
 }
 
 // TestFormatStruct_ManifestRequiredVars ensures manifest-derived RequiredVars (e.g. input_schema.required) are enforced.
@@ -685,20 +828,43 @@ func TestPromptExecution_ResolvedMedia(t *testing.T) {
 	assert.Equal(t, "image/png", part.MIMEType)
 }
 
-func TestPromptExecution_ResolvedMedia_NonImageFailFast(t *testing.T) {
+func TestPromptExecution_ResolvedMedia_GenericMedia(t *testing.T) {
 	t.Parallel()
-	exec := &PromptExecution{
+	audioExec := &PromptExecution{
 		Messages: []ChatMessage{
 			{Role: RoleUser, Content: []ContentPart{
 				MediaPart{MediaType: "audio", URL: "https://example.com/audio.mp3"},
 			}},
 		},
 	}
-	resolved, err := exec.ResolvedMedia(context.Background(), mockFetcher{})
-	require.Error(t, err)
-	assert.Nil(t, resolved)
-	assert.Contains(t, err.Error(), "currently only 'image' media type is supported")
-	assert.Contains(t, err.Error(), "audio")
+	audioResolved, err := audioExec.ResolvedMedia(context.Background(), mockFetcher{
+		data: []byte{0x01, 0x02, 0x03},
+		mime: "audio/mpeg",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, audioResolved)
+	audio := audioResolved.Messages[0].Content[0].(MediaPart)
+	assert.Equal(t, "audio", audio.MediaType)
+	assert.Equal(t, "audio/mpeg", audio.MIMEType)
+	assert.Equal(t, []byte{0x01, 0x02, 0x03}, audio.Data)
+
+	docExec := &PromptExecution{
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: []ContentPart{
+				MediaPart{MediaType: "document", URL: "https://example.com/file.pdf"},
+			}},
+		},
+	}
+	docResolved, err := docExec.ResolvedMedia(context.Background(), mockFetcher{
+		data: []byte("%PDF-1.7"),
+		mime: "application/pdf",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, docResolved)
+	doc := docResolved.Messages[0].Content[0].(MediaPart)
+	assert.Equal(t, "document", doc.MediaType)
+	assert.Equal(t, "application/pdf", doc.MIMEType)
+	assert.Equal(t, []byte("%PDF-1.7"), doc.Data)
 }
 
 func TestPromptExecution_ResolvedMedia_NilFetcherReturnsErrNoFetcher(t *testing.T) {

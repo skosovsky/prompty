@@ -12,8 +12,8 @@ type clientImpl[Req any, Resp any] struct {
 	adapter ProviderAdapter[Req, Resp]
 }
 
-// Generate performs Translate → Execute → ParseResponse.
-func (c *clientImpl[Req, Resp]) Generate(
+// Execute performs Translate → Execute → ParseResponse.
+func (c *clientImpl[Req, Resp]) Execute(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) (*prompty.Response, error) {
@@ -28,8 +28,8 @@ func (c *clientImpl[Req, Resp]) Generate(
 	return c.adapter.ParseResponse(resp)
 }
 
-// GenerateStream uses StreamerAdapter if implemented; otherwise polyfill via Generate.
-func (c *clientImpl[Req, Resp]) GenerateStream(
+// ExecuteStream uses StreamerAdapter if implemented; otherwise polyfill via Execute.
+func (c *clientImpl[Req, Resp]) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {
@@ -41,8 +41,8 @@ func (c *clientImpl[Req, Resp]) GenerateStream(
 		}
 		return streamer.ExecuteStream(ctx, req)
 	}
-	// Polyfill: single chunk via Generate
-	resp, err := c.Generate(ctx, exec)
+	// Polyfill: single chunk via Execute
+	resp, err := c.Execute(ctx, exec)
 	if err != nil {
 		return func(yield func(*prompty.ResponseChunk, error) bool) { yield(nil, err) }
 	}

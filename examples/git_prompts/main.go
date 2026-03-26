@@ -97,7 +97,7 @@ func run() error {
 	}
 	adp := geminiadapter.New(geminiadapter.WithClient(genaiClient))
 	client := adapter.NewClient(adp)
-	resp, err := client.Generate(ctx, exec)
+	resp, err := client.Execute(ctx, exec)
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}

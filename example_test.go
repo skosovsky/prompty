@@ -77,18 +77,18 @@ func Example() {
 
 type exampleStructuredInvoker struct{}
 
-func (exampleStructuredInvoker) Generate(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
+func (exampleStructuredInvoker) Execute(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
 	return prompty.NewResponse([]prompty.ContentPart{
 		prompty.TextPart{Text: `{"name":"Alice"}`},
 	}), nil
 }
 
-func (exampleStructuredInvoker) GenerateStream(
+func (exampleStructuredInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		resp, err := exampleStructuredInvoker{}.Generate(ctx, exec)
+		resp, err := exampleStructuredInvoker{}.Execute(ctx, exec)
 		if err != nil {
 			yield(nil, err)
 			return

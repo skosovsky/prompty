@@ -1,12 +1,12 @@
 # prompty-gen
 
-prompty-gen — генератор Go-кода для prompty-манифестов в стиле SQLC. Генерирует контракты (типы Input/Output) и методы Render для рендеринга промптов. **Выполнение (Execute) — ответственность runtime: вы компонуете Render + `prompty.Execute` по своему усмотрению.**
+prompty-gen — генератор Go-кода для prompty-манифестов в стиле SQLC. Генерирует контракты (типы Input/Output) и методы Render для рендеринга промптов. **Выполнение (Execute) — ответственность runtime: вы компонуете Render + `prompty.Invoker.Execute` по своему усмотрению.**
 
 ## Философия
 
 - **SRP:** генератор = контракт + Render; runtime = композиция + Execute.
 - Генератор не внедряет LLM-клиент и не генерирует Execute — только типы и Render.
-- Исполнение промптов: `exec, _ := prompts.RenderXxx(ctx, input)` → `prompty.Execute(ctx, client, exec)`.
+- Исполнение промптов: `exec, _ := prompts.RenderXxx(ctx, input)` → `invoker.Execute(ctx, exec)`.
 
 ## Установка
 
@@ -106,6 +106,7 @@ Render выполняет: validate input → GetTemplate → vars map → `tmpl
 ```go
 reg, _ := fileregistry.New("./prompts", fileregistry.WithParser(yaml.New()))
 prompts := NewPrompts(reg)
+var invoker prompty.Invoker // e.g. adapter.NewClient(openaiAdapter)
 
 // 1. Render промпта
 exec, err := prompts.RenderSupportAgent(ctx, SupportAgentInput{
@@ -116,8 +117,8 @@ if err != nil {
     return err
 }
 
-// 2. Выполнение — на ваше усмотрение (prompty.Execute, streaming, etc.)
-resp, err := prompty.Execute(ctx, client, exec)
+// 2. Выполнение — на ваше усмотрение (adapter.NewClient(...), middleware, streaming, etc.)
+resp, err := invoker.Execute(ctx, exec)
 ```
 
 Для prewarm кэша registry по всем ID:
@@ -130,16 +131,17 @@ for _, id := range AllPromptIDs() {
 
 ### Композиция нескольких Render* перед Execute
 
-Склейте сообщения из нескольких промптов и отправьте в `prompty.Execute`:
+Склейте сообщения из нескольких промптов и отправьте в `invoker.Execute`:
 
 ```go
 exec1, _ := prompts.RenderSalesPersona(ctx, SalesPersonaInput{Tone: "formal"})
 exec2, _ := prompts.RenderClinicRules(ctx, ClinicRulesInput{})
 combined := &prompty.PromptExecution{
-    Model:    exec1.Model,
-    Messages: append(exec1.Messages, exec2.Messages...),
+    ModelOptions: exec1.ModelOptions,
+    Messages:     append(exec1.Messages, exec2.Messages...),
+    Tools:        append(exec1.Tools, exec2.Tools...),
 }
-resp, err := prompty.Execute(ctx, client, combined)
+resp, err := invoker.Execute(ctx, combined)
 ```
 
 ## Интеграция в Makefile / Git Sync

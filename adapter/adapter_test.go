@@ -49,7 +49,7 @@ func TestTextFromParts(t *testing.T) {
 	}
 }
 
-func TestNewClient_Generate(t *testing.T) {
+func TestNewClient_Execute(t *testing.T) {
 	t.Parallel()
 	type mockReq struct{ text string }
 	type mockResp struct{ text string }
@@ -72,13 +72,13 @@ func TestNewClient_Generate(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
 		},
 	}
-	resp, err := client.Generate(context.Background(), exec)
+	resp, err := client.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "resp-req", resp.Text())
 }
 
-func TestNewClient_GenerateStream_Polyfill(t *testing.T) {
+func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
 	t.Parallel()
 	type mockReq struct{}
 	type mockResp struct{}
@@ -101,7 +101,7 @@ func TestNewClient_GenerateStream_Polyfill(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
 		},
 	}
-	seq := client.GenerateStream(context.Background(), exec)
+	seq := client.ExecuteStream(context.Background(), exec)
 	var chunks []*prompty.ResponseChunk
 	for chunk, err := range seq {
 		require.NoError(t, err)

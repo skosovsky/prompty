@@ -10,9 +10,11 @@ type Unmarshaler interface {
 
 // RawContentPart is one content element of a message (format-agnostic).
 type RawContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	MIMEType  string `json:"mime_type,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 // RawMessage is the raw representation of a single message.

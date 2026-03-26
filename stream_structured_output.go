@@ -21,7 +21,7 @@ const (
 	streamJSONModeArray
 )
 
-// StreamStructuredOutput streams structured JSON objects from GenerateStream.
+// StreamStructuredOutput streams structured JSON objects from ExecuteStream.
 func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *PromptExecution) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var zero T
@@ -41,7 +41,7 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 		defer cancel()
 
 		parser := newStructuredStreamParser[T]()
-		for chunk, err := range invoker.GenerateStream(streamCtx, workExec) {
+		for chunk, err := range invoker.ExecuteStream(streamCtx, workExec) {
 			if err != nil {
 				cancel()
 				yield(zero, err)

@@ -11,9 +11,11 @@ import (
 )
 
 type rawContentPart struct {
-	Type string `yaml:"type"`
-	Text string `yaml:"text,omitempty"`
-	URL  string `yaml:"url,omitempty"`
+	Type      string `yaml:"type"`
+	Text      string `yaml:"text,omitempty"`
+	MediaType string `yaml:"media_type,omitempty"`
+	MIMEType  string `yaml:"mime_type,omitempty"`
+	URL       string `yaml:"url,omitempty"`
 }
 
 type rawContentSlice []rawContentPart
@@ -165,9 +167,11 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 		for j := range m.Content {
 			c := &m.Content[j]
 			raw.Messages[i].Content[j] = manifest.RawContentPart{
-				Type: c.Type,
-				Text: c.Text,
-				URL:  c.URL,
+				Type:      c.Type,
+				Text:      c.Text,
+				MediaType: c.MediaType,
+				MIMEType:  c.MIMEType,
+				URL:       c.URL,
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"text/template"
 )
@@ -15,8 +16,12 @@ import (
 // maxRenderBufferCap is the maximum buffer capacity to return to the pool; larger buffers are dropped to avoid pool poisoning (OOM).
 const maxRenderBufferCap = 64 * 1024
 
-// partKindText is the canonical content kind for plain text template parts (message content and rendered output).
-const partKindText = "text"
+const (
+	// partKindText is the canonical content kind for plain text template parts (message content and rendered output).
+	partKindText = "text"
+	// partKindMedia is the canonical content kind for media template parts.
+	partKindMedia = "media"
+)
 
 var renderPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
@@ -45,8 +50,11 @@ type ChatPromptTemplate struct {
 }
 
 type parsedPart struct {
-	kind string // "text" or "image_url"
-	tpl  *template.Template
+	kind         string // "text" or "media"
+	textTpl      *template.Template
+	mediaTypeTpl *template.Template
+	mimeTypeTpl  *template.Template
+	urlTpl       *template.Template
 }
 
 type parsedMessage struct {
@@ -60,7 +68,10 @@ type parsedMessage struct {
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
 // Returns ErrTemplateParse if any message content fails to parse.
-func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOption) (*ChatPromptTemplate, error) {
+func NewChatPromptTemplate(
+	messages []MessageTemplate,
+	opts ...ChatTemplateOption,
+) (*ChatPromptTemplate, error) {
 	tpl := &ChatPromptTemplate{
 		Messages: cloneMessageTemplates(messages),
 	}
@@ -92,13 +103,23 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 	if tpl.partialsGlob != "" {
 		root, err = root.ParseGlob(tpl.partialsGlob)
 		if err != nil {
-			return nil, fmt.Errorf("%w: partials glob %q: %w", ErrTemplateParse, tpl.partialsGlob, err)
+			return nil, fmt.Errorf(
+				"%w: partials glob %q: %w",
+				ErrTemplateParse,
+				tpl.partialsGlob,
+				err,
+			)
 		}
 	}
 	if tpl.partialsFS.fsys != nil {
 		root, err = root.ParseFS(tpl.partialsFS.fsys, tpl.partialsFS.pattern)
 		if err != nil {
-			return nil, fmt.Errorf("%w: partials fs %q: %w", ErrTemplateParse, tpl.partialsFS.pattern, err)
+			return nil, fmt.Errorf(
+				"%w: partials fs %q: %w",
+				ErrTemplateParse,
+				tpl.partialsFS.pattern,
+				err,
+			)
 		}
 	}
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
@@ -106,26 +127,81 @@ func NewChatPromptTemplate(messages []MessageTemplate, opts ...ChatTemplateOptio
 		var allVars []string
 		parsedParts := make([]parsedPart, 0, len(m.Content))
 		for j, part := range m.Content {
-			name := fmt.Sprintf("msg_%d_part_%d", i, j)
-			var src string
+			namePrefix := fmt.Sprintf("msg_%d_part_%d", i, j)
 			switch part.Type {
 			case partKindText:
-				src = part.Text
-			case "image_url":
-				src = part.URL
+				textTpl, err := parsePartTemplate(root, namePrefix, part.Text)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d: %w",
+						ErrTemplateParse,
+						i,
+						j,
+						err,
+					)
+				}
+				parsedParts = append(parsedParts, parsedPart{
+					kind:         partKindText,
+					textTpl:      textTpl,
+					mediaTypeTpl: nil,
+					mimeTypeTpl:  nil,
+					urlTpl:       nil,
+				})
+				allVars = append(allVars, extractVarsFromTree(textTpl.Tree)...)
+			case partKindMedia:
+				mediaTypeTpl, err := parsePartTemplate(
+					root,
+					namePrefix+"_media_type",
+					part.MediaType,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d media_type: %w",
+						ErrTemplateParse,
+						i,
+						j,
+						err,
+					)
+				}
+				mimeTypeTpl, err := parsePartTemplate(root, namePrefix+"_mime_type", part.MIMEType)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d mime_type: %w",
+						ErrTemplateParse,
+						i,
+						j,
+						err,
+					)
+				}
+				urlTpl, err := parsePartTemplate(root, namePrefix+"_url", part.URL)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d url: %w",
+						ErrTemplateParse,
+						i,
+						j,
+						err,
+					)
+				}
+				parsedParts = append(parsedParts, parsedPart{
+					kind:         partKindMedia,
+					textTpl:      nil,
+					mediaTypeTpl: mediaTypeTpl,
+					mimeTypeTpl:  mimeTypeTpl,
+					urlTpl:       urlTpl,
+				})
+				allVars = append(allVars, extractVarsFromTree(mediaTypeTpl.Tree)...)
+				allVars = append(allVars, extractVarsFromTree(mimeTypeTpl.Tree)...)
+				allVars = append(allVars, extractVarsFromTree(urlTpl.Tree)...)
 			default:
-				return nil, fmt.Errorf("%w: message %d part %d: unknown type %q", ErrTemplateParse, i, j, part.Type)
+				return nil, fmt.Errorf(
+					"%w: message %d part %d: unknown type %q",
+					ErrTemplateParse,
+					i,
+					j,
+					part.Type,
+				)
 			}
-			msgTmpl, err := root.New(name).Option("missingkey=error").Parse(src)
-			if err != nil {
-				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateParse, i, j, err)
-			}
-			kind := part.Type
-			if kind == "" {
-				kind = partKindText
-			}
-			parsedParts = append(parsedParts, parsedPart{kind: kind, tpl: msgTmpl})
-			allVars = append(allVars, extractVarsFromTree(msgTmpl.Tree)...)
 		}
 		var meta map[string]any
 		if len(m.Metadata) > 0 {
@@ -184,30 +260,73 @@ func (c *ChatPromptTemplate) renderTemplates(
 		}
 		var contentParts []ContentPart
 		for j, part := range pm.parts {
-			rawBuf := renderPool.Get()
-			buf, ok := rawBuf.(*bytes.Buffer)
-			if !ok || buf == nil {
-				buf = new(bytes.Buffer)
-			}
-			if err := part.tpl.Execute(buf, mergedVars); err != nil {
-				if buf.Cap() <= maxRenderBufferCap {
-					buf.Reset()
-					renderPool.Put(buf)
-				}
-				return nil, fmt.Errorf("%w: message %d part %d: %w", ErrTemplateRender, i, j, err)
-			}
-			rendered := buf.String()
-			if buf.Cap() <= maxRenderBufferCap {
-				buf.Reset()
-				renderPool.Put(buf)
-			}
 			switch part.kind {
 			case partKindText:
+				rendered, err := executeTemplateString(part.textTpl, mergedVars)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d: %w",
+						ErrTemplateRender,
+						i,
+						j,
+						err,
+					)
+				}
 				contentParts = append(contentParts, TextPart{Text: rendered})
-			case "image_url":
-				contentParts = append(contentParts, MediaPart{MediaType: "image", URL: rendered})
+			case partKindMedia:
+				mediaType, err := executeTemplateString(part.mediaTypeTpl, mergedVars)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d media_type: %w",
+						ErrTemplateRender,
+						i,
+						j,
+						err,
+					)
+				}
+				mimeType, err := executeTemplateString(part.mimeTypeTpl, mergedVars)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d mime_type: %w",
+						ErrTemplateRender,
+						i,
+						j,
+						err,
+					)
+				}
+				url, err := executeTemplateString(part.urlTpl, mergedVars)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d url: %w",
+						ErrTemplateRender,
+						i,
+						j,
+						err,
+					)
+				}
+				mediaType, err = normalizeMediaType(mediaType, mimeType)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"%w: message %d part %d media_type: %w",
+						ErrTemplateRender,
+						i,
+						j,
+						err,
+					)
+				}
+				contentParts = append(contentParts, MediaPart{
+					MediaType: mediaType,
+					MIMEType:  mimeType,
+					URL:       url,
+				})
 			default:
-				contentParts = append(contentParts, TextPart{Text: rendered})
+				return nil, fmt.Errorf(
+					"%w: message %d part %d: unknown type %q",
+					ErrTemplateRender,
+					i,
+					j,
+					part.kind,
+				)
 			}
 		}
 		out = append(out, ChatMessage{
@@ -242,7 +361,11 @@ func (c *ChatPromptTemplate) Format(vars map[string]any) (*PromptExecution, erro
 	required := mergeRequiredVars(c.RequiredVars, c.requiredFromAST)
 	for _, name := range required {
 		if _, ok := merged[name]; !ok {
-			return nil, &VariableError{Variable: name, Template: c.Metadata.ID, Err: ErrMissingVariable}
+			return nil, &VariableError{
+				Variable: name,
+				Template: c.Metadata.ID,
+				Err:      ErrMissingVariable,
+			}
 		}
 	}
 	return c.renderTemplates(merged, nil)
@@ -263,7 +386,11 @@ func (c *ChatPromptTemplate) FormatStruct(payload any) (*PromptExecution, error)
 	required := mergeRequiredVars(c.RequiredVars, c.requiredFromAST)
 	for _, name := range required {
 		if _, ok := merged[name]; !ok {
-			return nil, &VariableError{Variable: name, Template: c.Metadata.ID, Err: ErrMissingVariable}
+			return nil, &VariableError{
+				Variable: name,
+				Template: c.Metadata.ID,
+				Err:      ErrMissingVariable,
+			}
 		}
 	}
 	return c.renderTemplates(merged, history)
@@ -282,12 +409,126 @@ func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
 	merged["Tools"] = c.Tools
 	for i, pm := range c.parsedTemplates {
 		for j, part := range pm.parts {
-			if err := part.tpl.Execute(io.Discard, merged); err != nil {
-				return fmt.Errorf("%w: message %d part %d (role %s): %w", ErrTemplateRender, i, j, pm.role, err)
+			for _, tmpl := range part.templates() {
+				if tmpl == nil {
+					continue
+				}
+				if err := tmpl.Execute(io.Discard, merged); err != nil {
+					return fmt.Errorf(
+						"%w: message %d part %d (role %s): %w",
+						ErrTemplateRender,
+						i,
+						j,
+						pm.role,
+						err,
+					)
+				}
+			}
+			if part.kind != partKindMedia {
+				continue
+			}
+			mediaType, err := executeTemplateString(part.mediaTypeTpl, merged)
+			if err != nil {
+				return fmt.Errorf(
+					"%w: message %d part %d (role %s) media_type: %w",
+					ErrTemplateRender,
+					i,
+					j,
+					pm.role,
+					err,
+				)
+			}
+			mimeType, err := executeTemplateString(part.mimeTypeTpl, merged)
+			if err != nil {
+				return fmt.Errorf(
+					"%w: message %d part %d (role %s) mime_type: %w",
+					ErrTemplateRender,
+					i,
+					j,
+					pm.role,
+					err,
+				)
+			}
+			if _, err := normalizeMediaType(mediaType, mimeType); err != nil {
+				return fmt.Errorf(
+					"%w: message %d part %d (role %s) media_type: %w",
+					ErrTemplateRender,
+					i,
+					j,
+					pm.role,
+					err,
+				)
 			}
 		}
 	}
 	return nil
+}
+
+func parsePartTemplate(root *template.Template, name, src string) (*template.Template, error) {
+	return root.New(name).Option("missingkey=error").Parse(src)
+}
+
+func normalizeMediaType(mediaType, mimeType string) (string, error) {
+	normalized := strings.TrimSpace(mediaType)
+	if normalized != "" {
+		return normalized, nil
+	}
+	inferredType, ok := inferMediaTypeFromMIME(mimeType)
+	if !ok {
+		return "", fmt.Errorf("media_type is required when mime_type %q is not inferable", mimeType)
+	}
+	return inferredType, nil
+}
+
+func inferMediaTypeFromMIME(mimeType string) (string, bool) {
+	mime := strings.ToLower(strings.TrimSpace(mimeType))
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "image", true
+	case strings.HasPrefix(mime, "audio/"):
+		return "audio", true
+	case strings.HasPrefix(mime, "video/"):
+		return "video", true
+	case mime == "application/pdf":
+		return "document", true
+	default:
+		return "", false
+	}
+}
+
+func executeTemplateString(t *template.Template, vars map[string]any) (string, error) {
+	if t == nil {
+		return "", nil
+	}
+	rawBuf := renderPool.Get()
+	buf, ok := rawBuf.(*bytes.Buffer)
+	if !ok || buf == nil {
+		buf = new(bytes.Buffer)
+	}
+	putBuffer := func() {
+		if buf.Cap() <= maxRenderBufferCap {
+			buf.Reset()
+			renderPool.Put(buf)
+		}
+	}
+	if err := t.Execute(buf, vars); err != nil {
+		putBuffer()
+		return "", err
+	}
+	out := buf.String()
+	putBuffer()
+	return out, nil
+}
+
+func (p parsedPart) templates() []*template.Template {
+	switch p.kind {
+	case partKindText:
+		return []*template.Template{p.textTpl}
+	case partKindMedia:
+		return []*template.Template{p.mediaTypeTpl, p.mimeTypeTpl, p.urlTpl}
+	default:
+		return nil
+	}
 }
 
 // mergeRequiredVars returns unique names from explicit and template-derived, preserving order (explicit first).

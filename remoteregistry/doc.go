@@ -1,5 +1,4 @@
-// Package remoteregistry provides a remote prompt registry that loads YAML manifests
-// via a Fetcher (HTTP or Git). It caches templates with a configurable TTL and supports
-// Bearer token authentication. Use New with an implementation of Fetcher (e.g. NewHTTPFetcher);
-// GetTemplate returns a cloned template by id.
+// Package remoteregistry provides remote template loading via Fetcher (HTTP or Git).
+// New creates a stateless Registry. Use WithCache to add explicit TTL cache and
+// in-flight request dedupe when needed.
 package remoteregistry

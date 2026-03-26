@@ -22,7 +22,7 @@ type ProviderAdapter[Req any, Resp any] interface {
 }
 
 // StreamerAdapter is an optional capability for adapters that support native streaming.
-// When implemented, Invoker.GenerateStream uses it; otherwise a polyfill runs Generate and yields one chunk.
+// When implemented, Invoker.ExecuteStream uses it; otherwise a polyfill runs Execute and yields one chunk.
 type StreamerAdapter[Req any] interface {
 	ExecuteStream(ctx context.Context, req Req) iter.Seq2[*prompty.ResponseChunk, error]
 }

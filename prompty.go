@@ -77,12 +77,13 @@ type ToolResultPart struct {
 func (ToolResultPart) isContentPart() {}
 
 // ChatMessage is a single message with role and content parts (supports multimodal).
-// CachePoint hints providers to cache this message (e.g. Anthropic ephemeral). Other provider-specific options go in Metadata.
+// CachePoint hints providers to cache this message (e.g. Anthropic ephemeral).
+// Metadata is message-scoped and should not be used for execution-level model controls.
 type ChatMessage struct {
 	Role       Role
 	Content    []ContentPart
 	CachePoint bool           // When true, adapters may set cache_control / use context caching per provider
-	Metadata   map[string]any // Provider-specific flags; adapters read known keys (e.g. gemini_search_grounding)
+	Metadata   map[string]any // Provider-specific message-scoped extras
 }
 
 // ToolDefinition is the universal tool schema.
@@ -155,6 +156,14 @@ func (e *PromptExecution) AddMessage(msg ChatMessage) *PromptExecution {
 	}
 	messages := append(cloneMessages(e.Messages), cloneChatMessage(msg))
 	return cloneExecutionWithMessages(e, messages)
+}
+
+// WithMessages returns a new execution with provided messages replacing current history.
+func (e *PromptExecution) WithMessages(messages []ChatMessage) *PromptExecution {
+	if e == nil {
+		return nil
+	}
+	return cloneExecutionWithMessages(e, cloneMessages(messages))
 }
 
 // Normalize returns a new PromptExecution with consecutive system/developer messages merged into one.
@@ -237,7 +246,7 @@ type Fetcher interface {
 }
 
 // ResolvedMedia returns a cloned execution where MediaParts with URL and empty Data are fetched via Fetcher.
-// Only "image" media type is supported; other types with URL and empty Data return an error (fail-fast).
+// MIME type is populated from fetcher response; callers can use this for image/audio/video/document URLs.
 func (e *PromptExecution) ResolvedMedia(ctx context.Context, fetcher Fetcher) (*PromptExecution, error) {
 	if e == nil {
 		return nil, nil
@@ -251,13 +260,6 @@ func (e *PromptExecution) ResolvedMedia(ctx context.Context, fetcher Fetcher) (*
 			}
 			if mp.URL == "" || len(mp.Data) > 0 {
 				continue
-			}
-			if mp.MediaType != "image" {
-				return nil, fmt.Errorf(
-					"resolve media %s: currently only 'image' media type is supported for downloading, got %q",
-					mp.URL,
-					mp.MediaType,
-				)
 			}
 			if isNilFetcher(fetcher) {
 				return nil, fmt.Errorf("resolve media %s: %w", mp.URL, ErrNoFetcher)
@@ -334,20 +336,13 @@ func newToolResultPart(toolCallID, name, text string, isError bool) ToolResultPa
 	}
 }
 
-func newToolResultMessage(toolCallID, name, text string, isError bool) ChatMessage {
-	return ChatMessage{
-		Role: RoleTool,
-		Content: []ContentPart{
-			newToolResultPart(toolCallID, name, text, isError),
-		},
-	}
-}
-
-// TemplatePart is one part of a message template (text or image_url). Type determines which field (Text or URL) is the template source.
+// TemplatePart is one part of a message template (text or media). Type determines which field set is the template source.
 type TemplatePart struct {
-	Type string // "text" or "image_url"
-	Text string // Go text/template for type "text"
-	URL  string // Go text/template for type "image_url"
+	Type      string // "text" or "media"
+	Text      string // Go text/template for type "text"
+	MediaType string // Go text/template for type "media" (for example: image, audio, video, document)
+	MIMEType  string // Optional Go text/template for type "media" (for example: image/png)
+	URL       string // Optional Go text/template for type "media"
 }
 
 // TextContent returns a single text TemplatePart slice for convenience.
@@ -361,7 +356,7 @@ func TextContent(text string) []TemplatePart {
 // CachePoint maps from YAML cache: true; adapters use it for prompt caching (e.g. Anthropic ephemeral).
 type MessageTemplate struct {
 	Role       Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
-	Content    []TemplatePart // Parts to render (text and/or image_url); each part is a Go text/template
+	Content    []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
 	Optional   bool           // true → skip if all referenced variables are zero-value
 	CachePoint bool           // When true, request caching for this message where supported
 	Metadata   map[string]any `yaml:"metadata,omitempty"`

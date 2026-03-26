@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -84,12 +83,17 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "Get weather", decls[0].Description)
 }
 
-func TestTranslate_GeminiSearchGroundingMetadata(t *testing.T) {
+func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}}, Metadata: map[string]any{"gemini_search_grounding": true}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"gemini_search_grounding": true,
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -102,7 +106,7 @@ func TestTranslate_GeminiSearchGroundingMetadata(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, hasGoogleSearch, "Metadata gemini_search_grounding: true must add Google Search tool")
+	assert.True(t, hasGoogleSearch, "ProviderSettings gemini_search_grounding: true must add Google Search tool")
 }
 
 func TestTranslate_ToolResult(t *testing.T) {
@@ -227,6 +231,44 @@ func TestTranslate_ImagePartEmptyRejected(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 	assert.Contains(t, err.Error(), "neither Data nor URL")
+}
+
+func TestTranslate_AudioPartData(t *testing.T) {
+	t.Parallel()
+	a := New()
+	audioData := []byte{0x01, 0x02, 0x03}
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.TextPart{Text: "Analyze this audio"},
+				prompty.MediaPart{MediaType: "audio", Data: audioData, MIMEType: "audio/mpeg"},
+			}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Contents, 1)
+	require.Len(t, req.Contents[0].Parts, 2)
+	assert.NotNil(t, req.Contents[0].Parts[1].InlineData)
+	assert.Equal(t, "audio/mpeg", req.Contents[0].Parts[1].InlineData.MIMEType)
+}
+
+func TestTranslate_AudioPartURL(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "audio", URL: "https://example.com/audio.mp3", MIMEType: "audio/mpeg"},
+			}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Contents, 1)
+	require.Len(t, req.Contents[0].Parts, 1)
+	assert.NotNil(t, req.Contents[0].Parts[0].FileData)
+	assert.Equal(t, "https://example.com/audio.mp3", req.Contents[0].Parts[0].FileData.FileURI)
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {
@@ -400,7 +442,7 @@ func TestParseStreamChunk_Text(t *testing.T) {
 			},
 		}},
 	}
-	parts, err := a.ParseStreamChunk(context.Background(), chunk)
+	parts, err := a.ParseStreamChunk(chunk)
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	assert.Equal(t, "Hi ", parts[0].(prompty.TextPart).Text)
@@ -409,7 +451,7 @@ func TestParseStreamChunk_Text(t *testing.T) {
 func TestParseStreamChunk_InvalidType(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseStreamChunk(context.Background(), nil)
+	_, err := a.ParseStreamChunk(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
 }

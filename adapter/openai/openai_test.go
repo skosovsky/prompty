@@ -239,6 +239,61 @@ func TestTranslate_UserMessagePreservesTextImageOrder(t *testing.T) {
 	assert.Equal(t, " after", parts[2].OfText.Text)
 }
 
+func TestTranslate_AudioPartData(t *testing.T) {
+	t.Parallel()
+	a := New()
+	audioData := []byte{0x01, 0x02, 0x03}
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.TextPart{Text: "Transcribe this"},
+				prompty.MediaPart{MediaType: "audio", Data: audioData, MIMEType: "audio/mpeg"},
+			}},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, params.Messages[0].OfUser)
+	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
+	require.Len(t, parts, 2)
+	audio := parts[1].GetInputAudio()
+	require.NotNil(t, audio)
+	assert.Equal(t, "mp3", audio.Format)
+}
+
+func TestTranslate_FilePartData(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", Data: []byte("%PDF-1.7"), MIMEType: "application/pdf"},
+			}},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, params.Messages[0].OfUser)
+	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
+	require.Len(t, parts, 1)
+	assert.NotNil(t, parts[0].GetFile())
+}
+
+func TestTranslate_FilePartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", URL: "https://example.com/file.pdf", MIMEType: "application/pdf"},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
+}
+
 func TestTranslate_AssistantToolCalls(t *testing.T) {
 	t.Parallel()
 	a := New()

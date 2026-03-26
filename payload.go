@@ -171,13 +171,15 @@ func extractRequiredVarsFromParsed(parsed []parsedMessage) []string {
 			continue
 		}
 		for _, part := range pm.parts {
-			if part.tpl == nil {
-				continue
-			}
-			for _, name := range extractVarsFromTree(part.tpl.Tree) {
-				if !seen[name] {
-					seen[name] = true
-					out = append(out, name)
+			for _, tmpl := range part.templates() {
+				if tmpl == nil {
+					continue
+				}
+				for _, name := range extractVarsFromTree(tmpl.Tree) {
+					if !seen[name] {
+						seen[name] = true
+						out = append(out, name)
+					}
 				}
 			}
 		}

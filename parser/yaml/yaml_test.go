@@ -3,6 +3,7 @@ package yaml
 import (
 	"testing"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 
 	"github.com/stretchr/testify/assert"
@@ -233,4 +234,38 @@ messages:
 	require.NotNil(t, exec.ModelOptions)
 	assert.Equal(t, "gemini-2.5-pro", exec.ModelOptions.Model)
 	assert.Equal(t, map[string]any{"custom_mode": "fast"}, exec.ModelOptions.ProviderSettings)
+}
+
+func TestUnmarshal_ContentMediaPart(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_media
+version: "1"
+messages:
+  - role: user
+    content:
+      - type: text
+        text: "Look:"
+      - type: media
+        media_type: image
+        mime_type: image/png
+        url: "{{ .img }}"
+`)
+	tpl, err := manifest.Parse(yamlData, New())
+	require.NoError(t, err)
+	require.Len(t, tpl.Messages, 1)
+	require.Len(t, tpl.Messages[0].Content, 2)
+	assert.Equal(t, "media", tpl.Messages[0].Content[1].Type)
+	assert.Equal(t, "image", tpl.Messages[0].Content[1].MediaType)
+	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
+	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
+
+	exec, err := tpl.Format(map[string]any{"img": "https://example.com/img.png"})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	require.Len(t, exec.Messages[0].Content, 2)
+	media := exec.Messages[0].Content[1].(prompty.MediaPart)
+	assert.Equal(t, "image", media.MediaType)
+	assert.Equal(t, "image/png", media.MIMEType)
+	assert.Equal(t, "https://example.com/img.png", media.URL)
 }

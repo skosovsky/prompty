@@ -201,7 +201,7 @@ func TestParse_ContentScalar(t *testing.T) {
 func TestParse_ContentMultimodalArray(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .x }}"},{"type":"image_url","url":"{{ .img }}"}]}]}`,
+		`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .x }}"},{"type":"media","media_type":"image","mime_type":"image/png","url":"{{ .img }}"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
@@ -209,7 +209,9 @@ func TestParse_ContentMultimodalArray(t *testing.T) {
 	require.Len(t, tpl.Messages[0].Content, 2)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
 	assert.Equal(t, "Look: {{ .x }}", tpl.Messages[0].Content[0].Text)
-	assert.Equal(t, "image_url", tpl.Messages[0].Content[1].Type)
+	assert.Equal(t, "media", tpl.Messages[0].Content[1].Type)
+	assert.Equal(t, "image", tpl.Messages[0].Content[1].MediaType)
+	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
 	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
 	exec, err := tpl.FormatStruct(&struct {
 		X   string `json:"x"`
@@ -220,6 +222,7 @@ func TestParse_ContentMultimodalArray(t *testing.T) {
 	assert.Equal(t, "Look: done", exec.Messages[0].Content[0].(prompty.TextPart).Text)
 	mp := exec.Messages[0].Content[1].(prompty.MediaPart)
 	assert.Equal(t, "image", mp.MediaType)
+	assert.Equal(t, "image/png", mp.MIMEType)
 	assert.Equal(t, "https://example.com/photo.png", mp.URL)
 }
 

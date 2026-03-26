@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 
@@ -126,16 +127,26 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 	case prompty.RoleUser:
 		var images []api.ImageData
 		for _, p := range msg.Content {
-			if img, ok := p.(prompty.MediaPart); ok && img.MediaType == "image" {
-				data := img.Data
-				if len(data) == 0 && img.URL != "" {
-					return nil, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
-				}
-				if len(data) == 0 {
-					return nil, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
-				}
-				images = append(images, api.ImageData(data))
+			img, ok := p.(prompty.MediaPart)
+			if !ok {
+				continue
 			}
+			if !isOllamaImageMediaPart(img) {
+				return nil, fmt.Errorf(
+					"%w: Ollama only supports image media in user messages (media_type=%q mime_type=%q)",
+					adapter.ErrUnsupportedContentType,
+					img.MediaType,
+					img.MIMEType,
+				)
+			}
+			data := img.Data
+			if len(data) == 0 && img.URL != "" {
+				return nil, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
+			}
+			if len(data) == 0 {
+				return nil, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+			}
+			images = append(images, api.ImageData(data))
 		}
 		text := prompty.TextFromParts(msg.Content)
 		return []api.Message{{Role: "user", Content: text, Images: images}}, nil
@@ -197,6 +208,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 	}
 }
 
+func isOllamaImageMediaPart(mp prompty.MediaPart) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mp.MIMEType)), "image/")
+}
+
 func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
 	params := api.ToolFunctionParameters{
 		Type:       "object",
@@ -256,8 +271,7 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 
 // ParseStreamChunk parses a single Ollama stream chunk (*api.ChatResponse, Done: false).
 // Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
-func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
-	_ = ctx
+func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	chunk, ok := rawChunk.(*api.ChatResponse)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse

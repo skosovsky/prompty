@@ -1,7 +1,7 @@
 // Package anthropic provides a prompty adapter for the Anthropic Messages API.
 // Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
 //
-// MediaPart: only MediaType "image" is supported. When Data is set it is sent as base64; when only URL is set,
+// MediaPart: supports images and PDF documents. Data is sent as base64; when only URL is set,
 // callers must resolve media before Translate. Data takes precedence over URL.
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 //

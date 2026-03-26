@@ -27,6 +27,13 @@ type mockFetcher struct {
 	called int
 }
 
+type mockRegistryWithExtras struct {
+	tpl         *prompty.ChatPromptTemplate
+	ids         []string
+	info        prompty.TemplateInfo
+	closeCalled bool
+}
+
 func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	m.mu.Lock()
 	m.called++
@@ -44,12 +51,30 @@ func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
+func (m *mockRegistryWithExtras) GetTemplate(_ context.Context, _ string) (*prompty.ChatPromptTemplate, error) {
+	return prompty.CloneTemplate(m.tpl), nil
+}
+
+func (m *mockRegistryWithExtras) List(_ context.Context) ([]string, error) {
+	return append([]string(nil), m.ids...), nil
+}
+
+func (m *mockRegistryWithExtras) Stat(_ context.Context, _ string) (prompty.TemplateInfo, error) {
+	return m.info, nil
+}
+
+func (m *mockRegistryWithExtras) Close() error {
+	m.closeCalled = true
+	return nil
+}
+
 func TestRegistry_GetTemplate_Success(t *testing.T) {
 	t.Parallel()
 	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"support_agent": []byte(manifestJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "support_agent")
 	require.NoError(t, err)
@@ -66,8 +91,9 @@ func TestRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	t.Parallel()
 	prodJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Production"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"p.production": []byte(prodJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("production"))
+	base, err := New(m, WithParser(manifest.NewJSONParser()), WithEnvironment("production"))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
@@ -84,8 +110,9 @@ func TestRegistry_GetTemplate_EnvFallbackBaseAndStaging(t *testing.T) {
 		"env_test":         []byte(baseJSON),
 		"env_test.staging": []byte(stagingJSON),
 	}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("staging"))
+	base, err := New(m, WithParser(manifest.NewJSONParser()), WithEnvironment("staging"))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "env_test")
 	require.NoError(t, err)
@@ -103,8 +130,9 @@ func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {
 	t.Parallel()
 	baseJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"BaseOnly"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"p": []byte(baseJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute), WithEnvironment("prod"))
+	base, err := New(m, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "p")
 	require.NoError(t, err)
@@ -164,8 +192,9 @@ func TestRegistry_GetTemplate_TTLExpiry(t *testing.T) {
 			return []byte(manifestJSON), nil
 		},
 	}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(50*time.Millisecond))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, 50*time.Millisecond)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "ttl_test")
 	require.NoError(t, err)
@@ -191,8 +220,9 @@ func TestRegistry_GetTemplate_InfiniteTTL(t *testing.T) {
 			return []byte(manifestJSON), nil
 		},
 	}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(0))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, 0)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "infinite")
 	require.NoError(t, err)
@@ -218,8 +248,9 @@ func TestRegistry_GetTemplate_NegativeTTLNeverExpires(t *testing.T) {
 			return []byte(manifestJSON), nil
 		},
 	}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(-time.Hour))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, -time.Hour)
 	ctx := context.Background()
 	tpl, err := reg.GetTemplate(ctx, "neg_ttl")
 	require.NoError(t, err)
@@ -297,6 +328,142 @@ func TestRegistry_GetTemplate_Concurrent(t *testing.T) {
 	}
 }
 
+func TestCachedRegistry_GetTemplate_ConcurrentDedupe(t *testing.T) {
+	t.Parallel()
+	manifestJSON := `{"id":"conc_cached","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
+	m := &mockFetcher{
+		fetch: func(context.Context, string) ([]byte, error) {
+			time.Sleep(20 * time.Millisecond)
+			return []byte(manifestJSON), nil
+		},
+	}
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
+	ctx := context.Background()
+	const workers = 40
+	errs := make(chan error, workers)
+	for range workers {
+		go func() {
+			tpl, getErr := reg.GetTemplate(ctx, "conc_cached")
+			if getErr == nil && (tpl == nil || tpl.Metadata.ID != "conc_cached") {
+				getErr = errors.New("unexpected template returned from cache")
+			}
+			errs <- getErr
+		}()
+	}
+	for range workers {
+		require.NoError(t, <-errs)
+	}
+	assert.Equal(t, 1, m.called, "dedupe: only one underlying fetch expected")
+}
+
+func TestCachedRegistry_GetTemplate_CallerCancellationIsolation(t *testing.T) {
+	t.Parallel()
+	manifestJSON := `{"id":"ctx_isolation","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
+	started := make(chan struct{})
+	m := &mockFetcher{
+		fetch: func(ctx context.Context, _ string) ([]byte, error) {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(40 * time.Millisecond):
+				return []byte(manifestJSON), nil
+			}
+		},
+	}
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
+
+	firstCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	firstErr := make(chan error, 1)
+	go func() {
+		_, getErr := reg.GetTemplate(firstCtx, "ctx_isolation")
+		firstErr <- getErr
+	}()
+
+	<-started
+	tpl, err := reg.GetTemplate(context.Background(), "ctx_isolation")
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, "ctx_isolation", tpl.Metadata.ID)
+
+	err = <-firstErr
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, 1, m.called, "dedupe should still use one shared fetch")
+}
+
+func TestCachedRegistry_GetTemplate_CancelsSharedFetchWhenAllWaitersCancel(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	m := &mockFetcher{
+		fetch: func(ctx context.Context, _ string) ([]byte, error) {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-ctx.Done()
+			select {
+			case <-canceled:
+			default:
+				close(canceled)
+			}
+			return nil, ctx.Err()
+		},
+	}
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
+
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel1()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel2()
+
+	errs := make(chan error, 2)
+	go func() {
+		_, getErr := reg.GetTemplate(ctx1, "ctx_cancel_all")
+		errs <- getErr
+	}()
+	go func() {
+		_, getErr := reg.GetTemplate(ctx2, "ctx_cancel_all")
+		errs <- getErr
+	}()
+
+	<-started
+
+	err1 := <-errs
+	err2 := <-errs
+	require.Error(t, err1)
+	require.Error(t, err2)
+	require.ErrorIs(t, err1, context.DeadlineExceeded)
+	require.ErrorIs(t, err2, context.DeadlineExceeded)
+
+	select {
+	case <-canceled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("shared fetch was not canceled after last waiter left")
+	}
+	assert.Equal(t, 1, m.called, "first wave should dedupe to one shared fetch")
+
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel3()
+	_, err = reg.GetTemplate(ctx3, "ctx_cancel_all")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, 2, m.called, "failed/canceled shared fetch must not populate cache")
+}
+
 func TestRegistry_GetTemplate_InvalidID(t *testing.T) {
 	t.Parallel()
 	m := &mockFetcher{data: map[string][]byte{}}
@@ -327,8 +494,9 @@ func TestRegistry_Evict(t *testing.T) {
 	t.Parallel()
 	manifestJSON := `{"id":"evict_me","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"evict_me": []byte(manifestJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	_, err = reg.GetTemplate(ctx, "evict_me")
 	require.NoError(t, err)
@@ -343,8 +511,9 @@ func TestRegistry_EvictAll(t *testing.T) {
 	t.Parallel()
 	manifestJSON := `{"id":"all","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"all": []byte(manifestJSON)}}
-	reg, err := New(m, WithParser(manifest.NewJSONParser()), WithTTL(time.Minute))
+	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
+	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
 	_, err = reg.GetTemplate(ctx, "all")
 	require.NoError(t, err)
@@ -374,4 +543,44 @@ func TestRegistry_Stat_ReturnsErrWhenNoStatter(t *testing.T) {
 	_, err = reg.Stat(ctx, "any")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+}
+
+func TestCachedRegistry_List_DelegatesToBase(t *testing.T) {
+	t.Parallel()
+	base := &mockRegistryWithExtras{
+		tpl: &prompty.ChatPromptTemplate{},
+		ids: []string{"a", "b"},
+	}
+	reg := WithCache(base, time.Minute)
+	ids, err := reg.List(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, ids)
+}
+
+func TestCachedRegistry_Stat_DelegatesToBase(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	base := &mockRegistryWithExtras{
+		tpl: &prompty.ChatPromptTemplate{},
+		info: prompty.TemplateInfo{
+			ID:        "a",
+			Version:   "1",
+			UpdatedAt: now,
+		},
+	}
+	reg := WithCache(base, time.Minute)
+	info, err := reg.Stat(context.Background(), "a")
+	require.NoError(t, err)
+	assert.Equal(t, "a", info.ID)
+	assert.Equal(t, "1", info.Version)
+	assert.True(t, info.UpdatedAt.Equal(now))
+}
+
+func TestCachedRegistry_Close_DelegatesToBase(t *testing.T) {
+	t.Parallel()
+	base := &mockRegistryWithExtras{tpl: &prompty.ChatPromptTemplate{}}
+	reg := WithCache(base, time.Minute)
+	err := reg.Close()
+	require.NoError(t, err)
+	assert.True(t, base.closeCalled)
 }

@@ -138,7 +138,7 @@ func TestWithTokenBudget_TrimsWhenOverLimit(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
 	// Original exec unchanged (deep copy passed to next)
@@ -172,11 +172,49 @@ func TestWithTokenBudget_KeepsSystemMessage(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2, "original must be unmodified")
 	require.Len(t, receivedExec.Messages, 1, "downstream receives trimmed copy")
 	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
+}
+
+func TestWithTokenBudget_KeepsDeveloperMessageOutsidePrefix(t *testing.T) {
+	t.Parallel()
+	var receivedExec *prompty.PromptExecution
+	base := &invokerFunc{
+		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+			receivedExec = exec
+			return &prompty.Response{}, nil
+		},
+	}
+	counter := &mockCounter{count: func(s string) (int, error) {
+		switch s {
+		case "drop-me":
+			return 10, nil
+		default:
+			return 1, nil
+		}
+	}}
+	inv := WithTokenBudget(4, counter)(base)
+
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "drop-me"}}},
+			{Role: prompty.RoleDeveloper, Content: []prompty.ContentPart{prompty.TextPart{Text: "dev-guard"}}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "keep-me"}}},
+		},
+	}
+
+	_, err := inv.Execute(context.Background(), exec)
+	require.NoError(t, err)
+	require.NotNil(t, receivedExec)
+	require.Len(t, receivedExec.Messages, 3)
+	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
+	assert.Equal(t, prompty.RoleDeveloper, receivedExec.Messages[1].Role)
+	assert.Equal(t, prompty.RoleUser, receivedExec.Messages[2].Role)
+	assert.Equal(t, "keep-me", receivedExec.Messages[2].Content[0].(prompty.TextPart).Text)
 }
 
 func TestWithTokenBudget_NoTrimWhenUnderLimit(t *testing.T) {
@@ -198,7 +236,7 @@ func TestWithTokenBudget_NoTrimWhenUnderLimit(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2)
 }
@@ -240,7 +278,7 @@ func TestWithTokenBudget_KeepsToolWithAssistant(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 5, "original must be unmodified")
 	// Downstream receives trimmed: Turn 1 (user1+assistant+tool) removed; keep system + user2
@@ -260,7 +298,7 @@ func TestWithTokenBudget_PropagatesCounterError(t *testing.T) {
 		},
 	)
 
-	_, err := inv.Generate(context.Background(), &prompty.PromptExecution{
+	_, err := inv.Execute(context.Background(), &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "x"}}},
 		},
@@ -309,7 +347,7 @@ func TestWithTokenBudget_ToolHeavyTurn_CountsArgsAndResult(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 5, "original unchanged")
 	require.Len(t, receivedExec.Messages, 2)
@@ -341,7 +379,7 @@ func TestWithTokenBudget_CountsReasoningPart(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 3, "original unchanged")
 	require.Len(t, receivedExec.Messages, 1, "turn removed; system only fits budget 4")
@@ -372,7 +410,7 @@ func TestWithTokenBudget_MediaPartCounted(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2, "original unchanged")
 	require.Len(t, receivedExec.Messages, 1, "downstream trimmed: media-heavy turn exceeds budget")
@@ -415,7 +453,7 @@ func TestWithTokenBudget_BudgetMetWhenTurnIncludedBeforeBreak(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	// Must fit in 50: sys(10) + turn2(20) = 30. Both turns removed.
 	require.Len(t, receivedExec.Messages, 3, "sys + turn2 only; budget 50 must be met")
@@ -461,7 +499,7 @@ func TestWithTokenBudget_DownstreamMutationDoesNotLeakToOriginal(t *testing.T) {
 		},
 	}
 
-	_, err := inv.Generate(context.Background(), exec)
+	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
 	assert.Equal(t, "original", exec.Messages[0].Metadata["trace"].(map[string]any)["id"])
@@ -472,11 +510,11 @@ type invokerFunc struct {
 	generate func(context.Context, *prompty.PromptExecution) (*prompty.Response, error)
 }
 
-func (i *invokerFunc) Generate(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+func (i *invokerFunc) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
 	return i.generate(ctx, exec)
 }
 
-func (i *invokerFunc) GenerateStream(
+func (i *invokerFunc) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {

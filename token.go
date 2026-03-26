@@ -6,6 +6,8 @@ type textTokenCounter interface {
 	Count(text string) (int, error)
 }
 
+const defaultMediaTokenPenalty = 256
+
 // TokenCounter estimates token count for text and canonical chat messages.
 // Callers can plug in an exact tokenizer (e.g. tiktoken); default is CharFallbackCounter.
 type TokenCounter interface {
@@ -117,4 +119,8 @@ func countTextIfNonEmpty(counter textTokenCounter, text string) (int, error) {
 		return 0, nil
 	}
 	return counter.Count(text)
+}
+
+func toolCallArgsText(part ToolCallPart) string {
+	return part.Args
 }

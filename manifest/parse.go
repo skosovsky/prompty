@@ -93,7 +93,13 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		rm := &raw.Messages[i]
 		content := make([]prompty.TemplatePart, len(rm.Content))
 		for j, p := range rm.Content {
-			content[j] = prompty.TemplatePart{Type: p.Type, Text: p.Text, URL: p.URL}
+			content[j] = prompty.TemplatePart{
+				Type:      p.Type,
+				Text:      p.Text,
+				MediaType: p.MediaType,
+				MIMEType:  p.MIMEType,
+				URL:       p.URL,
+			}
 		}
 		messages[i] = prompty.MessageTemplate{
 			Role:       prompty.Role(rm.Role),

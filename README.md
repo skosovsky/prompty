@@ -21,7 +21,7 @@ The project is split into multiple Go modules. Install only what you need:
 
 ## Quick Start
 
-Minimal example: create an `Invoker` from an adapter, format a prompt, call `Generate`, and read the response text. Requires `OPENAI_API_KEY` in the environment.
+Minimal example: create an `Invoker` from an adapter, format a prompt, call `Execute`, and read the response text. Requires `OPENAI_API_KEY` in the environment.
 
 ```go
 package main
@@ -46,7 +46,7 @@ func main() {
 	client := adapter.NewClient(adp)
 
 	exec := prompty.SimpleChat("You are a helpful assistant.", "What is 2+2?")
-	resp, err := client.Generate(context.Background(), exec)
+	resp, err := client.Execute(context.Background(), exec)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -57,18 +57,18 @@ func main() {
 ## Main abstractions
 
 - **Registry** — supplies `ChatPromptTemplate` by id (from files, embed, or remote). Interface: `GetTemplate(ctx, id) (*ChatPromptTemplate, error)`.
-- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Generate(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `GenerateStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
+- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
 - **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(payload)` to get a `PromptExecution`. Registries can load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
 Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **Adapter** → provider API. HTTP/transport is the caller’s responsibility.
 
 ## Features
 
-- **Domain model**: `ContentPart` (text, image, tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** prompt caching uses `ChatMessage.CachePoint` (or `cache: true` per message in YAML); other provider options via `ChatMessage.Metadata` (e.g. `gemini_search_grounding` for Gemini).
+- **Domain model**: `ContentPart` (text/media/tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** prompt caching uses `ChatMessage.CachePoint` (or `cache: true` per message in YAML). **Execution-level provider knobs:** use `PromptExecution.ModelOptions.ProviderSettings` (e.g. `gemini_search_grounding` for Gemini).
 - **Media**: `exec.ResolvedMedia(ctx, fetcher)` returns a cloned execution with `MediaPart.Data` filled via a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use it before `Translate` for adapters that require inline data (Anthropic, Ollama). OpenAI and Gemini accept URL natively.
 - **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
 - **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection.
-- **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`) with TTL cache.
+- **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`). Remote cache is explicit via `remoteregistry.WithCache(...)`.
 - **Adapters**: map `PromptExecution` to provider request types (OpenAI, Anthropic, Gemini, Ollama); parse responses back to `[]ContentPart`. Tool result is multimodal: `ToolResultPart.Content` is `[]ContentPart` (text and/or images). Adapters that do not support media in tool results return `ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
 - **Observability**: `PromptMetadata` (ID, version, description, tags, environment) on every execution.
 
@@ -78,7 +78,7 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 |---------|-------------|
 | `github.com/skosovsky/prompty/fileregistry` | Load manifests (JSON or YAML via WithParser) from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
 | `github.com/skosovsky/prompty/embedregistry` | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials |
-| `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); TTL cache; `Evict`/`EvictAll`; `Close()` for resource cleanup |
+| `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); explicit cache via `WithCache`; `Close()` for resource cleanup |
 
 All three registries also implement optional `prompty.Lister` (`List(ctx)`) and `prompty.Statter` (`Stat(ctx, id)`). When you have a variable of type `prompty.Registry` and need to list IDs or get template metadata, use a type assertion: `if l, ok := reg.(prompty.Lister); ok { ids, err := l.List(ctx); ... }`.
 
@@ -88,12 +88,12 @@ Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml
 
 | Package | Translate result | Notes |
 |---------|------------------|--------|
-| `github.com/skosovsky/prompty/adapter/openai` | `*openai.ChatCompletionNewParams` | Tools, images (URL/base64), tool calls |
-| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | Images as base64 only |
-| `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Model set at call site |
+| `github.com/skosovsky/prompty/adapter/openai` | `*openai.ChatCompletionNewParams` | Tools, MIME-routed media (image/audio/file), tool calls |
+| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | Images and PDF as base64 |
+| `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes |
 | `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
 
-Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini accept image URL in `MediaPart` natively. For Anthropic and Ollama (base64 only), call `exec.ResolvedMedia(ctx, fetcher)` before `Translate` when using image URLs; pass a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}` or a custom implementation). Otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
+Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types. For Anthropic and Ollama (base64-only request bodies), call `exec.ResolvedMedia(ctx, fetcher)` before `Translate` when using media URLs; pass a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}` or a custom implementation). Otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
 
 ## Architecture
 

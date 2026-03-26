@@ -43,9 +43,9 @@ func main() {
 	openaiClient := openaisdk.NewClient(option.WithAPIKey(apiKey))
 	adp := openaiadapter.New(openaiadapter.WithClient(&openaiClient))
 	client := adapter.NewClient(adp)
-	resp, err := client.Generate(ctx, exec)
+	resp, err := client.Execute(ctx, exec)
 	if err != nil {
-		log.Fatalf("Generate: %v", err)
+		log.Fatalf("Execute: %v", err)
 	}
 	fmt.Println(resp.Text())
 }

@@ -25,7 +25,7 @@ func ExecuteWithToolValidation(
 	}
 
 	workExec := clonePromptExecution(exec)
-	resp, err := invoker.Generate(ctx, workExec)
+	resp, err := invoker.Execute(ctx, workExec)
 	if err != nil {
 		return nil, err
 	}

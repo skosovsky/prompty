@@ -299,9 +299,6 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 		case prompty.TextPart:
 			contentParts = append(contentParts, openai.TextContentPart(x.Text))
 		case prompty.MediaPart:
-			if x.MediaType != "image" {
-				return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
-			}
 			hasImage = true
 			part, err := mediaPartToOpenAI(x)
 			if err != nil {
@@ -319,21 +316,62 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 }
 
 func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUnionParam, error) {
-	url := p.URL
-	if len(p.Data) > 0 {
-		mime := p.MIMEType
-		if mime == "" {
-			mime = "image/png"
-		}
-		url = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+	mime := strings.ToLower(strings.TrimSpace(p.MIMEType))
+	if mime == "" {
+		mime = "application/octet-stream"
 	}
-	if url == "" {
+
+	if strings.HasPrefix(mime, "audio/") {
+		if len(p.Data) == 0 {
+			if p.URL != "" {
+				return openai.ChatCompletionContentPartUnionParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
+			}
+			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
+		}
+		format, ok := openAIInputAudioFormat(mime)
+		if !ok {
+			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
+		}
+		return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+			Data:   base64.StdEncoding.EncodeToString(p.Data),
+			Format: format,
+		}), nil
+	}
+
+	if strings.HasPrefix(mime, "image/") {
+		url := p.URL
+		if len(p.Data) > 0 {
+			url = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+		}
+		if url == "" {
+			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
+		}
+		return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL:    url,
+			Detail: "auto",
+		}), nil
+	}
+
+	if len(p.Data) == 0 {
+		if p.URL != "" {
+			return openai.ChatCompletionContentPartUnionParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
+		}
 		return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
 	}
-	return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
-		URL:    url,
-		Detail: "auto",
+	return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
+		FileData: openai.String(base64.StdEncoding.EncodeToString(p.Data)),
 	}), nil
+}
+
+func openAIInputAudioFormat(mime string) (string, bool) {
+	switch mime {
+	case "audio/mp3", "audio/mpeg":
+		return "mp3", true
+	case "audio/wav", "audio/wave", "audio/x-wav":
+		return "wav", true
+	default:
+		return "", false
+	}
 }
 
 func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatCompletionMessageParamUnion, error) {

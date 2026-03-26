@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -273,6 +272,87 @@ func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
 	assert.NotNil(t, params.Messages[0].Content[0].OfImage)
 }
 
+func TestTranslate_PDFPartData(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", Data: []byte("%PDF-1.7"), MIMEType: "application/pdf"},
+			}},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	doc := params.Messages[0].Content[0].OfDocument
+	require.NotNil(t, doc)
+	mediaType := doc.Source.GetMediaType()
+	require.NotNil(t, mediaType)
+	assert.Equal(t, "application/pdf", *mediaType)
+	sourceType := doc.Source.GetType()
+	require.NotNil(t, sourceType)
+	assert.Equal(t, "base64", *sourceType)
+	data := doc.Source.GetData()
+	require.NotNil(t, data)
+	assert.NotEmpty(t, *data)
+}
+
+func TestTranslate_PDFPartData_WithCachePointSetsCacheControl(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:       prompty.RoleUser,
+				CachePoint: true,
+				Content: []prompty.ContentPart{
+					prompty.MediaPart{MediaType: "document", Data: []byte("%PDF-1.7"), MIMEType: "application/pdf"},
+				},
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	doc := params.Messages[0].Content[0].OfDocument
+	require.NotNil(t, doc)
+	require.NotNil(t, doc.CacheControl)
+	assert.Equal(t, "ephemeral", string(doc.CacheControl.Type))
+}
+
+func TestTranslate_PDFPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", URL: "https://example.com/file.pdf", MIMEType: "application/pdf"},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
+}
+
+func TestTranslate_DocumentPartNonPDFRejected(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", Data: []byte("plain text"), MIMEType: "text/plain"},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
 func TestTranslate_AssistantToolCalls(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -535,7 +615,7 @@ func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *te
 func TestParseStreamChunk_NotImplemented(t *testing.T) {
 	t.Parallel()
 	a := New()
-	_, err := a.ParseStreamChunk(context.Background(), nil)
+	_, err := a.ParseStreamChunk(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrStreamNotImplemented)
 }

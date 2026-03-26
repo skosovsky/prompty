@@ -85,7 +85,7 @@ func ExecuteWithStructuredOutput[T any](
 	if err != nil {
 		return nil, err
 	}
-	resp, err := invoker.Generate(ctx, workExec)
+	resp, err := invoker.Execute(ctx, workExec)
 	if err != nil {
 		return nil, err
 	}

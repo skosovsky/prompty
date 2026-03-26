@@ -12,7 +12,7 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-func TestWithTracing_Generate_WrapsNext(t *testing.T) {
+func TestWithTracing_Execute_WrapsNext(t *testing.T) {
 	t.Parallel()
 	callCount := 0
 	base := &invokerStub{
@@ -40,13 +40,13 @@ func TestWithTracing_Generate_WrapsNext(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
 		},
 	}
-	resp, err := inv.Generate(context.Background(), exec)
+	resp, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, callCount)
 }
 
-func TestWithTracing_Generate_PropagatesError(t *testing.T) {
+func TestWithTracing_Execute_PropagatesError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("backend error")
 	base := &invokerStub{
@@ -59,16 +59,16 @@ func TestWithTracing_Generate_PropagatesError(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	_, err := inv.Generate(context.Background(), &prompty.PromptExecution{})
+	_, err := inv.Execute(context.Background(), &prompty.PromptExecution{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 }
 
-func TestWithTracing_GenerateStream_WrapsNext(t *testing.T) {
+func TestWithTracing_ExecuteStream_WrapsNext(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
 		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
-			return nil, errors.New("unexpected Generate")
+			return nil, errors.New("unexpected Execute")
 		},
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
@@ -78,7 +78,7 @@ func TestWithTracing_GenerateStream_WrapsNext(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.GenerateStream(context.Background(), &prompty.PromptExecution{})
+	seq := inv.ExecuteStream(context.Background(), &prompty.PromptExecution{})
 	count := 0
 	for _, err := range seq {
 		if err != nil {
@@ -89,15 +89,15 @@ func TestWithTracing_GenerateStream_WrapsNext(t *testing.T) {
 	assert.Equal(t, 1, count, "stream should yield one chunk")
 }
 
-// TestWithTracing_GenerateStream_InterruptedStream verifies that when the consumer
+// TestWithTracing_ExecuteStream_InterruptedStream verifies that when the consumer
 // stops early (yield=false), metrics (latency_ms, tokens_total, finish_reason) are still recorded
 // via the defer finalizer. The stream yields one chunk with tokens and FinishReason, then consumer
 // stops; we assert no panic and that the iterator terminates.
-func TestWithTracing_GenerateStream_InterruptedStream(t *testing.T) {
+func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
 		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
-			return nil, errors.New("unexpected Generate")
+			return nil, errors.New("unexpected Execute")
 		},
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
@@ -114,7 +114,7 @@ func TestWithTracing_GenerateStream_InterruptedStream(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.GenerateStream(
+	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
 	)
@@ -135,14 +135,14 @@ func TestWithTracing_GenerateStream_InterruptedStream(t *testing.T) {
 	)
 }
 
-// TestWithTracing_GenerateStream_ProviderError verifies that when the base invoker yields an error,
+// TestWithTracing_ExecuteStream_ProviderError verifies that when the base invoker yields an error,
 // it propagates to the consumer and the middleware does not panic. Defer still records latency_ms.
-func TestWithTracing_GenerateStream_ProviderError(t *testing.T) {
+func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("stream backend error")
 	base := &invokerStub{
 		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
-			return nil, errors.New("unexpected Generate")
+			return nil, errors.New("unexpected Execute")
 		},
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
@@ -152,7 +152,7 @@ func TestWithTracing_GenerateStream_ProviderError(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.GenerateStream(
+	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
 	)
@@ -165,9 +165,9 @@ func TestWithTracing_GenerateStream_ProviderError(t *testing.T) {
 	assert.ErrorIs(t, gotErr, wantErr)
 }
 
-// TestWithTracing_Generate_ErrorPathRecordsLatency verifies that when Generate returns an error,
+// TestWithTracing_Execute_ErrorPathRecordsLatency verifies that when Execute returns an error,
 // the middleware records latency_ms via defer and propagates the error without panic.
-func TestWithTracing_Generate_ErrorPathRecordsLatency(t *testing.T) {
+func TestWithTracing_Execute_ErrorPathRecordsLatency(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("sync backend error")
 	base := &invokerStub{
@@ -180,18 +180,18 @@ func TestWithTracing_Generate_ErrorPathRecordsLatency(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	_, err := inv.Generate(context.Background(), &prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}})
+	_, err := inv.Execute(context.Background(), &prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 }
 
-// TestWithTracing_GenerateStream_EmptyStream verifies that when the stream yields no chunks,
+// TestWithTracing_ExecuteStream_EmptyStream verifies that when the stream yields no chunks,
 // the middleware completes without panic and defer still runs (recording latency_ms only).
-func TestWithTracing_GenerateStream_EmptyStream(t *testing.T) {
+func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
 		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
-			return nil, errors.New("unexpected Generate")
+			return nil, errors.New("unexpected Execute")
 		},
 		generateStream: func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(_ func(*prompty.ResponseChunk, error) bool) {
@@ -201,7 +201,7 @@ func TestWithTracing_GenerateStream_EmptyStream(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.GenerateStream(
+	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
 	)
@@ -215,8 +215,8 @@ func TestWithTracing_GenerateStream_EmptyStream(t *testing.T) {
 	assert.Equal(t, 0, count, "empty stream yields zero chunks")
 }
 
-// TestWithTracing_Generate_RecordsFinishReason exercises the sync path where Response has FinishReason.
-func TestWithTracing_Generate_RecordsFinishReason(t *testing.T) {
+// TestWithTracing_Execute_RecordsFinishReason exercises the sync path where Response has FinishReason.
+func TestWithTracing_Execute_RecordsFinishReason(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
 		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
@@ -231,7 +231,7 @@ func TestWithTracing_Generate_RecordsFinishReason(t *testing.T) {
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	resp, err := inv.Generate(
+	resp, err := inv.Execute(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
 	)
@@ -245,11 +245,11 @@ type invokerStub struct {
 	generateStream func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error]
 }
 
-func (i *invokerStub) Generate(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+func (i *invokerStub) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
 	return i.generate(ctx, exec)
 }
 
-func (i *invokerStub) GenerateStream(
+func (i *invokerStub) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {

@@ -1,7 +1,7 @@
 package prompty
 
 // Middleware wraps Invoker, allowing cross-cutting behavior
-// for Generate and GenerateStream (logging, metrics, tracing, etc.).
+// for Execute and ExecuteStream (logging, metrics, tracing, etc.).
 type Middleware func(next Invoker) Invoker
 
 // Chain combines multiple middlewares around the base Invoker.

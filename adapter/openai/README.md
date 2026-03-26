@@ -17,9 +17,9 @@ go get github.com/skosovsky/prompty/adapter/openai
 ## Capabilities
 
 - **Types:** `Translate` returns `*openai.ChatCompletionNewParams`; `ParseResponse(raw)` expects `*openai.ChatCompletion`; streaming uses `ExecuteStream` via `StreamerAdapter`.
-- **Messages:** system, user, assistant; text and tool calls. Images in `MediaPart`: OpenAI accepts both URL and base64; no need to call `exec.ResolvedMedia` for URLs.
+- **Messages:** system, user, assistant; text and tool calls. `MediaPart` is routed by MIME type: `image/*` (URL/base64), `audio/*` (inline input audio), other MIME types as inline file blocks.
 - **Tools:** tool definitions and tool call/result mapping; tool results can be multimodal (`ToolResultPart.Content` as `[]ContentPart`); if the adapter does not support media in tool results, it returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
-- **Helpers:** With NewClient+Generate use `resp.Text()`. With direct Translate/Execute/ParseResponse use `prompty.TextFromParts(resp.Content)`.
+- **Helpers:** With NewClient+Execute use `resp.Text()`. With direct Translate/Execute/ParseResponse use `prompty.TextFromParts(resp.Content)`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/openai) for the full API.

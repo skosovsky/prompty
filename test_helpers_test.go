@@ -10,19 +10,19 @@ type scriptedInvoker struct {
 	generateStream func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error]
 }
 
-func (s *scriptedInvoker) Generate(ctx context.Context, exec *PromptExecution) (*Response, error) {
+func (s *scriptedInvoker) Execute(ctx context.Context, exec *PromptExecution) (*Response, error) {
 	if s.generate == nil {
 		return nil, nil
 	}
 	return s.generate(ctx, exec)
 }
 
-func (s *scriptedInvoker) GenerateStream(ctx context.Context, exec *PromptExecution) iter.Seq2[*ResponseChunk, error] {
+func (s *scriptedInvoker) ExecuteStream(ctx context.Context, exec *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 	if s.generateStream != nil {
 		return s.generateStream(ctx, exec)
 	}
 	return func(yield func(*ResponseChunk, error) bool) {
-		resp, err := s.Generate(ctx, exec)
+		resp, err := s.Execute(ctx, exec)
 		if err != nil {
 			yield(nil, err)
 			return

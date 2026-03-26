@@ -107,15 +107,12 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	// CachePoint is ignored: Context Caching requires out-of-band orchestration (Context Caching API). Callers may pass cache hint via Metadata for external agents.
-	// Metadata "safety hatch": only gemini_search_grounding (bool) is handled; other keys ignored.
+	// CachePoint is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
+	// ProviderSettings safety hatch: gemini_search_grounding(bool) enables Google Search tool.
 	var wantGoogleSearch bool
-	for _, msg := range exec.Messages {
-		if msg.Metadata != nil {
-			if v, ok := msg.Metadata["gemini_search_grounding"].(bool); ok && v {
-				wantGoogleSearch = true
-				break
-			}
+	if exec.ModelOptions != nil && exec.ModelOptions.ProviderSettings != nil {
+		if v, ok := exec.ModelOptions.ProviderSettings["gemini_search_grounding"].(bool); ok && v {
+			wantGoogleSearch = true
 		}
 	}
 	if len(exec.Tools) > 0 {
@@ -171,20 +168,17 @@ func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, erro
 		case prompty.TextPart:
 			genParts = append(genParts, genai.NewPartFromText(x.Text))
 		case prompty.MediaPart:
-			if x.MediaType != "image" {
-				return nil, adapter.ErrUnsupportedContentType
-			}
 			switch {
 			case len(x.Data) > 0:
 				mime := x.MIMEType
 				if mime == "" {
-					mime = "image/png"
+					mime = "application/octet-stream"
 				}
 				genParts = append(genParts, genai.NewPartFromBytes(x.Data, mime))
 			case x.URL != "":
 				mime := x.MIMEType
 				if mime == "" {
-					mime = "image/png"
+					mime = "application/octet-stream"
 				}
 				genParts = append(genParts, genai.NewPartFromURI(x.URL, mime))
 			default:
@@ -277,8 +271,7 @@ func (a *Adapter) ParseResponse(resp *genai.GenerateContentResponse) (*prompty.R
 
 // ParseStreamChunk parses a single Gemini stream chunk (*genai.GenerateContentResponse).
 // Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
-func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
-	_ = ctx
+func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	chunk, ok := rawChunk.(*genai.GenerateContentResponse)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse

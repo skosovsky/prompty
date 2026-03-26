@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
@@ -222,18 +223,31 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart, cachePoint bool) (ant
 		case prompty.TextPart:
 			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, cachePoint))
 		case prompty.MediaPart:
-			if x.MediaType != "image" {
+			mediaType := strings.ToLower(strings.TrimSpace(x.MediaType))
+			mime := strings.ToLower(strings.TrimSpace(x.MIMEType))
+			isPDF := mediaType == "document" || mime == "application/pdf"
+			isImage := mediaType == "image" || strings.HasPrefix(mime, "image/")
+			if !isPDF && !isImage {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
 			data := x.Data
-			mime := x.MIMEType
 			if len(data) == 0 && x.URL != "" {
 				return anthropic.MessageParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
 			}
 			if len(data) == 0 {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
 			}
-			if mime == "" {
+			if isPDF {
+				if mime == "" {
+					mime = "application/pdf"
+				}
+				if mime != "application/pdf" {
+					return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+				}
+				blocks = append(blocks, a.pdfBlockWithCacheControl(base64.StdEncoding.EncodeToString(data), cachePoint))
+				continue
+			}
+			if mime == "" || !strings.HasPrefix(mime, "image/") {
 				mime = "image/png"
 			}
 			blocks = append(blocks, a.imageBlockWithCacheControl(mime, base64.StdEncoding.EncodeToString(data)))
@@ -313,6 +327,18 @@ func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string) anthropic.
 	return anthropic.NewImageBlockBase64(mime, base64Data)
 }
 
+func (a *Adapter) pdfBlockWithCacheControl(base64Data string, cachePoint bool) anthropic.ContentBlockParamUnion {
+	block := anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
+		Data:      base64Data,
+		MediaType: constant.ValueOf[constant.ApplicationPDF](),
+		Type:      constant.ValueOf[constant.Base64](),
+	})
+	if cachePoint && block.OfDocument != nil {
+		block.OfDocument.CacheControl = anthropic.NewCacheControlEphemeralParam()
+	}
+	return block
+}
+
 // Execute performs the API call. Requires WithClient.
 func (a *Adapter) Execute(ctx context.Context, req *anthropic.MessageNewParams) (*anthropic.Message, error) {
 	if a.client == nil {
@@ -362,8 +388,7 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 // ContentBlockStartEventContentBlockUnion; exact field names depend on anthropic-sdk-go version.
 // Until the adapter is updated to match the SDK struct, callers can type-assert to *ContentBlockDeltaEvent
 // or *ContentBlockStartEvent and extract delta/block manually, or use this stub.
-func (a *Adapter) ParseStreamChunk(ctx context.Context, rawChunk any) ([]prompty.ContentPart, error) {
-	_ = ctx
+func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	_ = rawChunk
 	return nil, adapter.ErrStreamNotImplemented
 }

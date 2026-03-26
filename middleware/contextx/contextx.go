@@ -6,6 +6,7 @@ import (
 	"iter"
 
 	"github.com/skosovsky/prompty"
+	exttruncate "github.com/skosovsky/prompty/ext/truncate"
 )
 
 // WithTokenBudget returns a Middleware that trims exec.Messages to fit within maxTokens
@@ -23,29 +24,31 @@ type tokenBudgetInvoker struct {
 	counter   prompty.TokenCounter
 }
 
-func (t *tokenBudgetInvoker) Generate(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+func (t *tokenBudgetInvoker) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
 	if exec == nil {
-		return t.next.Generate(ctx, exec)
+		return t.next.Execute(ctx, exec)
 	}
 
-	execCopy, err := exec.Truncated(t.maxTokens, t.counter, prompty.DropOldestStrategy{})
+	messages, err := exttruncate.DropOldest(exec.Messages, t.maxTokens, t.counter)
 	if err != nil {
 		return nil, err
 	}
-	return t.next.Generate(ctx, execCopy)
+	execCopy := exec.WithMessages(messages)
+	return t.next.Execute(ctx, execCopy)
 }
 
-func (t *tokenBudgetInvoker) GenerateStream(
+func (t *tokenBudgetInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {
 	if exec == nil {
-		return t.next.GenerateStream(ctx, exec)
+		return t.next.ExecuteStream(ctx, exec)
 	}
 
-	execCopy, err := exec.Truncated(t.maxTokens, t.counter, prompty.DropOldestStrategy{})
+	messages, err := exttruncate.DropOldest(exec.Messages, t.maxTokens, t.counter)
 	if err != nil {
 		return func(yield func(*prompty.ResponseChunk, error) bool) { yield(nil, err) }
 	}
-	return t.next.GenerateStream(ctx, execCopy)
+	execCopy := exec.WithMessages(messages)
+	return t.next.ExecuteStream(ctx, execCopy)
 }

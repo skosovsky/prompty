@@ -1,6 +1,6 @@
 # Git registry for prompty
 
-Provides a `remoteregistry.Fetcher` that reads YAML prompt manifests from a Git repository. The repo is cloned (or pulled if already present) on first use; you pass this Fetcher to `remoteregistry.New` to get a `Registry` with TTL cache.
+Provides a `remoteregistry.Fetcher` that reads YAML prompt manifests from a Git repository. The repo is cloned (or pulled if already present) on first use; you pass this Fetcher to `remoteregistry.New` to get a stateless registry and optionally wrap it with `remoteregistry.WithCache`.
 
 ## Install
 
@@ -11,7 +11,7 @@ go get github.com/skosovsky/prompty/remoteregistry/git
 ## Configuration
 
 - **Repo URL:** required in `NewFetcher(repoURL, opts...)`. Use HTTPS; for private repos use `WithAuth(token)` (e.g. GitHub/GitLab personal access token). Auth is sent as BasicAuth with username `x-access-token` and password equal to the token.
-- **Cache:** the Fetcher does not implement TTL itself; pass the Fetcher to `remoteregistry.New(fetcher, remoteregistry.WithTTL(d))` to control cache duration. Use `Evict`/`EvictAll` and `Close()` on the `remoteregistry.Registry` for cleanup.
+- **Cache:** the Fetcher does not implement TTL itself; wrap the base registry explicitly: `cached := remoteregistry.WithCache(base, d)`. `Evict`/`EvictAll` live on `CachedRegistry`.
 
 ## Capabilities
 

@@ -1,5 +1,5 @@
 // Package otelprompty provides OpenTelemetry tracing middleware for prompty.
-// Use WithTracing to wrap an Invoker and record spans for Generate and GenerateStream.
+// Use WithTracing to wrap an Invoker and record spans for Execute and ExecuteStream.
 package otelprompty
 
 import (
@@ -47,8 +47,8 @@ type tracingInvoker struct {
 	tracer trace.Tracer
 }
 
-func (t *tracingInvoker) Generate(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-	ctx, span := t.tracer.Start(ctx, "prompty.Generate")
+func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
+	ctx, span := t.tracer.Start(ctx, "prompty.Execute")
 	defer span.End()
 	attrs := execAttrs(exec)
 	span.SetAttributes(attrs...)
@@ -56,7 +56,7 @@ func (t *tracingInvoker) Generate(ctx context.Context, exec *prompty.PromptExecu
 	defer func() {
 		span.SetAttributes(attribute.Int64("prompty.latency_ms", time.Since(start).Milliseconds()))
 	}()
-	resp, err := t.next.Generate(ctx, exec)
+	resp, err := t.next.Execute(ctx, exec)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -73,12 +73,12 @@ func (t *tracingInvoker) Generate(ctx context.Context, exec *prompty.PromptExecu
 	return resp, nil
 }
 
-func (t *tracingInvoker) GenerateStream(
+func (t *tracingInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
 ) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		streamCtx, span := t.tracer.Start(ctx, "prompty.GenerateStream")
+		streamCtx, span := t.tracer.Start(ctx, "prompty.ExecuteStream")
 		defer span.End()
 		attrs := execAttrs(exec)
 		span.SetAttributes(attrs...)
@@ -94,7 +94,7 @@ func (t *tracingInvoker) GenerateStream(
 				span.SetAttributes(attribute.String("prompty.finish_reason", finishReason))
 			}
 		}()
-		seq := t.next.GenerateStream(streamCtx, exec)
+		seq := t.next.ExecuteStream(streamCtx, exec)
 		for chunk, err := range seq {
 			if err != nil {
 				span.RecordError(err)

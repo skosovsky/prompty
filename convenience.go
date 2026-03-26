@@ -44,7 +44,7 @@ func GenerateText(ctx context.Context, invoker Invoker, prompt string, opts ...O
 		}
 	}
 
-	resp, err := invoker.Generate(ctx, exec)
+	resp, err := invoker.Execute(ctx, exec)
 	if err != nil {
 		return "", err
 	}

@@ -6,11 +6,11 @@
 //
 // # Usage
 //
-// Create an Invoker from an adapter using NewClient, then call Generate or GenerateStream:
+// Create an Invoker from an adapter using NewClient, then call Execute or ExecuteStream:
 //
 //	adp := openaiadapter.New(openaiadapter.WithClient(openaisdk.NewClient(...)))
 //	client := adapter.NewClient(adp)
-//	resp, err := client.Generate(ctx, exec)
+//	resp, err := client.Execute(ctx, exec)
 //	fmt.Println(resp.Text())
 //
 // # Implementing a custom adapter
@@ -31,7 +31,7 @@
 //     - Return ErrInvalidResponse or ErrEmptyResponse on invalid/empty content.
 //
 // Optional: implement StreamerAdapter[Req] with ExecuteStream(ctx, req) for native streaming.
-// If not implemented, GenerateStream falls back to a polyfill (one chunk from Generate).
+// If not implemented, ExecuteStream falls back to a polyfill (one chunk from Execute).
 //
 // Helper function: prompty.TextFromParts (extract text from []ContentPart).
 //
