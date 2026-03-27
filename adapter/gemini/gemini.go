@@ -107,7 +107,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	// CachePoint is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
+	// CacheControl is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
 	// ProviderSettings safety hatch: gemini_search_grounding(bool) enables Google Search tool.
 	var wantGoogleSearch bool
 	if exec.ModelOptions != nil && exec.ModelOptions.ProviderSettings != nil {

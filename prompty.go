@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 )
 
@@ -29,9 +28,16 @@ type ContentPart interface {
 	isContentPart()
 }
 
+// CacheControl declares cache behavior for a message or content part.
+// Type examples: "ephemeral".
+type CacheControl struct {
+	Type string `json:"type,omitempty" yaml:"type,omitempty"`
+}
+
 // TextPart holds plain text content.
 type TextPart struct {
-	Text string
+	Text         string
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 func (TextPart) isContentPart() {}
@@ -39,17 +45,19 @@ func (TextPart) isContentPart() {}
 // MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
 // Adapters that do not accept URL natively may require callers to resolve URLs into inline data first.
 type MediaPart struct {
-	MediaType string // "image", "audio", "video", "document"
-	MIMEType  string // e.g. "application/pdf", "image/jpeg"
-	URL       string // Optional: link (adapters may fetch and convert to inline)
-	Data      []byte // Optional: raw bytes (base64 is decoded by adapters as needed)
+	MediaType    string        // "image", "audio", "video", "document"
+	MIMEType     string        // e.g. "application/pdf", "image/jpeg"
+	URL          string        // Optional: link (adapters may fetch and convert to inline)
+	Data         []byte        // Optional: raw bytes (base64 is decoded by adapters as needed)
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 func (MediaPart) isContentPart() {}
 
 // ReasoningPart is the hidden reasoning chain returned by some models (e.g. DeepSeek R1, OpenAI o-series).
 type ReasoningPart struct {
-	Text string
+	Text         string
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 func (ReasoningPart) isContentPart() {}
@@ -57,10 +65,11 @@ func (ReasoningPart) isContentPart() {}
 // ToolCallPart represents an AI request to call a function (in assistant message).
 // In streaming: ArgsChunk holds incremental JSON; Args is set in non-stream ParseResponse.
 type ToolCallPart struct {
-	ID        string // Empty for models that do not support ID (e.g. base Gemini)
-	Name      string
-	Args      string // Full JSON string of arguments (non-stream response)
-	ArgsChunk string // Chunk of JSON arguments (streaming); client glues chunks
+	ID           string // Empty for models that do not support ID (e.g. base Gemini)
+	Name         string
+	Args         string        // Full JSON string of arguments (non-stream response)
+	ArgsChunk    string        // Chunk of JSON arguments (streaming); client glues chunks
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 func (ToolCallPart) isContentPart() {}
@@ -68,22 +77,23 @@ func (ToolCallPart) isContentPart() {}
 // ToolResultPart is the result of a tool call (in message with Role "tool").
 // Content is a slice of multimodal parts (text, images, etc.).
 type ToolResultPart struct {
-	ToolCallID string
-	Name       string
-	Content    []ContentPart
-	IsError    bool
+	ToolCallID   string
+	Name         string
+	Content      []ContentPart
+	IsError      bool
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 func (ToolResultPart) isContentPart() {}
 
 // ChatMessage is a single message with role and content parts (supports multimodal).
-// CachePoint hints providers to cache this message (e.g. Anthropic ephemeral).
+// CacheControl hints providers to cache this message (e.g. ephemeral prompt caching).
 // Metadata is message-scoped and should not be used for execution-level model controls.
 type ChatMessage struct {
-	Role       Role
-	Content    []ContentPart
-	CachePoint bool           // When true, adapters may set cache_control / use context caching per provider
-	Metadata   map[string]any // Provider-specific message-scoped extras
+	Role         Role
+	Content      []ContentPart
+	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Metadata     map[string]any // Provider-specific message-scoped extras
 }
 
 // ToolDefinition is the universal tool schema.
@@ -197,47 +207,41 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 	}
 }
 
-// mergeSystemMessages merges two system/developer messages: text parts concatenated with "\n\n", other parts appended.
+// mergeSystemMessages merges two system/developer messages while preserving content-part boundaries.
+// If either source has nil CacheControl or cache types mismatch, merged message CacheControl is nil.
 func mergeSystemMessages(a, b ChatMessage) ChatMessage {
-	texts := textFromParts(a.Content)
-	texts = append(texts, textFromParts(b.Content)...)
-	var mergedText strings.Builder
-	for i, t := range texts {
-		if i > 0 {
-			mergedText.WriteString("\n\n")
-		}
-		mergedText.WriteString(t)
+	content := make([]ContentPart, 0, len(a.Content)+len(b.Content)+1)
+	content = append(content, cloneContentParts(a.Content)...)
+	if hasTextContent(a.Content) && hasTextContent(b.Content) {
+		content = append(content, TextPart{Text: "\n\n"})
 	}
-	content := make([]ContentPart, 0, 1+len(a.Content)+len(b.Content))
-	if mergedText.String() != "" {
-		content = append(content, TextPart{Text: mergedText.String()})
-	}
-	for _, p := range a.Content {
-		if _, ok := p.(TextPart); !ok {
-			content = append(content, cloneContentPart(p))
-		}
-	}
-	for _, p := range b.Content {
-		if _, ok := p.(TextPart); !ok {
-			content = append(content, cloneContentPart(p))
-		}
-	}
+	content = append(content, cloneContentParts(b.Content)...)
 	return ChatMessage{
-		Role:       a.Role,
-		Content:    content,
-		CachePoint: a.CachePoint || b.CachePoint,
-		Metadata:   cloneMapAny(a.Metadata),
+		Role:         a.Role,
+		Content:      content,
+		CacheControl: mergeMessageCacheControl(a.CacheControl, b.CacheControl),
+		Metadata:     cloneMapAny(a.Metadata),
 	}
 }
 
-func textFromParts(parts []ContentPart) []string {
-	var out []string
+func hasTextContent(parts []ContentPart) bool {
 	for _, p := range parts {
-		if t, ok := p.(TextPart); ok {
-			out = append(out, t.Text)
+		switch p.(type) {
+		case TextPart, *TextPart:
+			return true
 		}
 	}
-	return out
+	return false
+}
+
+func mergeMessageCacheControl(a, b *CacheControl) *CacheControl {
+	if a == nil || b == nil {
+		return nil
+	}
+	if a.Type != b.Type {
+		return nil
+	}
+	return cloneCacheControl(a)
 }
 
 // Fetcher defines how media URLs are resolved into raw bytes. Callers can use mediafetch.DefaultFetcher or provide a custom implementation (e.g. S3, local files).
@@ -338,11 +342,12 @@ func newToolResultPart(toolCallID, name, text string, isError bool) ToolResultPa
 
 // TemplatePart is one part of a message template (text or media). Type determines which field set is the template source.
 type TemplatePart struct {
-	Type      string // "text" or "media"
-	Text      string // Go text/template for type "text"
-	MediaType string // Go text/template for type "media" (for example: image, audio, video, document)
-	MIMEType  string // Optional Go text/template for type "media" (for example: image/png)
-	URL       string // Optional Go text/template for type "media"
+	Type         string        // "text" or "media"
+	Text         string        // Go text/template for type "text"
+	MediaType    string        // Go text/template for type "media" (for example: image, audio, video, document)
+	MIMEType     string        // Optional Go text/template for type "media" (for example: image/png)
+	URL          string        // Optional Go text/template for type "media"
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 }
 
 // TextContent returns a single text TemplatePart slice for convenience.
@@ -353,13 +358,13 @@ func TextContent(text string) []TemplatePart {
 // MessageTemplate is the raw template for one message before rendering.
 // After FormatStruct it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
-// CachePoint maps from YAML cache: true; adapters use it for prompt caching (e.g. Anthropic ephemeral).
+// CacheControl applies message-level cache hint; parts may override with their own cache_control.
 type MessageTemplate struct {
-	Role       Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
-	Content    []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
-	Optional   bool           // true → skip if all referenced variables are zero-value
-	CachePoint bool           // When true, request caching for this message where supported
-	Metadata   map[string]any `yaml:"metadata,omitempty"`
+	Role         Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
+	Content      []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
+	Optional     bool           // true → skip if all referenced variables are zero-value
+	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.

@@ -269,3 +269,83 @@ messages:
 	assert.Equal(t, "image/png", media.MIMEType)
 	assert.Equal(t, "https://example.com/img.png", media.URL)
 }
+
+func TestUnmarshal_CacheControl_MessageAndPart(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_cache_control
+version: "1"
+messages:
+  - role: system
+    cache_control:
+      type: ephemeral
+    content:
+      - type: text
+        text: "Policy"
+        cache_control:
+          type: ephemeral
+  - role: user
+    content: "Hi"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.NoError(t, err)
+	require.Len(t, raw.Messages, 2)
+	require.NotNil(t, raw.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", raw.Messages[0].CacheControl.Type)
+	require.Len(t, raw.Messages[0].Content, 1)
+	require.NotNil(t, raw.Messages[0].Content[0].CacheControl)
+	assert.Equal(t, "ephemeral", raw.Messages[0].Content[0].CacheControl.Type)
+}
+
+func TestUnmarshal_LegacyCacheFieldRejected(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_legacy_cache
+version: "1"
+messages:
+  - role: system
+    cache: true
+    content: "Hi"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "field cache not found")
+}
+
+func TestUnmarshal_LegacyPartCacheFieldRejected(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_legacy_part_cache
+version: "1"
+messages:
+  - role: user
+    content:
+      - type: text
+        text: "Hi"
+        cache: true
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "field cache not found")
+}
+
+func TestUnmarshal_UnknownContentPartFieldRejected(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_unknown_part_field
+version: "1"
+messages:
+  - role: user
+    content:
+      - type: text
+        text: "Hi"
+        foo: bar
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "field foo not found")
+}

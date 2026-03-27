@@ -55,15 +55,16 @@ type parsedPart struct {
 	mediaTypeTpl *template.Template
 	mimeTypeTpl  *template.Template
 	urlTpl       *template.Template
+	cacheControl *CacheControl
 }
 
 type parsedMessage struct {
-	parts      []parsedPart
-	role       Role
-	optional   bool
-	cachePoint bool
-	metadata   map[string]any // provider-specific; copied to ChatMessage on render
-	vars       []string       // pre-computed from all parts for optional-skip check
+	parts        []parsedPart
+	role         Role
+	optional     bool
+	cacheControl *CacheControl
+	metadata     map[string]any // provider-specific; copied to ChatMessage on render
+	vars         []string       // pre-computed from all parts for optional-skip check
 }
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
@@ -146,6 +147,7 @@ func NewChatPromptTemplate(
 					mediaTypeTpl: nil,
 					mimeTypeTpl:  nil,
 					urlTpl:       nil,
+					cacheControl: cloneCacheControl(part.CacheControl),
 				})
 				allVars = append(allVars, extractVarsFromTree(textTpl.Tree)...)
 			case partKindMedia:
@@ -189,6 +191,7 @@ func NewChatPromptTemplate(
 					mediaTypeTpl: mediaTypeTpl,
 					mimeTypeTpl:  mimeTypeTpl,
 					urlTpl:       urlTpl,
+					cacheControl: cloneCacheControl(part.CacheControl),
 				})
 				allVars = append(allVars, extractVarsFromTree(mediaTypeTpl.Tree)...)
 				allVars = append(allVars, extractVarsFromTree(mimeTypeTpl.Tree)...)
@@ -208,12 +211,12 @@ func NewChatPromptTemplate(
 			meta = maps.Clone(m.Metadata)
 		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
-			parts:      parsedParts,
-			role:       m.Role,
-			optional:   m.Optional,
-			cachePoint: m.CachePoint,
-			metadata:   meta,
-			vars:       allVars,
+			parts:        parsedParts,
+			role:         m.Role,
+			optional:     m.Optional,
+			cacheControl: cloneCacheControl(m.CacheControl),
+			metadata:     meta,
+			vars:         allVars,
 		})
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
@@ -272,7 +275,10 @@ func (c *ChatPromptTemplate) renderTemplates(
 						err,
 					)
 				}
-				contentParts = append(contentParts, TextPart{Text: rendered})
+				contentParts = append(contentParts, TextPart{
+					Text:         rendered,
+					CacheControl: cloneCacheControl(part.cacheControl),
+				})
 			case partKindMedia:
 				mediaType, err := executeTemplateString(part.mediaTypeTpl, mergedVars)
 				if err != nil {
@@ -315,9 +321,10 @@ func (c *ChatPromptTemplate) renderTemplates(
 					)
 				}
 				contentParts = append(contentParts, MediaPart{
-					MediaType: mediaType,
-					MIMEType:  mimeType,
-					URL:       url,
+					MediaType:    mediaType,
+					MIMEType:     mimeType,
+					URL:          url,
+					CacheControl: cloneCacheControl(part.cacheControl),
 				})
 			default:
 				return nil, fmt.Errorf(
@@ -330,10 +337,10 @@ func (c *ChatPromptTemplate) renderTemplates(
 			}
 		}
 		out = append(out, ChatMessage{
-			Role:       pm.role,
-			Content:    contentParts,
-			CachePoint: pm.cachePoint,
-			Metadata:   maps.Clone(pm.metadata),
+			Role:         pm.role,
+			Content:      contentParts,
+			CacheControl: cloneCacheControl(pm.cacheControl),
+			Metadata:     maps.Clone(pm.metadata),
 		})
 	}
 	out = spliceHistory(out, cloneMessages(history))

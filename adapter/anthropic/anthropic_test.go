@@ -106,7 +106,7 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	assert.Equal(t, "call_2", params.Messages[0].Content[1].OfToolResult.ToolUseID)
 }
 
-func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
+func TestTranslate_ToolResult_WithMediaPart_PassThrough(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -124,9 +124,15 @@ func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.Translate(exec)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	toolResult := params.Messages[0].Content[0].OfToolResult
+	require.NotNil(t, toolResult)
+	require.Len(t, toolResult.Content, 2)
+	assert.NotNil(t, toolResult.Content[0].OfText)
+	assert.NotNil(t, toolResult.Content[1].OfImage)
 }
 
 func TestTranslate_CacheControlOnMessage(t *testing.T) {
@@ -134,7 +140,11 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}, CachePoint: true},
+			{
+				Role:         prompty.RoleSystem,
+				Content:      []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
@@ -142,7 +152,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
-	// CachePoint: true must set CacheControl on the system block in DTO.
+	// CacheControl on message must set cache control on system block.
 	assert.Equal(t, "ephemeral", string(params.System[0].CacheControl.Type))
 	require.Len(t, params.Messages, 1)
 }
@@ -240,19 +250,28 @@ func TestTranslate_ImagePartData(t *testing.T) {
 	assert.NotNil(t, params.Messages[0].Content[0].OfImage)
 }
 
-func TestTranslate_MediaPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
+func TestTranslate_ImagePartURLWithoutData(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png"},
+				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
 			}},
 		},
 	}
-	_, err := a.Translate(exec)
-	require.Error(t, err)
-	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	img := params.Messages[0].Content[0].OfImage
+	require.NotNil(t, img)
+	sourceType := img.Source.GetType()
+	require.NotNil(t, sourceType)
+	assert.Equal(t, "url", *sourceType)
+	url := img.Source.GetURL()
+	require.NotNil(t, url)
+	assert.Equal(t, "https://example.com/img.png", *url)
 }
 
 func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
@@ -299,14 +318,14 @@ func TestTranslate_PDFPartData(t *testing.T) {
 	assert.NotEmpty(t, *data)
 }
 
-func TestTranslate_PDFPartData_WithCachePointSetsCacheControl(t *testing.T) {
+func TestTranslate_PDFPartData_WithMessageCacheControlSetsCacheControl(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:       prompty.RoleUser,
-				CachePoint: true,
+				Role:         prompty.RoleUser,
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
 					prompty.MediaPart{MediaType: "document", Data: []byte("%PDF-1.7"), MIMEType: "application/pdf"},
 				},
@@ -323,7 +342,36 @@ func TestTranslate_PDFPartData_WithCachePointSetsCacheControl(t *testing.T) {
 	assert.Equal(t, "ephemeral", string(doc.CacheControl.Type))
 }
 
-func TestTranslate_PDFPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T) {
+func TestTranslate_PDFPartData_WithPartCacheControlOverridesMessage(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:         prompty.RoleUser,
+				CacheControl: &prompty.CacheControl{Type: "persistent"},
+				Content: []prompty.ContentPart{
+					prompty.MediaPart{
+						MediaType:    "document",
+						Data:         []byte("%PDF-1.7"),
+						MIMEType:     "application/pdf",
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
+				},
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	doc := params.Messages[0].Content[0].OfDocument
+	require.NotNil(t, doc)
+	require.NotNil(t, doc.CacheControl)
+	assert.Equal(t, "ephemeral", string(doc.CacheControl.Type))
+}
+
+func TestTranslate_PDFPartURLWithoutData(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -333,12 +381,21 @@ func TestTranslate_PDFPartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.T
 			}},
 		},
 	}
-	_, err := a.Translate(exec)
-	require.Error(t, err)
-	require.ErrorIs(t, err, adapter.ErrMediaNotResolved)
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	doc := params.Messages[0].Content[0].OfDocument
+	require.NotNil(t, doc)
+	sourceType := doc.Source.GetType()
+	require.NotNil(t, sourceType)
+	assert.Equal(t, "url", *sourceType)
+	url := doc.Source.GetURL()
+	require.NotNil(t, url)
+	assert.Equal(t, "https://example.com/file.pdf", *url)
 }
 
-func TestTranslate_DocumentPartNonPDFRejected(t *testing.T) {
+func TestTranslate_DocumentPartTextPlainPassThrough(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -348,9 +405,82 @@ func TestTranslate_DocumentPartNonPDFRejected(t *testing.T) {
 			}},
 		},
 	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 1)
+	require.Len(t, params.Messages[0].Content, 1)
+	doc := params.Messages[0].Content[0].OfDocument
+	require.NotNil(t, doc)
+	mediaType := doc.Source.GetMediaType()
+	require.NotNil(t, mediaType)
+	assert.Equal(t, "text/plain", *mediaType)
+}
+
+func TestTranslate_DocumentPartUnsupportedMIMERejected(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", Data: []byte(`{"x":1}`), MIMEType: "application/json"},
+			}},
+		},
+	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	assert.Contains(t, err.Error(), `unsupported media MIME "application/json"`)
+}
+
+func TestTranslate_MediaPartDataWithoutMIMETypeRejected(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "image", Data: []byte{0xff, 0xd8}},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	assert.Contains(t, err.Error(), "MediaPart.MIMEType is required")
+}
+
+func TestTranslate_MediaPartURLWithoutMIMETypeRejected(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "document", URL: "https://example.com/file.pdf"},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+	assert.Contains(t, err.Error(), "MediaPart.MIMEType is required")
+}
+
+func TestTranslate_UnsupportedCacheControlType_ReturnsError(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:         prompty.RoleUser,
+				CacheControl: &prompty.CacheControl{Type: "persistent"},
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "Hello"},
+				},
+			},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported cache_control.type")
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {

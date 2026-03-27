@@ -209,7 +209,11 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 }
 
 func isOllamaImageMediaPart(mp prompty.MediaPart) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mp.MIMEType)), "image/")
+	mime := strings.ToLower(strings.TrimSpace(mp.MIMEType))
+	if mime != "" {
+		return strings.HasPrefix(mime, "image/")
+	}
+	return strings.EqualFold(strings.TrimSpace(mp.MediaType), "image")
 }
 
 func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {

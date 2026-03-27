@@ -10,20 +10,21 @@ type Unmarshaler interface {
 
 // RawContentPart is one content element of a message (format-agnostic).
 type RawContentPart struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	MediaType string `json:"media_type,omitempty"`
-	MIMEType  string `json:"mime_type,omitempty"`
-	URL       string `json:"url,omitempty"`
+	Type         string                `json:"type"`
+	Text         string                `json:"text,omitempty"`
+	MediaType    string                `json:"media_type,omitempty"`
+	MIMEType     string                `json:"mime_type,omitempty"`
+	URL          string                `json:"url,omitempty"`
+	CacheControl *prompty.CacheControl `json:"cache_control,omitempty"`
 }
 
 // RawMessage is the raw representation of a single message.
 type RawMessage struct {
-	Role     string           `json:"role"`
-	Content  []RawContentPart `json:"content"`
-	Optional bool             `json:"optional"`
-	Cache    bool             `json:"cache,omitempty"`
-	Metadata map[string]any   `json:"metadata,omitempty"`
+	Role         string                `json:"role"`
+	Content      []RawContentPart      `json:"content"`
+	Optional     bool                  `json:"optional"`
+	CacheControl *prompty.CacheControl `json:"cache_control,omitempty"`
+	Metadata     map[string]any        `json:"metadata,omitempty"`
 }
 
 // RawManifest is the raw representation of a manifest, sufficient for buildTemplate.

@@ -90,6 +90,28 @@ func TestParse_InvalidJSON(t *testing.T) {
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
+func TestParse_JSONUnknownFieldRejected(t *testing.T) {
+	t.Parallel()
+	data := []byte(
+		`{"id":"x","version":"1","unknown":"field","messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]}`,
+	)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	require.ErrorIs(t, err, prompty.ErrInvalidManifest)
+	assert.Contains(t, err.Error(), "unknown field")
+}
+
+func TestParse_JSONLegacyCacheFieldRejected(t *testing.T) {
+	t.Parallel()
+	data := []byte(
+		`{"id":"x","version":"1","messages":[{"role":"system","cache":true,"content":[{"type":"text","text":"Hi"}]}]}`,
+	)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	require.ErrorIs(t, err, prompty.ErrInvalidManifest)
+	assert.Contains(t, err.Error(), "unknown field")
+}
+
 func TestParse_MetadataTagsAndExtras(t *testing.T) {
 	t.Parallel()
 	data := []byte(
@@ -299,16 +321,20 @@ func TestParse_MetadataPassThrough(t *testing.T) {
 	)
 }
 
-func TestParse_CacheTrueAndMetadata(t *testing.T) {
+func TestParse_CacheControlAndMetadata(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper."}],"cache":true,"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+		`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","cache_control":{"type":"ephemeral"},"content":[{"type":"text","text":"You are a helper.","cache_control":{"type":"ephemeral"}}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
-	assert.True(t, tpl.Messages[0].CachePoint)
+	require.NotNil(t, tpl.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", tpl.Messages[0].CacheControl.Type)
+	require.Len(t, tpl.Messages[0].Content, 1)
+	require.NotNil(t, tpl.Messages[0].Content[0].CacheControl)
+	assert.Equal(t, "ephemeral", tpl.Messages[0].Content[0].CacheControl.Type)
 	require.NotNil(t, tpl.Messages[0].Metadata)
 	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
 	exec, err := tpl.FormatStruct(&struct {
@@ -317,7 +343,12 @@ func TestParse_CacheTrueAndMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
-	assert.True(t, exec.Messages[0].CachePoint)
+	require.NotNil(t, exec.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", exec.Messages[0].CacheControl.Type)
+	require.Len(t, exec.Messages[0].Content, 1)
+	text := exec.Messages[0].Content[0].(prompty.TextPart)
+	require.NotNil(t, text.CacheControl)
+	assert.Equal(t, "ephemeral", text.CacheControl.Type)
 	require.NotNil(t, exec.Messages[0].Metadata)
 	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"])
 }

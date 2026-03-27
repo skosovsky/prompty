@@ -82,6 +82,14 @@ func cloneSchemaDefinition(schema *SchemaDefinition) *SchemaDefinition {
 	}
 }
 
+func cloneCacheControl(cache *CacheControl) *CacheControl {
+	if cache == nil {
+		return nil
+	}
+	out := *cache
+	return &out
+}
+
 func cloneToolDefinitions(tools []ToolDefinition) []ToolDefinition {
 	if tools == nil {
 		return nil
@@ -104,11 +112,11 @@ func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
 	out := make([]MessageTemplate, len(messages))
 	for i, msg := range messages {
 		out[i] = MessageTemplate{
-			Role:       msg.Role,
-			Content:    slicesCloneTemplateParts(msg.Content),
-			Optional:   msg.Optional,
-			CachePoint: msg.CachePoint,
-			Metadata:   cloneMapAny(msg.Metadata),
+			Role:         msg.Role,
+			Content:      slicesCloneTemplateParts(msg.Content),
+			Optional:     msg.Optional,
+			CacheControl: cloneCacheControl(msg.CacheControl),
+			Metadata:     cloneMapAny(msg.Metadata),
 		}
 	}
 	return out
@@ -119,7 +127,10 @@ func slicesCloneTemplateParts(parts []TemplatePart) []TemplatePart {
 		return nil
 	}
 	out := make([]TemplatePart, len(parts))
-	copy(out, parts)
+	for i := range parts {
+		out[i] = parts[i]
+		out[i].CacheControl = cloneCacheControl(parts[i].CacheControl)
+	}
 	return out
 }
 
@@ -130,10 +141,10 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 	out := make([]ChatMessage, len(messages))
 	for i, msg := range messages {
 		out[i] = ChatMessage{
-			Role:       msg.Role,
-			Content:    cloneContentParts(msg.Content),
-			CachePoint: msg.CachePoint,
-			Metadata:   cloneMapAny(msg.Metadata),
+			Role:         msg.Role,
+			Content:      cloneContentParts(msg.Content),
+			CacheControl: cloneCacheControl(msg.CacheControl),
+			Metadata:     cloneMapAny(msg.Metadata),
 		}
 	}
 	return out
@@ -157,15 +168,18 @@ func cloneContentParts(parts []ContentPart) []ContentPart {
 func cloneContentPart(part ContentPart) ContentPart {
 	switch x := part.(type) {
 	case TextPart:
+		x.CacheControl = cloneCacheControl(x.CacheControl)
 		return x
 	case *TextPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
+		cp.CacheControl = cloneCacheControl(cp.CacheControl)
 		return &cp
 	case MediaPart:
 		x.Data = bytes.Clone(x.Data)
+		x.CacheControl = cloneCacheControl(x.CacheControl)
 		return x
 	case *MediaPart:
 		if x == nil {
@@ -173,25 +187,31 @@ func cloneContentPart(part ContentPart) ContentPart {
 		}
 		cp := *x
 		cp.Data = bytes.Clone(cp.Data)
+		cp.CacheControl = cloneCacheControl(cp.CacheControl)
 		return &cp
 	case ReasoningPart:
+		x.CacheControl = cloneCacheControl(x.CacheControl)
 		return x
 	case *ReasoningPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
+		cp.CacheControl = cloneCacheControl(cp.CacheControl)
 		return &cp
 	case ToolCallPart:
+		x.CacheControl = cloneCacheControl(x.CacheControl)
 		return x
 	case *ToolCallPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
+		cp.CacheControl = cloneCacheControl(cp.CacheControl)
 		return &cp
 	case ToolResultPart:
 		x.Content = cloneContentParts(x.Content)
+		x.CacheControl = cloneCacheControl(x.CacheControl)
 		return x
 	case *ToolResultPart:
 		if x == nil {
@@ -199,6 +219,7 @@ func cloneContentPart(part ContentPart) ContentPart {
 		}
 		cp := *x
 		cp.Content = cloneContentParts(cp.Content)
+		cp.CacheControl = cloneCacheControl(cp.CacheControl)
 		return &cp
 	default:
 		return part

@@ -938,8 +938,16 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	t.Parallel()
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
-			{Role: RoleSystem, Content: []ContentPart{TextPart{Text: "First system."}}},
-			{Role: RoleSystem, Content: []ContentPart{TextPart{Text: "Second system."}}},
+			{
+				Role:         RoleSystem,
+				Content:      []ContentPart{TextPart{Text: "First system."}},
+				CacheControl: &CacheControl{Type: "ephemeral"},
+			},
+			{
+				Role:         RoleSystem,
+				Content:      []ContentPart{TextPart{Text: "Second system."}},
+				CacheControl: &CacheControl{Type: "ephemeral"},
+			},
 			{Role: RoleUser, Content: []ContentPart{TextPart{Text: "User query"}}},
 		},
 	}
@@ -947,9 +955,38 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	require.Len(t, out.Messages, 2, "two consecutive system messages must merge into one")
 	assert.Equal(t, RoleSystem, out.Messages[0].Role)
 	assert.Equal(t, RoleUser, out.Messages[1].Role)
-	text := out.Messages[0].Content[0].(TextPart).Text
-	assert.Equal(t, "First system.\n\nSecond system.", text)
+	require.Len(t, out.Messages[0].Content, 3)
+	assert.Equal(t, "First system.", out.Messages[0].Content[0].(TextPart).Text)
+	assert.Equal(t, "\n\n", out.Messages[0].Content[1].(TextPart).Text)
+	assert.Equal(t, "Second system.", out.Messages[0].Content[2].(TextPart).Text)
+	require.NotNil(t, out.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", out.Messages[0].CacheControl.Type)
 	assert.Equal(t, "User query", out.Messages[1].Content[0].(TextPart).Text)
+}
+
+func TestPromptExecution_Normalize_CacheControlNilWins(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{
+				Role:    RoleSystem,
+				Content: []ContentPart{TextPart{Text: "First system."}},
+			},
+			{
+				Role:         RoleDeveloper,
+				Content:      []ContentPart{TextPart{Text: "Second system."}},
+				CacheControl: &CacheControl{Type: "ephemeral"},
+			},
+			{
+				Role:         RoleDeveloper,
+				Content:      []ContentPart{TextPart{Text: "Third system."}},
+				CacheControl: &CacheControl{Type: "ephemeral"},
+			},
+		},
+	}
+	out := exec.Normalize()
+	require.Len(t, out.Messages, 1)
+	assert.Nil(t, out.Messages[0].CacheControl)
 }
 
 func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {

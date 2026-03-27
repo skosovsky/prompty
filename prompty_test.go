@@ -121,6 +121,95 @@ func TestPromptExecution_WithHistory_AddMessage_DoesNotMutateOriginals(t *testin
 	assert.Equal(t, "Extra", withExtra.Messages[3].Content[0].(TextPart).Text)
 }
 
+func TestPromptExecution_HelpersPreserveCacheControl(t *testing.T) {
+	t.Parallel()
+	exec := &PromptExecution{
+		Messages: []ChatMessage{
+			{
+				Role:         RoleSystem,
+				CacheControl: &CacheControl{Type: "ephemeral"},
+				Content: []ContentPart{
+					TextPart{Text: "System", CacheControl: &CacheControl{Type: "ephemeral"}},
+					MediaPart{
+						MediaType:    "image",
+						MIMEType:     "image/png",
+						Data:         []byte{0x89, 0x50, 0x4e, 0x47},
+						CacheControl: &CacheControl{Type: "ephemeral"},
+					},
+				},
+			},
+		},
+	}
+
+	history := []ChatMessage{
+		{
+			Role:         RoleUser,
+			CacheControl: &CacheControl{Type: "ephemeral"},
+			Content: []ContentPart{
+				TextPart{Text: "History", CacheControl: &CacheControl{Type: "ephemeral"}},
+			},
+		},
+	}
+	withHistory := exec.WithHistory(history)
+	require.Len(t, withHistory.Messages, 2)
+	require.NotNil(t, withHistory.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", withHistory.Messages[0].CacheControl.Type)
+	require.NotNil(t, withHistory.Messages[0].Content[0].(TextPart).CacheControl)
+	assert.Equal(t, "ephemeral", withHistory.Messages[0].Content[0].(TextPart).CacheControl.Type)
+	require.NotNil(t, withHistory.Messages[0].Content[1].(MediaPart).CacheControl)
+	assert.Equal(t, "ephemeral", withHistory.Messages[0].Content[1].(MediaPart).CacheControl.Type)
+	require.NotNil(t, withHistory.Messages[1].CacheControl)
+	assert.Equal(t, "ephemeral", withHistory.Messages[1].CacheControl.Type)
+
+	extra := ChatMessage{
+		Role:         RoleAssistant,
+		CacheControl: &CacheControl{Type: "ephemeral"},
+		Content: []ContentPart{
+			TextPart{Text: "Extra", CacheControl: &CacheControl{Type: "ephemeral"}},
+		},
+	}
+	withExtra := withHistory.AddMessage(extra)
+	require.Len(t, withExtra.Messages, 3)
+	require.NotNil(t, withExtra.Messages[2].CacheControl)
+	assert.Equal(t, "ephemeral", withExtra.Messages[2].CacheControl.Type)
+	require.NotNil(t, withExtra.Messages[2].Content[0].(TextPart).CacheControl)
+	assert.Equal(t, "ephemeral", withExtra.Messages[2].Content[0].(TextPart).CacheControl.Type)
+
+	replacement := []ChatMessage{
+		{
+			Role:         RoleUser,
+			CacheControl: &CacheControl{Type: "ephemeral"},
+			Content: []ContentPart{
+				MediaPart{
+					MediaType:    "document",
+					MIMEType:     "application/pdf",
+					Data:         []byte("%PDF-1.7"),
+					CacheControl: &CacheControl{Type: "ephemeral"},
+				},
+			},
+		},
+	}
+	withMessages := withExtra.WithMessages(replacement)
+	require.Len(t, withMessages.Messages, 1)
+	require.NotNil(t, withMessages.Messages[0].CacheControl)
+	assert.Equal(t, "ephemeral", withMessages.Messages[0].CacheControl.Type)
+	require.NotNil(t, withMessages.Messages[0].Content[0].(MediaPart).CacheControl)
+	assert.Equal(t, "ephemeral", withMessages.Messages[0].Content[0].(MediaPart).CacheControl.Type)
+
+	cloned := withMessages.Clone()
+	require.Len(t, cloned.Messages, 1)
+	require.NotNil(t, cloned.Messages[0].CacheControl)
+	require.NotNil(t, cloned.Messages[0].Content[0].(MediaPart).CacheControl)
+
+	cloned.Messages[0].CacheControl.Type = "mutated"
+	media := cloned.Messages[0].Content[0].(MediaPart)
+	media.CacheControl.Type = "mutated"
+	cloned.Messages[0].Content[0] = media
+
+	assert.Equal(t, "ephemeral", withMessages.Messages[0].CacheControl.Type)
+	assert.Equal(t, "ephemeral", withMessages.Messages[0].Content[0].(MediaPart).CacheControl.Type)
+}
+
 func TestNewExecution_DefensiveCopy(t *testing.T) {
 	t.Parallel()
 	messages := []ChatMessage{

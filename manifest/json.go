@@ -1,8 +1,10 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 
 	"github.com/skosovsky/prompty"
 )
@@ -32,7 +34,17 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		ResponseFormat  *prompty.SchemaDefinition `json:"response_format"`
 		Messages        []RawMessage              `json:"messages"`
 	}
-	if err := json.Unmarshal(in, &wire); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&wire); err != nil {
+		return err
+	}
+	// Reject trailing JSON values after the manifest object.
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("manifest: multiple JSON values are not allowed")
+		}
 		return err
 	}
 

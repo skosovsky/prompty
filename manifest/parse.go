@@ -94,19 +94,20 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		content := make([]prompty.TemplatePart, len(rm.Content))
 		for j, p := range rm.Content {
 			content[j] = prompty.TemplatePart{
-				Type:      p.Type,
-				Text:      p.Text,
-				MediaType: p.MediaType,
-				MIMEType:  p.MIMEType,
-				URL:       p.URL,
+				Type:         p.Type,
+				Text:         p.Text,
+				MediaType:    p.MediaType,
+				MIMEType:     p.MIMEType,
+				URL:          p.URL,
+				CacheControl: copyCacheControl(p.CacheControl),
 			}
 		}
 		messages[i] = prompty.MessageTemplate{
-			Role:       prompty.Role(rm.Role),
-			Content:    content,
-			Optional:   rm.Optional,
-			CachePoint: rm.Cache,
-			Metadata:   maps.Clone(rm.Metadata),
+			Role:         prompty.Role(rm.Role),
+			Content:      content,
+			Optional:     rm.Optional,
+			CacheControl: copyCacheControl(rm.CacheControl),
+			Metadata:     maps.Clone(rm.Metadata),
 		}
 	}
 	opts := []prompty.ChatTemplateOption{
@@ -167,4 +168,12 @@ func ParseFS(fsys fs.FS, name string, u Unmarshaler, opts ...ParseOption) (*prom
 		return nil, fmt.Errorf("manifest: read fs: %w", err)
 	}
 	return Parse(data, u, opts...)
+}
+
+func copyCacheControl(in *prompty.CacheControl) *prompty.CacheControl {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }

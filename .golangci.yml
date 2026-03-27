@@ -280,7 +280,7 @@ linters:
         - ^google\.golang\.org/grpc/reflection/grpc_reflection_v1\.ServerReflectionRequest$
         - ^google\.golang\.org/protobuf/types/descriptorpb\.FileDescriptorProto$
         # prompty: DTOs and registries are intentionally partially initialized.
-        - ^github.com/skosovsky/prompty\.(ResponseChunk|ModelOptions|generateStructuredConfig|CharFallbackCounter|xmlTool|PromptMetadata|SchemaDefinition|payloadSchema|PromptExecution|ChatMessage|TemplatePart|Response|schemaBuilder|ChatPromptTemplate|MediaPart)$
+        - ^github.com/skosovsky/prompty\.(ResponseChunk|ModelOptions|generateStructuredConfig|CharFallbackCounter|xmlTool|PromptMetadata|SchemaDefinition|payloadSchema|PromptExecution|ChatMessage|TemplatePart|Response|schemaBuilder|ChatPromptTemplate|MediaPart|TextPart|ToolResultPart)$
         - ^github.com/skosovsky/prompty/embedregistry\.Registry$
         - ^github.com/skosovsky/prompty/fileregistry\.Registry$
         - ^github.com/skosovsky/prompty/manifest\.RawMessage$
@@ -493,7 +493,7 @@ linters:
       # prompty core: (nil, nil) and globals are intentional library patterns; see prompty-root-lint plan.
       - path: '^(convenience_test|test_helpers_test|truncate)\.go$|^middleware/contextx/contextx_test\.go$|^manifest/model_options\.go$|^prompty\.go$'
         linters: [ nilnil ]
-      - path: '^(funcmap|payload|schema|template)\.go$|^manifest/(manifest_test|model_options)\.go$|^mediafetch/fetch\.go$|^stream_structured_output\.go$'
+      - path: '^(funcmap|payload|schema|template)\.go$|^manifest/(manifest_test|model_options)\.go$|^mediafetch/fetch\.go$|^stream_structured_output\.go$|^parser/yaml/yaml\.go$'
         linters: [ gochecknoglobals ]
       # Heavy reflection/parsing paths: cognitive complexity accepted until refactor.
       - path: '^(clone|embedregistry/registry|manifest/parse|middleware/contextx/contextx_test|payload|schema_reflect|stream_structured_output|template|token)\.go$'

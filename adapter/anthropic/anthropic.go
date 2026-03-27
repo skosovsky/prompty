@@ -81,22 +81,25 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	for _, msg := range exec.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			text := prompty.TextFromParts(msg.Content)
-			systemBlocks = append(systemBlocks, a.systemTextBlock(text, msg.CachePoint))
+			blocks, err := a.systemMessageBlocks(msg.Content, msg.CacheControl)
+			if err != nil {
+				return nil, err
+			}
+			systemBlocks = append(systemBlocks, blocks...)
 		case prompty.RoleUser:
-			m, err := a.userMessage(msg.Content, msg.CachePoint)
+			m, err := a.userMessage(msg.Content, msg.CacheControl)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, m)
 		case prompty.RoleAssistant:
-			m, err := a.assistantMessage(msg.Content, msg.CachePoint)
+			m, err := a.assistantMessage(msg.Content, msg.CacheControl)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, m)
 		case prompty.RoleTool:
-			m, err := a.toolResultMessage(msg.Content)
+			m, err := a.toolResultMessage(msg.Content, msg.CacheControl)
 			if err != nil {
 				return nil, err
 			}
@@ -216,41 +219,72 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) userMessage(parts []prompty.ContentPart, cachePoint bool) (anthropic.MessageParam, error) {
+func (a *Adapter) systemMessageBlocks(parts []prompty.ContentPart, messageCache *prompty.CacheControl) ([]anthropic.TextBlockParam, error) {
+	blocks := make([]anthropic.TextBlockParam, 0, len(parts))
+	for _, p := range parts {
+		var textPart prompty.TextPart
+		switch x := p.(type) {
+		case prompty.TextPart:
+			textPart = x
+		case *prompty.TextPart:
+			if x == nil {
+				return nil, adapter.ErrUnsupportedContentType
+			}
+			textPart = *x
+		default:
+			return nil, adapter.ErrUnsupportedContentType
+		}
+		cache, err := toAnthropicCacheControl(resolveCacheControl(messageCache, textPart.CacheControl))
+		if err != nil {
+			return nil, err
+		}
+		block := anthropic.TextBlockParam{Text: textPart.Text}
+		if cache != nil {
+			block.CacheControl = *cache
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
+func (a *Adapter) userMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, cachePoint))
-		case prompty.MediaPart:
-			mediaType := strings.ToLower(strings.TrimSpace(x.MediaType))
-			mime := strings.ToLower(strings.TrimSpace(x.MIMEType))
-			isPDF := mediaType == "document" || mime == "application/pdf"
-			isImage := mediaType == "image" || strings.HasPrefix(mime, "image/")
-			if !isPDF && !isImage {
+			block := anthropic.NewTextBlock(x.Text)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
+		case *prompty.TextPart:
+			if x == nil {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
-			data := x.Data
-			if len(data) == 0 && x.URL != "" {
-				return anthropic.MessageParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
+			block := anthropic.NewTextBlock(x.Text)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
 			}
-			if len(data) == 0 {
-				return anthropic.MessageParam{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+			blocks = append(blocks, block)
+		case prompty.MediaPart:
+			cache := resolveCacheControl(messageCache, x.CacheControl)
+			block, err := a.mediaBlock(x, cache)
+			if err != nil {
+				return anthropic.MessageParam{}, err
 			}
-			if isPDF {
-				if mime == "" {
-					mime = "application/pdf"
-				}
-				if mime != "application/pdf" {
-					return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-				}
-				blocks = append(blocks, a.pdfBlockWithCacheControl(base64.StdEncoding.EncodeToString(data), cachePoint))
-				continue
+			blocks = append(blocks, block)
+		case *prompty.MediaPart:
+			if x == nil {
+				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
-			if mime == "" || !strings.HasPrefix(mime, "image/") {
-				mime = "image/png"
+			cache := resolveCacheControl(messageCache, x.CacheControl)
+			block, err := a.mediaBlock(*x, cache)
+			if err != nil {
+				return anthropic.MessageParam{}, err
 			}
-			blocks = append(blocks, a.imageBlockWithCacheControl(mime, base64.StdEncoding.EncodeToString(data)))
+			blocks = append(blocks, block)
 		default:
 			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 		}
@@ -258,12 +292,27 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart, cachePoint bool) (ant
 	return anthropic.NewUserMessage(blocks...), nil
 }
 
-func (a *Adapter) assistantMessage(parts []prompty.ContentPart, cachePoint bool) (anthropic.MessageParam, error) {
+func (a *Adapter) assistantMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
-			blocks = append(blocks, a.textBlockWithCacheControl(x.Text, cachePoint))
+			block := anthropic.NewTextBlock(x.Text)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
+		case *prompty.TextPart:
+			if x == nil {
+				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+			}
+			block := anthropic.NewTextBlock(x.Text)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
 		case prompty.ToolCallPart:
 			if x.Args != "" && !json.Valid([]byte(x.Args)) {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
@@ -272,7 +321,29 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart, cachePoint bool)
 			if x.Args != "" {
 				input = json.RawMessage(x.Args)
 			}
-			blocks = append(blocks, anthropic.NewToolUseBlock(x.ID, input, x.Name))
+			block := anthropic.NewToolUseBlock(x.ID, input, x.Name)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
+		case *prompty.ToolCallPart:
+			if x == nil {
+				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+			}
+			if x.Args != "" && !json.Valid([]byte(x.Args)) {
+				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
+			}
+			var input json.RawMessage
+			if x.Args != "" {
+				input = json.RawMessage(x.Args)
+			}
+			block := anthropic.NewToolUseBlock(x.ID, input, x.Name)
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
 		default:
 			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 		}
@@ -280,18 +351,43 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart, cachePoint bool)
 	return anthropic.NewAssistantMessage(blocks...), nil
 }
 
-func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.MessageParam, error) {
+func (a *Adapter) toolResultMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
 	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 	for _, p := range parts {
-		if tr, ok := p.(prompty.ToolResultPart); ok {
-			// SDK NewToolResultBlock(toolUseID, content string, isError). Build text from parts; fail on MediaPart.
-			for _, cp := range tr.Content {
-				if _, ok := cp.(prompty.MediaPart); ok {
-					return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-				}
+		var tr prompty.ToolResultPart
+		switch x := p.(type) {
+		case prompty.ToolResultPart:
+			tr = x
+		case *prompty.ToolResultPart:
+			if x == nil {
+				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
-			text := prompty.TextFromParts(tr.Content)
-			blocks = append(blocks, anthropic.NewToolResultBlock(tr.ToolCallID, text, tr.IsError))
+			tr = *x
+		default:
+			continue
+		}
+		{
+			toolResultCache := resolveCacheControl(messageCache, tr.CacheControl)
+			content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(tr.Content))
+			for _, cp := range tr.Content {
+				block, err := a.toolResultContentBlock(cp, toolResultCache)
+				if err != nil {
+					return anthropic.MessageParam{}, err
+				}
+				content = append(content, block)
+			}
+			block := anthropic.ContentBlockParamUnion{
+				OfToolResult: &anthropic.ToolResultBlockParam{
+					ToolUseID: tr.ToolCallID,
+					IsError:   anthropic.Bool(tr.IsError),
+					Content:   content,
+				},
+			}
+			block, err := a.applyCacheControl(block, toolResultCache)
+			if err != nil {
+				return anthropic.MessageParam{}, err
+			}
+			blocks = append(blocks, block)
 		}
 	}
 	if len(blocks) == 0 {
@@ -300,43 +396,192 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart) (anthropic.Mess
 	return anthropic.NewUserMessage(blocks...), nil
 }
 
-// systemTextBlock returns a system text block; sets CacheControl when cachePoint is true (ephemeral).
-func (a *Adapter) systemTextBlock(text string, cachePoint bool) anthropic.TextBlockParam {
-	block := anthropic.TextBlockParam{Text: text}
-	if cachePoint {
-		block.CacheControl = anthropic.NewCacheControlEphemeralParam()
-	}
-	return block
-}
-
-// textBlockWithCacheControl returns a text block; sets CacheControl when cachePoint is true (ephemeral).
-func (a *Adapter) textBlockWithCacheControl(text string, cachePoint bool) anthropic.ContentBlockParamUnion {
-	if cachePoint {
-		return anthropic.ContentBlockParamUnion{
-			OfText: &anthropic.TextBlockParam{
-				Text:         text,
-				CacheControl: anthropic.NewCacheControlEphemeralParam(),
-			},
+func (a *Adapter) toolResultContentBlock(part prompty.ContentPart, inheritedCache *prompty.CacheControl) (anthropic.ToolResultBlockParamContentUnion, error) {
+	cache := resolveCacheControl(inheritedCache, contentPartCacheControl(part))
+	switch x := part.(type) {
+	case prompty.TextPart:
+		c, err := toAnthropicCacheControl(cache)
+		if err != nil {
+			return anthropic.ToolResultBlockParamContentUnion{}, err
 		}
+		block := anthropic.ToolResultBlockParamContentUnion{OfText: &anthropic.TextBlockParam{Text: x.Text}}
+		if c != nil && block.OfText != nil {
+			block.OfText.CacheControl = *c
+		}
+		return block, nil
+	case prompty.MediaPart:
+		b, err := a.mediaBlock(x, cache)
+		if err != nil {
+			return anthropic.ToolResultBlockParamContentUnion{}, err
+		}
+		return anthropic.ToolResultBlockParamContentUnion{
+			OfImage:    b.OfImage,
+			OfDocument: b.OfDocument,
+		}, nil
+	case *prompty.TextPart:
+		if x == nil {
+			return anthropic.ToolResultBlockParamContentUnion{}, adapter.ErrUnsupportedContentType
+		}
+		return a.toolResultContentBlock(*x, inheritedCache)
+	case *prompty.MediaPart:
+		if x == nil {
+			return anthropic.ToolResultBlockParamContentUnion{}, adapter.ErrUnsupportedContentType
+		}
+		return a.toolResultContentBlock(*x, inheritedCache)
+	default:
+		return anthropic.ToolResultBlockParamContentUnion{}, adapter.ErrUnsupportedContentType
 	}
-	return anthropic.NewTextBlock(text)
 }
 
-// imageBlockWithCacheControl returns an image block (no cache control on image blocks per SDK).
-func (a *Adapter) imageBlockWithCacheControl(mime, base64Data string) anthropic.ContentBlockParamUnion {
-	return anthropic.NewImageBlockBase64(mime, base64Data)
+func (a *Adapter) mediaBlock(part prompty.MediaPart, cache *prompty.CacheControl) (anthropic.ContentBlockParamUnion, error) {
+	mime := strings.ToLower(strings.TrimSpace(part.MIMEType))
+	if mime == "" {
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
+			"%w: MediaPart.MIMEType is required for Anthropic media translation",
+			adapter.ErrUnsupportedContentType,
+		)
+	}
+	var (
+		block anthropic.ContentBlockParamUnion
+		err   error
+	)
+	switch {
+	case len(part.Data) > 0:
+		block, err = mediaBlockFromData(mime, part.Data)
+	case part.URL != "":
+		block, err = mediaBlockFromURL(mime, part.URL)
+	default:
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+	}
+	if err != nil {
+		return anthropic.ContentBlockParamUnion{}, err
+	}
+	return a.applyCacheControl(block, cache)
 }
 
-func (a *Adapter) pdfBlockWithCacheControl(base64Data string, cachePoint bool) anthropic.ContentBlockParamUnion {
-	block := anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
-		Data:      base64Data,
-		MediaType: constant.ValueOf[constant.ApplicationPDF](),
-		Type:      constant.ValueOf[constant.Base64](),
-	})
-	if cachePoint && block.OfDocument != nil {
-		block.OfDocument.CacheControl = anthropic.NewCacheControlEphemeralParam()
+func mediaBlockFromData(mime string, data []byte) (anthropic.ContentBlockParamUnion, error) {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(data)), nil
+	case mime == "application/pdf":
+		return anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
+			Data:      base64.StdEncoding.EncodeToString(data),
+			MediaType: constant.ValueOf[constant.ApplicationPDF](),
+			Type:      constant.ValueOf[constant.Base64](),
+		}), nil
+	case mime == "text/plain":
+		return anthropic.NewDocumentBlock(anthropic.PlainTextSourceParam{
+			Data:      string(data),
+			MediaType: constant.ValueOf[constant.TextPlain](),
+			Type:      constant.ValueOf[constant.Text](),
+		}), nil
+	default:
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: unsupported media MIME %q", adapter.ErrUnsupportedContentType, mime)
 	}
-	return block
+}
+
+func mediaBlockFromURL(mime, url string) (anthropic.ContentBlockParamUnion, error) {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return anthropic.NewImageBlock(anthropic.URLImageSourceParam{
+			URL:  url,
+			Type: constant.ValueOf[constant.URL](),
+		}), nil
+	case mime == "application/pdf":
+		return anthropic.NewDocumentBlock(anthropic.URLPDFSourceParam{
+			URL:  url,
+			Type: constant.ValueOf[constant.URL](),
+		}), nil
+	default:
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: unsupported URL media MIME %q", adapter.ErrUnsupportedContentType, mime)
+	}
+}
+
+func (a *Adapter) applyCacheControl(block anthropic.ContentBlockParamUnion, cache *prompty.CacheControl) (anthropic.ContentBlockParamUnion, error) {
+	c, err := toAnthropicCacheControl(cache)
+	if err != nil {
+		return anthropic.ContentBlockParamUnion{}, err
+	}
+	if c == nil {
+		return block, nil
+	}
+	switch {
+	case block.OfText != nil:
+		block.OfText.CacheControl = *c
+	case block.OfImage != nil:
+		block.OfImage.CacheControl = *c
+	case block.OfDocument != nil:
+		block.OfDocument.CacheControl = *c
+	case block.OfToolUse != nil:
+		block.OfToolUse.CacheControl = *c
+	case block.OfToolResult != nil:
+		block.OfToolResult.CacheControl = *c
+	}
+	return block, nil
+}
+
+func toAnthropicCacheControl(cache *prompty.CacheControl) (*anthropic.CacheControlEphemeralParam, error) {
+	if cache == nil {
+		return nil, nil
+	}
+	cacheType := strings.ToLower(strings.TrimSpace(cache.Type))
+	if cacheType == "" {
+		return nil, nil
+	}
+	if cacheType != "ephemeral" {
+		return nil, fmt.Errorf("anthropic adapter: unsupported cache_control.type %q", cache.Type)
+	}
+	c := anthropic.NewCacheControlEphemeralParam()
+	return &c, nil
+}
+
+func resolveCacheControl(messageCache, partCache *prompty.CacheControl) *prompty.CacheControl {
+	if partCache != nil {
+		return partCache
+	}
+	return messageCache
+}
+
+func contentPartCacheControl(part prompty.ContentPart) *prompty.CacheControl {
+	switch x := part.(type) {
+	case prompty.TextPart:
+		return x.CacheControl
+	case *prompty.TextPart:
+		if x == nil {
+			return nil
+		}
+		return x.CacheControl
+	case prompty.MediaPart:
+		return x.CacheControl
+	case *prompty.MediaPart:
+		if x == nil {
+			return nil
+		}
+		return x.CacheControl
+	case prompty.ReasoningPart:
+		return x.CacheControl
+	case *prompty.ReasoningPart:
+		if x == nil {
+			return nil
+		}
+		return x.CacheControl
+	case prompty.ToolCallPart:
+		return x.CacheControl
+	case *prompty.ToolCallPart:
+		if x == nil {
+			return nil
+		}
+		return x.CacheControl
+	case prompty.ToolResultPart:
+		return x.CacheControl
+	case *prompty.ToolResultPart:
+		if x == nil {
+			return nil
+		}
+		return x.CacheControl
+	default:
+		return nil
+	}
 }
 
 // Execute performs the API call. Requires WithClient.

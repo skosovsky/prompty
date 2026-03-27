@@ -64,8 +64,8 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 
 ## Features
 
-- **Domain model**: `ContentPart` (text/media/tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). **Message-level:** prompt caching uses `ChatMessage.CachePoint` (or `cache: true` per message in YAML). **Execution-level provider knobs:** use `PromptExecution.ModelOptions.ProviderSettings` (e.g. `gemini_search_grounding` for Gemini).
-- **Media**: `exec.ResolvedMedia(ctx, fetcher)` returns a cloned execution with `MediaPart.Data` filled via a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use it before `Translate` for adapters that require inline data (Anthropic, Ollama). OpenAI and Gemini accept URL natively.
+- **Domain model**: `ContentPart` (text/media/tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). Prompt caching uses `CacheControl` on message and/or part level (`cache_control` in manifests). **Execution-level provider knobs:** use `PromptExecution.ModelOptions.ProviderSettings` (e.g. `gemini_search_grounding` for Gemini).
+- **Media**: `exec.ResolvedMedia(ctx, fetcher)` returns a cloned execution with `MediaPart.Data` filled via a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use it before `Translate` for adapters that require inline data (for example Ollama, and Anthropic for unsupported URL media shapes). OpenAI and Gemini accept URL natively.
 - **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
 - **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection.
 - **Registries**: load manifests from filesystem (`fileregistry`), embed (`embedregistry`), or remote HTTP/Git (`remoteregistry`). Remote cache is explicit via `remoteregistry.WithCache(...)`.
@@ -89,11 +89,11 @@ Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml
 | Package | Translate result | Notes |
 |---------|------------------|--------|
 | `github.com/skosovsky/prompty/adapter/openai` | `*openai.ChatCompletionNewParams` | Tools, MIME-routed media (image/audio/file), tool calls |
-| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | Images and PDF as base64 |
+| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | `image/*` and PDF media (base64 or URL), `text/plain` document blocks (base64), tool calls |
 | `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes |
 | `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
 
-Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types. For Anthropic and Ollama (base64-only request bodies), call `exec.ResolvedMedia(ctx, fetcher)` before `Translate` when using media URLs; pass a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}` or a custom implementation). Otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
+Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. When URL media is unsupported by the target adapter, call `exec.ResolvedMedia(ctx, fetcher)` first; otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
 
 ## Architecture
 

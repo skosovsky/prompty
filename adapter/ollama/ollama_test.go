@@ -176,6 +176,23 @@ func TestTranslate_ImagePartData_MIMEFallbackWhenMediaTypeEmpty(t *testing.T) {
 	assert.Equal(t, api.ImageData([]byte{0x89, 0x50, 0x4e, 0x47}), req.Messages[0].Images[0])
 }
 
+func TestTranslate_ImagePartData_MediaTypeFallbackWhenMIMEEmpty(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "image", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+			}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Messages, 1)
+	assert.Len(t, req.Messages[0].Images, 1)
+	assert.Equal(t, api.ImageData([]byte{0x89, 0x50, 0x4e, 0x47}), req.Messages[0].Images[0])
+}
+
 func TestTranslate_ImagePartData_MIMEWinsOverConflictingMediaType(t *testing.T) {
 	t.Parallel()
 	a := New()

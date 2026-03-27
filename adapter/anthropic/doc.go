@@ -1,8 +1,12 @@
 // Package anthropic provides a prompty adapter for the Anthropic Messages API.
 // Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
 //
-// MediaPart: supports images and PDF documents. Data is sent as base64; when only URL is set,
-// callers must resolve media before Translate. Data takes precedence over URL.
+// MediaPart: image/* is mapped to image blocks (base64 or URL), application/pdf to
+// PDF document blocks (base64 or URL), and text/plain to plain-text document blocks
+// (base64 only). Data takes precedence over URL. MIMEType is required; adapter does not
+// synthesize default MIME values from MediaType.
+// CacheControl: message-level cache is the default for all generated blocks; part-level
+// cache overrides message-level cache. Anthropic currently supports type "ephemeral".
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 //
 // Tool schema: only "properties" and "required" from ToolDefinition.Parameters are mapped

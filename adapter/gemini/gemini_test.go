@@ -63,6 +63,43 @@ func TestTranslate_SystemMessage(t *testing.T) {
 	assert.Equal(t, "Hi", req.Contents[0].Parts[0].Text)
 }
 
+func TestTranslate_CacheControlIgnored(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:         prompty.RoleSystem,
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "System", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+				},
+			},
+			{
+				Role:         prompty.RoleUser,
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "Look", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.MediaPart{
+						MediaType:    "image",
+						MIMEType:     "image/png",
+						Data:         []byte{0x89, 0x50, 0x4e, 0x47},
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
+				},
+			},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.SystemInstruction)
+	require.Len(t, req.Contents, 1)
+	require.Len(t, req.Contents[0].Parts, 2)
+	assert.Equal(t, "Look", req.Contents[0].Parts[0].Text)
+	require.NotNil(t, req.Contents[0].Parts[1].InlineData)
+	assert.Equal(t, "image/png", req.Contents[0].Parts[1].InlineData.MIMEType)
+}
+
 func TestTranslate_WithTools(t *testing.T) {
 	t.Parallel()
 	a := New()

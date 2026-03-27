@@ -20,6 +20,7 @@ go get github.com/skosovsky/prompty/adapter/openai
 - **Messages:** system, user, assistant; text and tool calls. `MediaPart` is routed by MIME type: `image/*` (URL/base64), `audio/*` (inline input audio), other MIME types as inline file blocks.
 - **Tools:** tool definitions and tool call/result mapping; tool results can be multimodal (`ToolResultPart.Content` as `[]ContentPart`); if the adapter does not support media in tool results, it returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
+- **Cache control:** `CacheControl` is accepted on messages/parts and ignored by this adapter in current OpenAI APIs.
 - **Helpers:** With NewClient+Execute use `resp.Text()`. With direct Translate/Execute/ParseResponse use `prompty.TextFromParts(resp.Content)`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/openai) for the full API.

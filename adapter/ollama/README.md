@@ -17,7 +17,7 @@ go get github.com/skosovsky/prompty/adapter/ollama
 
 - **Types:** `Translate` returns `*api.ChatRequest`; `ParseResponse(raw)` expects the Ollama chat response type; `ParseStreamChunk` if supported, or `adapter.ErrStreamNotImplemented`.
 - **Messages:** system, user, assistant. **Tools:** native Ollama tool definitions and tool call/result format.
-- **Images:** only base64. For image URLs call `exec.ResolvedMedia(ctx, fetcher)` before `Translate`; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Tool results: if the adapter does not support media in tool results, it returns `adapter.ErrUnsupportedContentType` when `MediaPart` is present in `ToolResultPart.Content`.
+- **Media:** Ollama chat request supports only `images`; this adapter accepts only `image/*` user media. For image URLs call `exec.ResolvedMedia(ctx, fetcher)` before `Translate`; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Tool results remain text-only in this adapter.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
 - **Helpers:** `prompty.TextFromParts`.
 

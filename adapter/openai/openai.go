@@ -201,7 +201,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 	if exec == nil {
 		return nil, adapter.ErrNilExecution
 	}
-	// CachePoint is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
+	// CacheControl is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(exec.Messages)),
 		Model:    a.defaultModel,
@@ -328,10 +328,7 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 			}
 			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
 		}
-		format, ok := openAIInputAudioFormat(mime)
-		if !ok {
-			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
-		}
+		format := openAIInputAudioFormat(mime)
 		return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
 			Data:   base64.StdEncoding.EncodeToString(p.Data),
 			Format: format,
@@ -363,14 +360,25 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 	}), nil
 }
 
-func openAIInputAudioFormat(mime string) (string, bool) {
+func openAIInputAudioFormat(mime string) string {
 	switch mime {
 	case "audio/mp3", "audio/mpeg":
-		return "mp3", true
+		return "mp3"
 	case "audio/wav", "audio/wave", "audio/x-wav":
-		return "wav", true
+		return "wav"
 	default:
-		return "", false
+		subtype := mime
+		if i := strings.IndexByte(mime, '/'); i >= 0 && i+1 < len(mime) {
+			subtype = mime[i+1:]
+		}
+		if i := strings.IndexByte(subtype, ';'); i >= 0 {
+			subtype = subtype[:i]
+		}
+		subtype = strings.TrimSpace(subtype)
+		if subtype == "" {
+			return "mp3"
+		}
+		return subtype
 	}
 }
 

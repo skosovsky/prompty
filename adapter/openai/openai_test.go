@@ -64,6 +64,44 @@ func TestTranslate_SystemMessage(t *testing.T) {
 	assert.NotNil(t, params.Messages[1].OfUser)
 }
 
+func TestTranslate_CacheControlIgnored(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:         prompty.RoleSystem,
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "System", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+				},
+			},
+			{
+				Role:         prompty.RoleUser,
+				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "Look", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.MediaPart{
+						MediaType:    "image",
+						MIMEType:     "image/png",
+						Data:         []byte{0x89, 0x50, 0x4e, 0x47},
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
+				},
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Messages, 2)
+	require.NotNil(t, params.Messages[0].OfSystem)
+	require.NotNil(t, params.Messages[1].OfUser)
+	parts := params.Messages[1].OfUser.Content.OfArrayOfContentParts
+	require.Len(t, parts, 2)
+	assert.NotNil(t, parts[0].GetText())
+	assert.NotNil(t, parts[1].GetImageURL())
+}
+
 func TestTranslate_WithTools(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -259,6 +297,27 @@ func TestTranslate_AudioPartData(t *testing.T) {
 	audio := parts[1].GetInputAudio()
 	require.NotNil(t, audio)
 	assert.Equal(t, "mp3", audio.Format)
+}
+
+func TestTranslate_AudioPartData_UnknownMIMEPassThrough(t *testing.T) {
+	t.Parallel()
+	a := New()
+	audioData := []byte{0x01, 0x02, 0x03}
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
+				prompty.MediaPart{MediaType: "audio", Data: audioData, MIMEType: "audio/ogg"},
+			}},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, params.Messages[0].OfUser)
+	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
+	require.Len(t, parts, 1)
+	audio := parts[0].GetInputAudio()
+	require.NotNil(t, audio)
+	assert.Equal(t, "ogg", audio.Format)
 }
 
 func TestTranslate_FilePartData(t *testing.T) {
