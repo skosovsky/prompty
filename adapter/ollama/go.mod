@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/ollama/ollama v0.17.4
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.7.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 )
@@ -21,5 +21,3 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..

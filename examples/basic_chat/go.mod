@@ -4,8 +4,8 @@ go 1.26.1
 
 require (
 	github.com/openai/openai-go/v3 v3.24.0
-	github.com/skosovsky/prompty v0.0.0
-	github.com/skosovsky/prompty/adapter/openai v0.0.0
+	github.com/skosovsky/prompty v0.7.0
+	github.com/skosovsky/prompty/adapter/openai v0.7.0
 )
 
 require (
@@ -14,9 +14,4 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-replace (
-	github.com/skosovsky/prompty => ../..
-	github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
 )

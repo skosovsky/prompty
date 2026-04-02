@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/openai/openai-go/v3 v3.24.0
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.7.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 )
@@ -19,5 +19,3 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..
