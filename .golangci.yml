@@ -280,7 +280,7 @@ linters:
         - ^google\.golang\.org/grpc/reflection/grpc_reflection_v1\.ServerReflectionRequest$
         - ^google\.golang\.org/protobuf/types/descriptorpb\.FileDescriptorProto$
         # prompty: DTOs and registries are intentionally partially initialized.
-        - ^github.com/skosovsky/prompty\.(ResponseChunk|ModelOptions|generateStructuredConfig|CharFallbackCounter|xmlTool|PromptMetadata|SchemaDefinition|payloadSchema|PromptExecution|ChatMessage|TemplatePart|Response|schemaBuilder|ChatPromptTemplate|MediaPart|TextPart|ToolResultPart)$
+        - ^github.com/skosovsky/prompty\.(ResponseChunk|ModelOptions|CharFallbackCounter|xmlTool|PromptMetadata|SchemaDefinition|payloadSchema|PromptExecution|ChatMessage|TemplatePart|Response|schemaBuilder|ChatPromptTemplate|MediaPart|TextPart|ToolResultPart)$
         - ^github.com/skosovsky/prompty/embedregistry\.Registry$
         - ^github.com/skosovsky/prompty/fileregistry\.Registry$
         - ^github.com/skosovsky/prompty/manifest\.RawMessage$

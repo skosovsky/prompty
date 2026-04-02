@@ -632,39 +632,27 @@ func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T
 	assert.Equal(t, original, schema, "strict normalization must not mutate caller-owned schema")
 }
 
-func TestTranslate_WithRetryBatchedToolResultsSurviveOpenAITranslation(t *testing.T) {
+func TestTranslate_BatchedToolResultsSurviveOpenAITranslation(t *testing.T) {
 	t.Parallel()
 	a := New()
 
-	callNum := 0
-	var translatedExec *prompty.PromptExecution
-	result, err := prompty.WithRetry(context.Background(), prompty.NewExecution([]prompty.ChatMessage{
-		prompty.NewUserMessage("hi"),
-	}), 1, func(_ context.Context, exec *prompty.PromptExecution) (string, error) {
-		callNum++
-		if callNum == 1 {
-			msg := prompty.ChatMessage{
-				Role: prompty.RoleAssistant,
-				Content: []prompty.ContentPart{
-					prompty.ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
-					prompty.ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
-				},
-			}
-			return "", &prompty.ToolCallError{
-				RawAssistantMessage: &msg,
-				ToolResults: []prompty.ContentPart{
-					prompty.ToolResultPart{ToolCallID: "tool-1", Name: "lookup", Content: []prompty.ContentPart{prompty.TextPart{Text: "lookup invalid"}}, IsError: true},
-					prompty.ToolResultPart{ToolCallID: "tool-2", Name: "weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "weather invalid"}}, IsError: true},
-				},
-				Err: fmt.Errorf("invalid tool batch"),
-			}
-		}
-		translatedExec = exec
-		return "ok", nil
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result)
-	require.NotNil(t, translatedExec)
+	assistant := prompty.ChatMessage{
+		Role: prompty.RoleAssistant,
+		Content: []prompty.ContentPart{
+			prompty.ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
+			prompty.ToolCallPart{ID: "tool-2", Name: "weather", Args: `{}`},
+		},
+	}
+	toolFollowUp := prompty.ChatMessage{
+		Role: prompty.RoleTool,
+		Content: []prompty.ContentPart{
+			prompty.ToolResultPart{ToolCallID: "tool-1", Name: "lookup", Content: []prompty.ContentPart{prompty.TextPart{Text: "lookup invalid"}}, IsError: true},
+			prompty.ToolResultPart{ToolCallID: "tool-2", Name: "weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "weather invalid"}}, IsError: true},
+		},
+	}
+	translatedExec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")}).
+		AddMessage(assistant).
+		AddMessage(toolFollowUp)
 
 	params, err := a.Translate(translatedExec)
 	require.NoError(t, err)

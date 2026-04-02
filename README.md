@@ -117,6 +117,36 @@ flowchart LR
 
 Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validation** → **Rendering** (with tool injection) → **PromptExecution** → **Adapter** → LLM API. HTTP/transport is the caller’s responsibility.
 
+## Resilience, timeouts, and structured output
+
+**Separation of concerns:** prompty focuses on the prompt domain and a **single** provider round-trip per call (`Execute`, `ExecuteWithStructuredOutput`, `GenerateStructured`). It does **not** implement retry loops, backoff, or transport-level timeouts inside the core.
+
+- **`GenerateStructured[T]`** runs one structured attempt (same as `NewExecution` + `ExecuteWithStructuredOutput[T]`). There is no `WithRetries` option anymore (breaking change): drive repetition from your own loop or middleware.
+- **`NewStructuredExecutor[T](invoker, exec)`** returns a closure `func(context.Context) (*T, error)` that keeps a **working copy** of `exec`. On `*ValidationError` or `*ToolCallError`, it appends the assistant turn and feedback/tool results to that copy, then returns the **original** error. The next call to the closure sees the updated history—useful for an outer orchestrator (see below) without baking policy into prompty.
+
+**Timeouts and HTTP:** adapters do not set `context.WithTimeout` or client `Timeout` for you; the request honors only the `context.Context` you pass. Configure HTTP deadlines and transports when you construct the vendor SDK (for example OpenAI: `openai.NewClient(option.WithHTTPClient(httpClient))`). You can also wrap `Invoker` with timeouts or retries outside this library.
+
+**Illustrative outer retry** (pseudo-code; `routery` is not a dependency of this repo—use your own retry helper or library):
+
+```go
+step := prompty.NewStructuredExecutor[MyDTO](invoker, exec)
+var out *MyDTO
+var err error
+for attempt := 0; attempt < maxAttempts; attempt++ {
+	out, err = step(ctx)
+	if err == nil {
+		break
+	}
+	if _, ok := err.(*prompty.ValidationError); ok {
+		continue
+	}
+	if _, ok := err.(*prompty.ToolCallError); ok {
+		continue
+	}
+	break
+}
+```
+
 ## Template functions
 
 - `truncate_chars .text 4000` — trim by rune count

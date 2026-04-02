@@ -57,7 +57,11 @@ func TestExecuteWithStructuredOutput_SemanticValidationReturnsValidationError(t 
 		},
 	}
 
-	result, err := ExecuteWithStructuredOutput[semanticRetryResult](context.Background(), invoker, SimplePrompt("hi"))
+	result, err := ExecuteWithStructuredOutput[semanticFeedbackResult](
+		context.Background(),
+		invoker,
+		SimplePrompt("hi"),
+	)
 	require.Nil(t, result)
 	require.Error(t, err)
 
@@ -278,17 +282,17 @@ func (*pointerSchemaResult) JSONSchema() map[string]any {
 	return valueSchemaResult{}.JSONSchema()
 }
 
-type semanticRetryResult struct {
+type semanticFeedbackResult struct {
 	Answer string `json:"answer"`
 }
 
-func (r semanticRetryResult) Validate() error {
+func (r semanticFeedbackResult) Validate() error {
 	if r.Answer != "" {
 		return nil
 	}
 	return assert.AnError
 }
 
-func (r semanticRetryResult) JSONSchema() map[string]any {
+func (r semanticFeedbackResult) JSONSchema() map[string]any {
 	return valueSchemaResult{}.JSONSchema()
 }

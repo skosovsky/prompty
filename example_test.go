@@ -97,6 +97,8 @@ func (exampleStructuredInvoker) ExecuteStream(
 	}
 }
 
+// ExampleGenerateStructured shows a single structured call. For multiple attempts with
+// self-correction history, use prompty.NewStructuredExecutor and an outer loop (see README).
 func ExampleGenerateStructured() {
 	type Result struct {
 		Name string `json:"name"`

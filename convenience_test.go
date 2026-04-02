@@ -51,34 +51,23 @@ func TestGenerateText_NilResponse(t *testing.T) {
 	assert.Contains(t, err.Error(), "nil response")
 }
 
-func TestGenerateStructured_WithRetries(t *testing.T) {
+func TestGenerateStructured_MatchesSingleShotExecutor(t *testing.T) {
 	t.Parallel()
 
 	type result struct {
 		Name string `json:"name"`
 	}
 
-	callNum := 0
-	var seen []*PromptExecution
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
-			callNum++
-			seen = append(seen, clonePromptExecution(exec))
-			if callNum == 1 {
-				return NewResponse([]ContentPart{TextPart{Text: `{invalid`}}), nil
-			}
+			require.NotNil(t, exec.ResponseFormat)
 			return NewResponse([]ContentPart{TextPart{Text: `{"name":"Alice"}`}}), nil
 		},
 	}
 
-	got, err := GenerateStructured[result](context.Background(), invoker, "extract name", WithRetries(1))
+	got, err := GenerateStructured[result](context.Background(), invoker, "extract name")
 	require.NoError(t, err)
 	assert.Equal(t, "Alice", got.Name)
-	assert.Equal(t, 2, callNum)
-	require.Len(t, seen, 2)
-	require.Len(t, seen[1].Messages, 3)
-	assert.Equal(t, RoleAssistant, seen[1].Messages[1].Role)
-	assert.Equal(t, RoleUser, seen[1].Messages[2].Role)
 }
 
 func TestGenerateStructured_PointerResult(t *testing.T) {
@@ -130,13 +119,13 @@ func TestGenerateStructured_NilInvoker(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	got, err := GenerateStructured[result](context.Background(), nil, "extract name", WithRetries(1))
+	got, err := GenerateStructured[result](context.Background(), nil, "extract name")
 	require.Error(t, err)
 	assert.Zero(t, got)
 	assert.Contains(t, err.Error(), "invoker is nil")
 }
 
-func TestGenerateStructured_PropagatesNonRetryableError(t *testing.T) {
+func TestGenerateStructured_PropagatesNonCorrectionError(t *testing.T) {
 	t.Parallel()
 
 	type result struct {
@@ -149,7 +138,7 @@ func TestGenerateStructured_PropagatesNonRetryableError(t *testing.T) {
 		},
 	}
 
-	got, err := GenerateStructured[result](context.Background(), invoker, "extract name", WithRetries(2))
+	got, err := GenerateStructured[result](context.Background(), invoker, "extract name")
 	require.Error(t, err)
 	assert.Zero(t, got)
 	assert.Contains(t, err.Error(), "boom")

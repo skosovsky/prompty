@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const semanticRetryTemplate = "The JSON format is valid, but data violates business rules: %v. Fix it."
+const semanticFeedbackTemplate = "The JSON format is valid, but data violates business rules: %v. Fix it."
 
 // Validatable allows caller-owned types to enforce post-unmarshal business rules.
 type Validatable interface {
@@ -98,14 +98,14 @@ func ExecuteWithStructuredOutput[T any](
 	if err != nil {
 		return nil, &ValidationError{
 			RawAssistantMessage: &assistantMsg,
-			FeedbackPrompt:      validationRetryFeedbackText(err),
+			FeedbackPrompt:      validationFeedbackText(err),
 			Err:                 err,
 		}
 	}
 	if err := validateStructuredValue(result); err != nil {
 		return nil, &ValidationError{
 			RawAssistantMessage: &assistantMsg,
-			FeedbackPrompt:      semanticValidationFeedbackText(err),
+			FeedbackPrompt:      semanticFeedbackText(err),
 			Err:                 err,
 		}
 	}
@@ -195,10 +195,10 @@ func validatableFromValue(value reflect.Value) (Validatable, bool) {
 	return nil, false
 }
 
-func validationRetryFeedbackText(validationError error) string {
+func validationFeedbackText(validationError error) string {
 	return fmt.Sprintf("JSON validation failed: %v. Please fix your output.", validationError)
 }
 
-func semanticValidationFeedbackText(validationError error) string {
-	return fmt.Sprintf(semanticRetryTemplate, validationError)
+func semanticFeedbackText(validationError error) string {
+	return fmt.Sprintf(semanticFeedbackTemplate, validationError)
 }
