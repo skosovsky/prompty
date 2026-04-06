@@ -29,7 +29,8 @@ if [ -z "$MODULES" ]; then
 fi
 
 # Ensure there are no uncommitted changes
-if [ -n "$(git status --porcelain)" ]; then
+git update-index -q --refresh
+if ! git diff-index --quiet HEAD --; then
     echo "Error: You have uncommitted changes. Please commit or stash them first."
     exit 1
 fi
@@ -82,7 +83,7 @@ git checkout --detach HEAD --quiet
 echo "📦 Updating go.mod files..."
 for dir in $MODULES; do
     modfile="$dir/go.mod"
-    sed -i '' "s/v0.0.0/$NEW_VERSION/g" "$modfile"
+    sed -i '' "/$REPO_PREFIX/s/ v0.0.0/ $NEW_VERSION/g" "$modfile"
     sed -i '' "/$REPO_PREFIX.*=>/d" "$modfile"
     go mod edit -fmt "$modfile"
 done
