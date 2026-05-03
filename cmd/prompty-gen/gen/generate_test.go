@@ -287,6 +287,9 @@ func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
 	if !strings.Contains(out, "Payload *RouterInputPayload") {
 		t.Error("expected field Payload *RouterInputPayload (parent-based naming)")
 	}
+	if !strings.Contains(out, `vars["payload"] = nil`) {
+		t.Error("expected optional nested object without default to set vars[\"payload\"] = nil in else branch")
+	}
 }
 
 func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
@@ -639,6 +642,67 @@ func TestGenerateManifestTypes_IdWithDigitPrefix(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "X2faPrompt") {
 		t.Error("expected id starting with digit to get X prefix")
+	}
+}
+
+func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "sales",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title": map[string]any{"type": "string"},
+					"subtitle": map[string]any{
+						"type": "string",
+					},
+				},
+				"required": []any{"title"},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `vars["subtitle"] = ""`) {
+		t.Errorf("expected optional string without default to use empty string in else branch; got:\n%s", out)
+	}
+}
+
+func TestGenerateManifestTypes_OptionalArrayNoDefaultElseNil(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "tagged",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+					"tags": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+				},
+				"required": []any{"name"},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `vars["tags"] = nil`) {
+		t.Errorf("expected optional array without default to set nil in else branch; got:\n%s", out)
 	}
 }
 

@@ -114,6 +114,27 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 	return f, nil
 }
 
+// zeroValueJen returns Jennifer code for vars[key] when optional input is absent (nil) and the schema has no default.
+// Reference-like JSON Schema kinds (array, object, untyped) use nil in map[string]any so {{ if .field }} is false in templates.
+func zeroValueJen(typ string) jen.Code {
+	switch typ {
+	case jsonSchemaTypeString:
+		return jen.Lit("")
+	case jsonSchemaTypeInteger:
+		return jen.Lit(int64(0))
+	case jsonSchemaTypeNumber:
+		return jen.Lit(0.0)
+	case jsonSchemaTypeBoolean:
+		return jen.False()
+	case jsonSchemaTypeArray, jsonSchemaTypeObject:
+		return jen.Nil()
+	case "":
+		return jen.Nil()
+	default:
+		return jen.Nil()
+	}
+}
+
 // buildVarsBlocks returns jen blocks to populate vars map and the initial map capacity.
 func buildVarsBlocks(spec *PromptSpec) ([]jen.Code, int) {
 	var varsBlocks []jen.Code
@@ -153,6 +174,8 @@ func buildVarsBlocks(spec *PromptSpec) ([]jen.Code, int) {
 			)
 			if hasDefault && defaultLit != nil {
 				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(defaultLit))
+			} else {
+				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(zeroValueJen(typ)))
 			}
 			varsBlocks = append(varsBlocks, blk)
 		case isRefTypeNoDeref:
@@ -161,6 +184,8 @@ func buildVarsBlocks(spec *PromptSpec) ([]jen.Code, int) {
 			)
 			if hasDefault && defaultLit != nil {
 				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(defaultLit))
+			} else {
+				blk = blk.Else().Block(jen.Id("vars").Index(jen.Lit(propName)).Op("=").Add(zeroValueJen(typ)))
 			}
 			varsBlocks = append(varsBlocks, blk)
 		default:
