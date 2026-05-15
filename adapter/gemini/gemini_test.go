@@ -45,6 +45,44 @@ func TestTranslate_TextOnly(t *testing.T) {
 	assert.Equal(t, string(genai.RoleUser), req.Contents[0].Role)
 }
 
+func TestTranslate_SystemOnlyAddsSyntheticUserContent(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a judge. Output JSON only."}}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.SystemInstruction)
+	require.Len(t, req.Config.SystemInstruction.Parts, 1)
+	assert.Equal(t, "You are a judge. Output JSON only.", req.Config.SystemInstruction.Parts[0].Text)
+	require.Len(t, req.Contents, 1)
+	assert.Equal(t, string(genai.RoleUser), req.Contents[0].Role)
+	require.Len(t, req.Contents[0].Parts, 1)
+	assert.Equal(t, geminiSyntheticUserTrigger, req.Contents[0].Parts[0].Text)
+}
+
+func TestTranslate_DeveloperOnlyAddsSyntheticUserContent(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleDeveloper, Content: []prompty.ContentPart{prompty.TextPart{Text: "Developer preamble for the task."}}},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.SystemInstruction)
+	require.Len(t, req.Config.SystemInstruction.Parts, 1)
+	assert.Equal(t, "Developer preamble for the task.", req.Config.SystemInstruction.Parts[0].Text)
+	require.Len(t, req.Contents, 1)
+	assert.Equal(t, string(genai.RoleUser), req.Contents[0].Role)
+	require.Len(t, req.Contents[0].Parts, 1)
+	assert.Equal(t, geminiSyntheticUserTrigger, req.Contents[0].Parts[0].Text)
+}
+
 func TestTranslate_SystemMessage(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -446,9 +484,19 @@ func TestTranslate_EmptyMessages(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{Messages: nil}
 	req, err := a.Translate(exec)
-	require.NoError(t, err)
-	require.NotNil(t, req)
-	assert.Empty(t, req.Contents)
+	require.Error(t, err)
+	assert.Nil(t, req)
+	assert.Contains(t, err.Error(), "empty contents and no system instructions")
+}
+
+func TestTranslate_EmptyMessagesSlice(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{Messages: []prompty.ChatMessage{}}
+	req, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.Nil(t, req)
+	assert.Contains(t, err.Error(), "empty contents and no system instructions")
 }
 
 func TestTranslate_ResponseFormat(t *testing.T) {

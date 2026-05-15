@@ -13,6 +13,10 @@ import (
 	"google.golang.org/genai"
 )
 
+// geminiSyntheticUserTrigger is appended as a user Content when the prompt is system-only.
+// Gemini requires non-empty Contents; system text lives in SystemInstruction.
+const geminiSyntheticUserTrigger = "Proceed according to the system instructions."
+
 // Request wraps Contents, Config and Model for Gemini GenerateContent API.
 type Request struct {
 	Model    string
@@ -149,6 +153,14 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	model := a.defaultModel
 	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
 		model = exec.ModelOptions.Model
+	}
+	// Gemini rejects requests with empty Contents; system-only prompts need a synthetic user turn.
+	if len(contents) == 0 {
+		if len(systemParts) > 0 {
+			contents = append(contents, genai.NewContentFromText(geminiSyntheticUserTrigger, genai.RoleUser))
+		} else {
+			return nil, fmt.Errorf("prompty/adapter/gemini: empty contents and no system instructions")
+		}
 	}
 	return &Request{Model: model, Contents: contents, Config: config}, nil
 }
