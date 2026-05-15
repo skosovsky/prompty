@@ -71,7 +71,12 @@ func TestTranslate_ToolResult(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
 			}},
 		},
 	}
@@ -90,8 +95,18 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
-				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
+				prompty.ToolResultPart{
+					ToolCallID: "call_2",
+					Name:       "get_time",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
+					IsError:    true,
+				},
 			}},
 		},
 	}
@@ -117,7 +132,11 @@ func TestTranslate_ToolResult_WithMediaPart_PassThrough(t *testing.T) {
 					Name:       "screenshot",
 					Content: []prompty.ContentPart{
 						prompty.TextPart{Text: "Chart"},
-						prompty.MediaPart{MediaType: "image", MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+						prompty.MediaPart{
+							MediaType: "image",
+							MIMEType:  "image/png",
+							Data:      []byte{0x89, 0x50, 0x4e, 0x47},
+						},
 					},
 					IsError: false,
 				},
@@ -280,7 +299,12 @@ func TestTranslate_ImagePartDataTakesPrecedenceOverURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", Data: []byte{0xff, 0xd8}, URL: "https://example.com/img.png", MIMEType: "image/jpeg"},
+				prompty.MediaPart{
+					MediaType: "image",
+					Data:      []byte{0xff, 0xd8},
+					URL:       "https://example.com/img.png",
+					MIMEType:  "image/jpeg",
+				},
 			}},
 		},
 	}
@@ -377,7 +401,11 @@ func TestTranslate_PDFPartURLWithoutData(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "document", URL: "https://example.com/file.pdf", MIMEType: "application/pdf"},
+				prompty.MediaPart{
+					MediaType: "document",
+					URL:       "https://example.com/file.pdf",
+					MIMEType:  "application/pdf",
+				},
 			}},
 		},
 	}
@@ -680,7 +708,10 @@ func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 			{Name: "my_tool", Description: "A tool", Parameters: map[string]any{"type": "object"}},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}},
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"x": map[string]any{"type": "string"}},
+			},
 		},
 	}
 	_, err := a.Translate(exec)
@@ -697,8 +728,12 @@ func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Name:   "my_schema",
-			Schema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}, "required": []any{"x"}},
+			Name: "my_schema",
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"x": map[string]any{"type": "string"}},
+				"required":   []any{"x"},
+			},
 		},
 	}
 	params, err := a.Translate(exec)

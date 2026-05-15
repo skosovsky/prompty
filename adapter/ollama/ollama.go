@@ -58,7 +58,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 		Messages: make([]api.Message, 0, len(exec.Messages)),
 	}
 	if exec.ModelOptions != nil {
-		if exec.ModelOptions.Temperature != nil || exec.ModelOptions.MaxTokens != nil || exec.ModelOptions.TopP != nil || len(exec.ModelOptions.Stop) > 0 {
+		if exec.ModelOptions.Temperature != nil || exec.ModelOptions.MaxTokens != nil ||
+			exec.ModelOptions.TopP != nil ||
+			len(exec.ModelOptions.Stop) > 0 {
 			req.Options = make(map[string]any)
 			if exec.ModelOptions.Temperature != nil {
 				req.Options["temperature"] = *exec.ModelOptions.Temperature
@@ -119,7 +121,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 	case prompty.RoleSystem, prompty.RoleDeveloper:
 		for _, p := range msg.Content {
 			if _, ok := p.(prompty.MediaPart); ok {
-				return nil, fmt.Errorf("%w: Ollama does not support images in system messages", adapter.ErrUnsupportedContentType)
+				return nil, fmt.Errorf(
+					"%w: Ollama does not support images in system messages",
+					adapter.ErrUnsupportedContentType,
+				)
 			}
 		}
 		text := prompty.TextFromParts(msg.Content)
@@ -153,7 +158,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 	case prompty.RoleAssistant:
 		for _, p := range msg.Content {
 			if _, ok := p.(prompty.MediaPart); ok {
-				return nil, fmt.Errorf("%w: Ollama does not support images in assistant messages", adapter.ErrUnsupportedContentType)
+				return nil, fmt.Errorf(
+					"%w: Ollama does not support images in assistant messages",
+					adapter.ErrUnsupportedContentType,
+				)
 			}
 		}
 		var toolCalls []api.ToolCall
@@ -184,11 +192,17 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 		for _, p := range msg.Content {
 			switch x := p.(type) {
 			case prompty.MediaPart:
-				return nil, fmt.Errorf("%w: Ollama does not support images in tool messages", adapter.ErrUnsupportedContentType)
+				return nil, fmt.Errorf(
+					"%w: Ollama does not support images in tool messages",
+					adapter.ErrUnsupportedContentType,
+				)
 			case prompty.ToolResultPart:
 				for _, cp := range x.Content {
 					if _, ok := cp.(prompty.MediaPart); ok {
-						return nil, fmt.Errorf("%w: Ollama does not support images in tool result content", adapter.ErrUnsupportedContentType)
+						return nil, fmt.Errorf(
+							"%w: Ollama does not support images in tool result content",
+							adapter.ErrUnsupportedContentType,
+						)
 					}
 				}
 				text := prompty.TextFromParts(x.Content)

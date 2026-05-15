@@ -516,8 +516,25 @@ linters:
           - noctx
           - wrapcheck
           - exhaustruct
-      # Adapter modules use replace github.com/skosovsky/ragy => ../.. for local workspace dev.
-      - path: '^adapters/.*/go\.mod$'
+      # Provider adapters: vendor SDK DTOs are partially initialized; Translate paths stay complex until refactors.
+      - path: '^adapter/.*/'
+        linters:
+          - exhaustruct
+          - gocognit
+          - gocyclo
+          - cyclop
+          - funlen
+          - nestif
+          - dupl
+          - nilnil
+      - path: '^remoteregistry/git/'
+        linters:
+          - exhaustruct
+          - gocognit
+          - nestif
+          - nonamedreturns
+      # Adapter modules use replace github.com/skosovsky/prompty => ../.. for local workspace dev.
+      - path: '^adapter/.*/go\.mod$'
         linters: [ gomoddirectives ]
       # contracts/* submodules use replace github.com/skosovsky/toolsy => ../.. for local workspace dev.
       - path: '^contracts/.*/go\.mod$'

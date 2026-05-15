@@ -51,7 +51,13 @@ func initRepo(t *testing.T, dir string, files map[string]string) {
 }
 
 // initRepoWithBranches creates a repo with main and an optional second branch; branchFiles is content for the second branch.
-func initRepoWithBranches(t *testing.T, dir string, mainFiles map[string]string, branchName string, branchFiles map[string]string) {
+func initRepoWithBranches(
+	t *testing.T,
+	dir string,
+	mainFiles map[string]string,
+	branchName string,
+	branchFiles map[string]string,
+) {
 	t.Helper()
 	initRepo(t, dir, mainFiles)
 	if branchName == "" || len(branchFiles) == 0 {
@@ -170,10 +176,16 @@ messages:
 func TestFetcher_Fetch_WithBranch(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepoWithBranches(t, dir,
-		map[string]string{"main_only.yaml": "id: main_only\nversion: \"1\"\nmessages:\n  - role: system\n    content: FromMain\n"},
+	initRepoWithBranches(
+		t,
+		dir,
+		map[string]string{
+			"main_only.yaml": "id: main_only\nversion: \"1\"\nmessages:\n  - role: system\n    content: FromMain\n",
+		},
 		"dev",
-		map[string]string{"dev_only.yaml": "id: dev_only\nversion: \"1\"\nmessages:\n  - role: system\n    content: FromDev\n"},
+		map[string]string{
+			"dev_only.yaml": "id: dev_only\nversion: \"1\"\nmessages:\n  - role: system\n    content: FromDev\n",
+		},
 	)
 	g, err := NewFetcher("file://"+dir, WithBranch("dev"))
 	require.NoError(t, err)
@@ -187,7 +199,11 @@ func TestFetcher_Fetch_WithBranch(t *testing.T) {
 func TestFetcher_FetchAfterClose(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"},
+	)
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	data, err := g.Fetch(context.Background(), "a")
@@ -203,7 +219,11 @@ func TestFetcher_FetchAfterClose(t *testing.T) {
 func TestFetcher_Concurrent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"c.yaml": "id: c\nversion: \"1\"\nmessages:\n  - role: system\n    content: concurrent\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"c.yaml": "id: c\nversion: \"1\"\nmessages:\n  - role: system\n    content: concurrent\n"},
+	)
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
@@ -229,7 +249,11 @@ func TestFetcher_Concurrent(t *testing.T) {
 func TestFetcher_Close_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"},
+	)
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	_, _ = g.Fetch(context.Background(), "a")
@@ -248,7 +272,11 @@ func TestNewFetcher_EmptyURL(t *testing.T) {
 func TestFetcher_WithDepth(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"d.yaml": "id: d\nversion: \"1\"\nmessages:\n  - role: system\n    content: depth\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"d.yaml": "id: d\nversion: \"1\"\nmessages:\n  - role: system\n    content: depth\n"},
+	)
 	g, err := NewFetcher("file://"+dir, WithDepth(1))
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
@@ -261,7 +289,13 @@ func TestFetcher_WithAuth_OptionApplied(t *testing.T) {
 	t.Parallel()
 	// WithAuth does not affect file:// URLs; just ensure Fetcher is created and Fetch works.
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"auth_opt.yaml": "id: auth_opt\nversion: \"1\"\nmessages:\n  - role: system\n    content: ok\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{
+			"auth_opt.yaml": "id: auth_opt\nversion: \"1\"\nmessages:\n  - role: system\n    content: ok\n",
+		},
+	)
 	g, err := NewFetcher("file://"+dir, WithAuth("token"))
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
@@ -273,7 +307,11 @@ func TestFetcher_WithAuth_OptionApplied(t *testing.T) {
 func TestFetcher_Fetch_InvalidNameRejected(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"},
+	)
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()
@@ -286,7 +324,13 @@ func TestFetcher_Fetch_InvalidNameRejected(t *testing.T) {
 func TestFetcher_WithCloneDir_PersistentDirNotRemoved(t *testing.T) {
 	t.Parallel()
 	repoDir := t.TempDir()
-	initRepo(t, repoDir, map[string]string{"persist.yaml": "id: persist\nversion: \"1\"\nmessages:\n  - role: system\n    content: persistent\n"})
+	initRepo(
+		t,
+		repoDir,
+		map[string]string{
+			"persist.yaml": "id: persist\nversion: \"1\"\nmessages:\n  - role: system\n    content: persistent\n",
+		},
+	)
 	cloneDir := t.TempDir()
 	g, err := NewFetcher("file://"+repoDir, WithCloneDir(cloneDir))
 	require.NoError(t, err)
@@ -302,7 +346,11 @@ func TestFetcher_WithCloneDir_PersistentDirNotRemoved(t *testing.T) {
 func TestFetcher_WithCloneDir_ReuseOpensExistingClone(t *testing.T) {
 	t.Parallel()
 	repoDir := t.TempDir()
-	initRepo(t, repoDir, map[string]string{"reuse.yaml": "id: reuse\nversion: \"1\"\nmessages:\n  - role: system\n    content: first\n"})
+	initRepo(
+		t,
+		repoDir,
+		map[string]string{"reuse.yaml": "id: reuse\nversion: \"1\"\nmessages:\n  - role: system\n    content: first\n"},
+	)
 	cloneDir := t.TempDir()
 	g1, err := NewFetcher("file://"+repoDir, WithCloneDir(cloneDir))
 	require.NoError(t, err)
@@ -389,7 +437,11 @@ func TestFetcher_Stat(t *testing.T) {
 func TestFetcher_Stat_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	initRepo(t, dir, map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"})
+	initRepo(
+		t,
+		dir,
+		map[string]string{"a.yaml": "id: a\nversion: \"1\"\nmessages:\n  - role: system\n    content: x\n"},
+	)
 	g, err := NewFetcher("file://" + dir)
 	require.NoError(t, err)
 	defer func() { _ = g.Close() }()

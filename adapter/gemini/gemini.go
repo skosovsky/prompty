@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -69,6 +70,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			if *exec.ModelOptions.MaxTokens > math.MaxInt32 {
 				config.MaxOutputTokens = math.MaxInt32
 			} else {
+				//nolint:gosec // G115: value is <= math.MaxInt32 per branch above.
 				config.MaxOutputTokens = int32(*exec.ModelOptions.MaxTokens)
 			}
 		}
@@ -124,12 +126,15 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),
 		}}
 		for _, t := range exec.Tools {
-			config.Tools[0].FunctionDeclarations = append(config.Tools[0].FunctionDeclarations, &genai.FunctionDeclaration{
-				Name:                 t.Name,
-				Description:          t.Description,
-				Parameters:           nil,
-				ParametersJsonSchema: t.Parameters,
-			})
+			config.Tools[0].FunctionDeclarations = append(
+				config.Tools[0].FunctionDeclarations,
+				&genai.FunctionDeclaration{
+					Name:                 t.Name,
+					Description:          t.Description,
+					Parameters:           nil,
+					ParametersJsonSchema: t.Parameters,
+				},
+			)
 		}
 	}
 	if wantGoogleSearch {
@@ -159,7 +164,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		if len(systemParts) > 0 {
 			contents = append(contents, genai.NewContentFromText(geminiSyntheticUserTrigger, genai.RoleUser))
 		} else {
-			return nil, fmt.Errorf("prompty/adapter/gemini: empty contents and no system instructions")
+			return nil, errors.New("prompty/adapter/gemini: empty contents and no system instructions")
 		}
 	}
 	return &Request{Model: model, Contents: contents, Config: config}, nil

@@ -43,7 +43,7 @@ type Fetcher struct {
 // Returns error if repoURL is empty.
 func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 	if strings.TrimSpace(repoURL) == "" {
-		return nil, fmt.Errorf("remoteregistry/git: repo URL must not be empty")
+		return nil, errors.New("remoteregistry/git: repo URL must not be empty")
 	}
 	g := &Fetcher{
 		repoURL: repoURL,
@@ -54,7 +54,7 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 		opt(g)
 	}
 	if strings.TrimSpace(g.branch) == "" {
-		return nil, fmt.Errorf("remoteregistry/git: branch must not be empty")
+		return nil, errors.New("remoteregistry/git: branch must not be empty")
 	}
 	return g, nil
 }
@@ -84,7 +84,7 @@ func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 }
 
 // resolvePath finds the physical file for id (tries .yaml then .yml). Returns absolute path and path from repo root (forward slashes).
-// Caller must hold g.mu and have called ensureClone. Uses os.Stat only (no ReadFile).
+// Caller must hold g.mu and have called ensureClone. Uses [os.Stat] only (no ReadFile).
 func (g *Fetcher) resolvePath(id string) (absPath, relPathFromRepoRoot string, err error) {
 	baseDir := filepath.Clean(filepath.Join(g.localDir, g.dir))
 	for _, rel := range remoteregistry.CandidatePaths(id) {
@@ -142,7 +142,7 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 		}
 		rel, relErr := filepath.Rel(".", path)
 		if relErr != nil {
-			return nil
+			return relErr
 		}
 		id = filepath.ToSlash(rel)
 		id = trimManifestExt(id)
@@ -226,7 +226,7 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				// Do not remove clone on transient errors; next Fetch will retry pull.
 				// Proceed to read from existing working tree (stale data).
-				slog.Default().Warn("git pull failed, using cached clone", "err", err)
+				slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", err)
 			}
 		}
 		return nil
@@ -239,7 +239,7 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		if _, statErr := os.Stat(gitDir); statErr == nil {
 			repo, err = git.PlainOpen(g.cloneDir)
 		} else {
-			if mkErr := os.MkdirAll(g.cloneDir, 0755); mkErr != nil {
+			if mkErr := os.MkdirAll(g.cloneDir, 0o750); mkErr != nil {
 				return fmt.Errorf("mkdir clone dir: %w", mkErr)
 			}
 			cloneOpts := g.buildCloneOptions()
@@ -284,7 +284,7 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 			}
 		}
 		if pullErr := wt.PullContext(ctx, pullOpts); pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
-			slog.Default().Warn("git pull failed, using cached clone", "err", pullErr)
+			slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", pullErr)
 		}
 	}
 	return nil

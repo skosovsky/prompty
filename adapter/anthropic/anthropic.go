@@ -53,7 +53,10 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		return nil, adapter.ErrNilExecution
 	}
 	if exec.ResponseFormat != nil && len(exec.Tools) > 0 {
-		return nil, fmt.Errorf("anthropic adapter: cannot use both Tools and ResponseFormat simultaneously: %w", prompty.ErrConflictingDirectives)
+		return nil, fmt.Errorf(
+			"anthropic adapter: cannot use both Tools and ResponseFormat simultaneously: %w",
+			prompty.ErrConflictingDirectives,
+		)
 	}
 	params := &anthropic.MessageNewParams{
 		MaxTokens: defaultMaxTokens,
@@ -219,7 +222,10 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 	return schema
 }
 
-func (a *Adapter) systemMessageBlocks(parts []prompty.ContentPart, messageCache *prompty.CacheControl) ([]anthropic.TextBlockParam, error) {
+func (a *Adapter) systemMessageBlocks(
+	parts []prompty.ContentPart,
+	messageCache *prompty.CacheControl,
+) ([]anthropic.TextBlockParam, error) {
 	blocks := make([]anthropic.TextBlockParam, 0, len(parts))
 	for _, p := range parts {
 		var textPart prompty.TextPart
@@ -247,7 +253,10 @@ func (a *Adapter) systemMessageBlocks(parts []prompty.ContentPart, messageCache 
 	return blocks, nil
 }
 
-func (a *Adapter) userMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
+func (a *Adapter) userMessage(
+	parts []prompty.ContentPart,
+	messageCache *prompty.CacheControl,
+) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
@@ -292,7 +301,10 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart, messageCache *prompty
 	return anthropic.NewUserMessage(blocks...), nil
 }
 
-func (a *Adapter) assistantMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
+func (a *Adapter) assistantMessage(
+	parts []prompty.ContentPart,
+	messageCache *prompty.CacheControl,
+) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
@@ -351,7 +363,10 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart, messageCache *pr
 	return anthropic.NewAssistantMessage(blocks...), nil
 }
 
-func (a *Adapter) toolResultMessage(parts []prompty.ContentPart, messageCache *prompty.CacheControl) (anthropic.MessageParam, error) {
+func (a *Adapter) toolResultMessage(
+	parts []prompty.ContentPart,
+	messageCache *prompty.CacheControl,
+) (anthropic.MessageParam, error) {
 	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 	for _, p := range parts {
 		var tr prompty.ToolResultPart
@@ -391,12 +406,18 @@ func (a *Adapter) toolResultMessage(parts []prompty.ContentPart, messageCache *p
 		}
 	}
 	if len(blocks) == 0 {
-		return anthropic.MessageParam{}, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
+		return anthropic.MessageParam{}, fmt.Errorf(
+			"%w: tool message missing ToolResultPart",
+			adapter.ErrUnsupportedContentType,
+		)
 	}
 	return anthropic.NewUserMessage(blocks...), nil
 }
 
-func (a *Adapter) toolResultContentBlock(part prompty.ContentPart, inheritedCache *prompty.CacheControl) (anthropic.ToolResultBlockParamContentUnion, error) {
+func (a *Adapter) toolResultContentBlock(
+	part prompty.ContentPart,
+	inheritedCache *prompty.CacheControl,
+) (anthropic.ToolResultBlockParamContentUnion, error) {
 	cache := resolveCacheControl(inheritedCache, contentPartCacheControl(part))
 	switch x := part.(type) {
 	case prompty.TextPart:
@@ -433,7 +454,10 @@ func (a *Adapter) toolResultContentBlock(part prompty.ContentPart, inheritedCach
 	}
 }
 
-func (a *Adapter) mediaBlock(part prompty.MediaPart, cache *prompty.CacheControl) (anthropic.ContentBlockParamUnion, error) {
+func (a *Adapter) mediaBlock(
+	part prompty.MediaPart,
+	cache *prompty.CacheControl,
+) (anthropic.ContentBlockParamUnion, error) {
 	mime := strings.ToLower(strings.TrimSpace(part.MIMEType))
 	if mime == "" {
 		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
@@ -451,7 +475,10 @@ func (a *Adapter) mediaBlock(part prompty.MediaPart, cache *prompty.CacheControl
 	case part.URL != "":
 		block, err = mediaBlockFromURL(mime, part.URL)
 	default:
-		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: MediaPart has neither Data nor URL", adapter.ErrUnsupportedContentType)
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
+			"%w: MediaPart has neither Data nor URL",
+			adapter.ErrUnsupportedContentType,
+		)
 	}
 	if err != nil {
 		return anthropic.ContentBlockParamUnion{}, err
@@ -476,7 +503,11 @@ func mediaBlockFromData(mime string, data []byte) (anthropic.ContentBlockParamUn
 			Type:      constant.ValueOf[constant.Text](),
 		}), nil
 	default:
-		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: unsupported media MIME %q", adapter.ErrUnsupportedContentType, mime)
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
+			"%w: unsupported media MIME %q",
+			adapter.ErrUnsupportedContentType,
+			mime,
+		)
 	}
 }
 
@@ -493,11 +524,18 @@ func mediaBlockFromURL(mime, url string) (anthropic.ContentBlockParamUnion, erro
 			Type: constant.ValueOf[constant.URL](),
 		}), nil
 	default:
-		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("%w: unsupported URL media MIME %q", adapter.ErrUnsupportedContentType, mime)
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
+			"%w: unsupported URL media MIME %q",
+			adapter.ErrUnsupportedContentType,
+			mime,
+		)
 	}
 }
 
-func (a *Adapter) applyCacheControl(block anthropic.ContentBlockParamUnion, cache *prompty.CacheControl) (anthropic.ContentBlockParamUnion, error) {
+func (a *Adapter) applyCacheControl(
+	block anthropic.ContentBlockParamUnion,
+	cache *prompty.CacheControl,
+) (anthropic.ContentBlockParamUnion, error) {
 	c, err := toAnthropicCacheControl(cache)
 	if err != nil {
 		return anthropic.ContentBlockParamUnion{}, err

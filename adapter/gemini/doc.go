@@ -3,7 +3,7 @@
 //
 // Model: this adapter reads ModelOptions.Model when present and otherwise falls back
 // to the adapter's default model.
-// MaxOutputTokens is clamped to math.MaxInt32 when max_tokens exceeds int32 range.
+// MaxOutputTokens is clamped to [math.MaxInt32] when max_tokens exceeds int32 range.
 // CacheControl is accepted and ignored by this adapter in current Gemini APIs.
 // System-only prompts (no user/assistant messages) receive a synthetic user Content turn;
 // Gemini requires non-empty Contents while system text is sent via SystemInstruction.

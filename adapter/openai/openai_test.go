@@ -126,7 +126,12 @@ func TestTranslate_ToolResult(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
 			}},
 		},
 	}
@@ -144,8 +149,18 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
-				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
+				prompty.ToolResultPart{
+					ToolCallID: "call_2",
+					Name:       "get_time",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
+					IsError:    true,
+				},
 			}},
 		},
 	}
@@ -171,7 +186,11 @@ func TestTranslate_ToolResult_WithMediaPart_FailFast(t *testing.T) {
 					Name:       "screenshot",
 					Content: []prompty.ContentPart{
 						prompty.TextPart{Text: "Here is the chart."},
-						prompty.MediaPart{MediaType: "image", MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+						prompty.MediaPart{
+							MediaType: "image",
+							MIMEType:  "image/png",
+							Data:      []byte{0x89, 0x50, 0x4e, 0x47},
+						},
 					},
 					IsError: false,
 				},
@@ -344,7 +363,11 @@ func TestTranslate_FilePartURLWithoutData_ReturnsErrMediaNotResolved(t *testing.
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "document", URL: "https://example.com/file.pdf", MIMEType: "application/pdf"},
+				prompty.MediaPart{
+					MediaType: "document",
+					URL:       "https://example.com/file.pdf",
+					MIMEType:  "application/pdf",
+				},
 			}},
 		},
 	}
@@ -646,8 +669,18 @@ func TestTranslate_BatchedToolResultsSurviveOpenAITranslation(t *testing.T) {
 	toolFollowUp := prompty.ChatMessage{
 		Role: prompty.RoleTool,
 		Content: []prompty.ContentPart{
-			prompty.ToolResultPart{ToolCallID: "tool-1", Name: "lookup", Content: []prompty.ContentPart{prompty.TextPart{Text: "lookup invalid"}}, IsError: true},
-			prompty.ToolResultPart{ToolCallID: "tool-2", Name: "weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "weather invalid"}}, IsError: true},
+			prompty.ToolResultPart{
+				ToolCallID: "tool-1",
+				Name:       "lookup",
+				Content:    []prompty.ContentPart{prompty.TextPart{Text: "lookup invalid"}},
+				IsError:    true,
+			},
+			prompty.ToolResultPart{
+				ToolCallID: "tool-2",
+				Name:       "weather",
+				Content:    []prompty.ContentPart{prompty.TextPart{Text: "weather invalid"}},
+				IsError:    true,
+			},
 		},
 	}
 	translatedExec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")}).

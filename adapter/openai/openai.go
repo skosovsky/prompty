@@ -65,7 +65,11 @@ func normalizeStrictSchemaNode(schema any) any {
 		for name, rawProp := range properties {
 			propMap, ok := rawProp.(map[string]any)
 			if ok {
-				propMap = normalizeStrictSchemaNode(propMap).(map[string]any)
+				normalized := normalizeStrictSchemaNode(propMap)
+				propMap, ok = normalized.(map[string]any)
+				if !ok {
+					continue
+				}
 				if !required[name] {
 					makeStrictPropertyNullable(propMap)
 					missing = append(missing, name)
@@ -391,7 +395,10 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 			b.WriteString(x.Text)
 		case prompty.ToolCallPart:
 			if x.Args != "" && !json.Valid([]byte(x.Args)) {
-				return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
+				return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf(
+					"%w: invalid tool call args JSON",
+					adapter.ErrMalformedArgs,
+				)
 			}
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
@@ -474,7 +481,10 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 }
 
 // ExecuteStream performs streaming chat completion. Requires WithClient.
-func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionNewParams) iter.Seq2[*prompty.ResponseChunk, error] {
+func (a *Adapter) ExecuteStream(
+	ctx context.Context,
+	req *openai.ChatCompletionNewParams,
+) iter.Seq2[*prompty.ResponseChunk, error] {
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
 		if a.client == nil {
 			yield(nil, adapter.ErrNoClient)
@@ -502,7 +512,12 @@ func (a *Adapter) ExecuteStream(ctx context.Context, req *openai.ChatCompletionN
 			if isFinished && chunk.Choices[0].FinishReason != "" {
 				finishReason = chunk.Choices[0].FinishReason
 			}
-			resChunk := &prompty.ResponseChunk{Content: content, Usage: usage, IsFinished: isFinished, FinishReason: finishReason}
+			resChunk := &prompty.ResponseChunk{
+				Content:      content,
+				Usage:        usage,
+				IsFinished:   isFinished,
+				FinishReason: finishReason,
+			}
 			if !yield(resChunk, nil) {
 				// Policy: always check stream.Err() before exit; propagate if consumer stopped early.
 				if err := stream.Err(); err != nil {

@@ -71,7 +71,11 @@ func TestTranslate_WithTools(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}}},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object", "properties": map[string]any{}}},
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -88,7 +92,12 @@ func TestTranslate_ToolResult(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
 			}},
 		},
 	}
@@ -106,8 +115,18 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
-				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
+				prompty.ToolResultPart{
+					ToolCallID: "call_2",
+					Name:       "get_time",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
+					IsError:    true,
+				},
 			}},
 		},
 	}

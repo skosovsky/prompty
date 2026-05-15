@@ -50,7 +50,10 @@ func TestTranslate_SystemOnlyAddsSyntheticUserContent(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a judge. Output JSON only."}}},
+			{
+				Role:    prompty.RoleSystem,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a judge. Output JSON only."}},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -69,7 +72,10 @@ func TestTranslate_DeveloperOnlyAddsSyntheticUserContent(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleDeveloper, Content: []prompty.ContentPart{prompty.TextPart{Text: "Developer preamble for the task."}}},
+			{
+				Role:    prompty.RoleDeveloper,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Developer preamble for the task."}},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -190,7 +196,12 @@ func TestTranslate_ToolResult(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
 			}},
 		},
 	}
@@ -209,8 +220,18 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{ToolCallID: "call_1", Name: "get_weather", Content: []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}}, IsError: false},
-				prompty.ToolResultPart{ToolCallID: "call_2", Name: "get_time", Content: []prompty.ContentPart{prompty.TextPart{Text: "12:00"}}, IsError: true},
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+					IsError:    false,
+				},
+				prompty.ToolResultPart{
+					ToolCallID: "call_2",
+					Name:       "get_time",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
+					IsError:    true,
+				},
 			}},
 		},
 	}
