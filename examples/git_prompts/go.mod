@@ -3,9 +3,9 @@ module github.com/skosovsky/prompty/examples/git_prompts
 go 1.26.1
 
 require (
-	github.com/skosovsky/prompty v0.0.0
-	github.com/skosovsky/prompty/adapter/gemini v0.0.0
-	github.com/skosovsky/prompty/remoteregistry/git v0.0.0
+	github.com/skosovsky/prompty v0.7.5
+	github.com/skosovsky/prompty/adapter/gemini v0.7.5
+	github.com/skosovsky/prompty/remoteregistry/git v0.7.5
 	google.golang.org/genai v1.48.0
 )
 
@@ -43,10 +43,4 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-replace (
-	github.com/skosovsky/prompty => ../..
-	github.com/skosovsky/prompty/adapter/gemini => ../../adapter/gemini
-	github.com/skosovsky/prompty/remoteregistry/git => ../../remoteregistry/git
 )
