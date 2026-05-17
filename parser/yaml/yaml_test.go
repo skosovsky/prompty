@@ -349,3 +349,24 @@ messages:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "field foo not found")
 }
+
+func TestUnmarshal_RequiredTools(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: doctor_agent
+version: "1"
+required_tools:
+  - doctor_search_knowledge_base
+  - get_current_time
+messages:
+  - role: system
+    content: "Hi"
+input_schema:
+  schema:
+    type: object
+    properties: {}
+`)
+	var raw manifest.RawManifest
+	require.NoError(t, New().Unmarshal(yamlData, &raw))
+	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, raw.RequiredTools)
+}

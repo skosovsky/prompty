@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/examples/funcmap_tools
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/openai/openai-go/v3 v3.24.0

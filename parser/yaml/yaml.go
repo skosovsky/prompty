@@ -82,6 +82,7 @@ type fileManifest struct {
 	ID              string                   `yaml:"id"`
 	Version         string                   `yaml:"version"`
 	Description     string                   `yaml:"description"`
+	RequiredTools   []string                 `yaml:"required_tools"`
 	ModelOptionsRaw map[string]any           `yaml:"model_config"`
 	Metadata        map[string]any           `yaml:"metadata"`
 	InputSchema     map[string]any           `yaml:"input_schema"`
@@ -184,6 +185,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.ID = fm.ID
 	raw.Version = fm.Version
 	raw.Description = fm.Description
+	raw.RequiredTools = fm.RequiredTools
 	modelOptions, err := manifest.DecodeModelOptions(fm.ModelOptionsRaw)
 	if err != nil {
 		return fmt.Errorf("%w: model_config: %w", prompty.ErrInvalidManifest, err)

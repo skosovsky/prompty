@@ -15,7 +15,11 @@ type SupportAgentInput struct {
 	UserQuery string  `json:"user_query" prompt:"user_query" validate:"required"`
 }
 
-func (p *Prompts) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.PromptExecution, error) {
+type SupportAgentPrompt struct {
+	registry prompty.Registry
+}
+
+func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput) (*prompty.PromptExecution, error) {
 	if err := validate.Struct(&input); err != nil {
 		return nil, fmt.Errorf("validate input: %w", err)
 	}
@@ -35,4 +39,12 @@ func (p *Prompts) RenderSupportAgent(ctx context.Context, input SupportAgentInpu
 		return nil, fmt.Errorf("format template: %w", err)
 	}
 	return exec, nil
+}
+
+func (p *SupportAgentPrompt) RequiredTools() []string {
+	return []string{}
+}
+
+func (p *SupportAgentPrompt) ID() PromptID {
+	return SupportAgent
 }

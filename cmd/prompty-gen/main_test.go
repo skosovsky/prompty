@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/skosovsky/prompty/cmd/prompty-gen/gen"
 )
 
 const legacyClientTypeName = "LLM" + "Client"
@@ -105,6 +107,50 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	}
 	if !strings.Contains(c, "string(SupportAgent)") {
 		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
+	}
+}
+
+func TestLoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
+	manifestPath := "testdata/doctor_agent_required_tools.yaml"
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	want := []string{"doctor_search_knowledge_base", "get_current_time"}
+	if !reflect.DeepEqual(want, spec.RequiredTools) {
+		t.Fatalf("RequiredTools = %#v, want %#v", spec.RequiredTools, want)
+	}
+
+	f, err := gen.GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "func (p *DoctorAgentPrompt) RequiredTools()") {
+		t.Error("expected RequiredTools method on DoctorAgentPrompt")
+	}
+	for _, tool := range want {
+		if !strings.Contains(out, `"`+tool+`"`) {
+			t.Errorf("expected %q in RequiredTools return literal", tool)
+		}
+	}
+}
+
+func TestLoadSpec_RequiredToolsAbsentReturnsEmptySlice(t *testing.T) {
+	manifestPath := "testdata/prompts/support_agent.yaml"
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	if spec.RequiredTools == nil {
+		t.Fatal("RequiredTools must be non-nil empty slice")
+	}
+	if len(spec.RequiredTools) != 0 {
+		t.Fatalf("RequiredTools = %#v, want empty slice", spec.RequiredTools)
 	}
 }
 

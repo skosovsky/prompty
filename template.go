@@ -34,6 +34,7 @@ type ChatPromptTemplate struct {
 	Messages         []MessageTemplate
 	PartialVariables map[string]any
 	Tools            []ToolDefinition
+	RequiredTools    []string
 	ModelOptions     *ModelOptions
 	Metadata         PromptMetadata
 	ResponseFormat   *SchemaDefinition // JSON Schema for structured output (passed to PromptExecution)
@@ -88,6 +89,7 @@ func NewChatPromptTemplate(
 	if tpl.RequiredVars != nil {
 		tpl.RequiredVars = slices.Clone(tpl.RequiredVars)
 	}
+	tpl.RequiredTools = cloneStringSlice(tpl.RequiredTools)
 	tpl.ModelOptions = cloneModelOptions(tpl.ModelOptions)
 	tpl.Metadata = clonePromptMetadata(tpl.Metadata)
 	tpl.ResponseFormat = cloneSchemaDefinition(tpl.ResponseFormat)
@@ -232,6 +234,7 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	out := &ChatPromptTemplate{
 		Messages:        cloneMessageTemplates(c.Messages),
 		Tools:           cloneToolDefinitions(c.Tools),
+		RequiredTools:   cloneStringSlice(c.RequiredTools),
 		RequiredVars:    slices.Clone(c.RequiredVars),
 		requiredFromAST: c.requiredFromAST,
 		Metadata:        clonePromptMetadata(c.Metadata),
@@ -347,6 +350,7 @@ func (c *ChatPromptTemplate) renderTemplates(
 	return &PromptExecution{
 		Messages:       out,
 		Tools:          cloneToolDefinitions(c.Tools),
+		RequiredTools:  cloneStringSlice(c.RequiredTools),
 		ModelOptions:   cloneModelOptions(c.ModelOptions),
 		Metadata:       clonePromptMetadata(c.Metadata),
 		ResponseFormat: cloneSchemaDefinition(c.ResponseFormat),

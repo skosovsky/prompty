@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/adapter/ollama
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/ollama/ollama v0.17.4

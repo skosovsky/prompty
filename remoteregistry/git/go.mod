@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/remoteregistry/git
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/go-git/go-git/v5 v5.11.0

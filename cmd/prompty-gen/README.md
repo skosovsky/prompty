@@ -6,7 +6,7 @@ prompty-gen — генератор Go-кода для prompty-манифесто
 
 - **SRP:** генератор = контракт + Render; runtime = композиция + Execute.
 - Генератор не внедряет LLM-клиент и не генерирует Execute — только типы и Render.
-- Исполнение промптов: `exec, _ := prompts.RenderXxx(ctx, input)` → `invoker.Execute(ctx, exec)`.
+- Исполнение промптов: `exec, _ := prompts.Xxx.Render(ctx, input)` → `invoker.Execute(ctx, exec)`.
 
 ## Установка
 
@@ -39,20 +39,20 @@ packages:
 
 ### Параметры пакета
 
-| Параметр | Описание |
-|----------|----------|
-| `name` | Имя пакета (используется если не задан `package`) |
-| `path` | Директория для сгенерированных `*_gen.go` файлов |
+| Параметр  | Описание                                                                      |
+| --------- | ----------------------------------------------------------------------------- |
+| `name`    | Имя пакета (используется если не задан `package`)                             |
+| `path`    | Директория для сгенерированных `*_gen.go` файлов                              |
 | `queries` | Glob-паттерны или пути к директориям с манифестами (`.yaml`, `.yml`, `.json`) |
-| `package` | Имя Go-пакета в сгенерированном коде (по умолчанию = `name`) |
-| `mode` | `consts` или `types` (по умолчанию `types`). См. ниже. |
+| `package` | Имя Go-пакета в сгенерированном коде (по умолчанию = `name`)                  |
+| `mode`    | `consts` или `types` (по умолчанию `types`). См. ниже.                        |
 
 ### Режимы
 
-| Режим | Описание |
-|-------|----------|
-| **consts** | Только `PromptID` const и `AllPromptIDs()`. Без зависимости от input_schema. Вывод: `<package>_consts_gen.go`. |
-| **types** | Полная модель: shared-файл (Prompts, NewPrompts, validate) + per-manifest файлы (Input/Output, Render\<Name\>). |
+| Режим      | Описание                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **consts** | Только `PromptID` const и `AllPromptIDs()`. Манифесты должны быть v2.0 (`messages` + `input_schema`). Вывод: `<package>_consts_gen.go`.    |
+| **types**  | Полная модель: shared-файл (Prompts, NewPrompts, validate) + per-manifest файлы (Input/Output, per-prompt type с Render/RequiredTools/ID). |
 
 **Примечание:** Режимы `lite` и `full` удалены (breaking change).
 
@@ -81,10 +81,10 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Prompts`, `func NewPrompts(r prompty.Registry) *Prompts`, `func AllPromptIDs() []PromptID`.
-- **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `func (p *Prompts) RenderXxx(ctx, input) (*prompty.PromptExecution, error)`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Prompts` (контейнер per-prompt полей), `func NewPrompts(r prompty.Registry) *Prompts`, `func AllPromptIDs() []PromptID`.
+- **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, методы `Render`, `RequiredTools()`, `ID()`.
 
-Render выполняет: validate input → GetTemplate → vars map → `tmpl.Format(vars)`. Без Execute и Invoker.
+Render выполняет: validate input → GetTemplate → vars map → `tmpl.Format(vars)`. `RequiredTools()` возвращает литерал из `required_tools` манифеста. Без Execute и Invoker.
 
 ## Mapping JSON Schema → Go
 
@@ -109,13 +109,16 @@ prompts := NewPrompts(reg)
 var invoker prompty.Invoker // e.g. adapter.NewClient(openaiAdapter)
 
 // 1. Render промпта
-exec, err := prompts.RenderSupportAgent(ctx, SupportAgentInput{
+exec, err := prompts.SupportAgent.Render(ctx, SupportAgentInput{
     UserQuery: "Where is my order?",
     BotName:   ptr("SupportBot"),
 })
 if err != nil {
     return err
 }
+
+// Contract: tools required by this prompt (from manifest required_tools)
+_ = prompts.SupportAgent.RequiredTools()
 
 // 2. Выполнение — на ваше усмотрение (adapter.NewClient(...), middleware, streaming, etc.)
 resp, err := invoker.Execute(ctx, exec)
@@ -129,17 +132,18 @@ for _, id := range AllPromptIDs() {
 }
 ```
 
-### Композиция нескольких Render* перед Execute
+### Композиция нескольких Render перед Execute
 
 Склейте сообщения из нескольких промптов и отправьте в `invoker.Execute`:
 
 ```go
-exec1, _ := prompts.RenderSalesPersona(ctx, SalesPersonaInput{Tone: "formal"})
-exec2, _ := prompts.RenderClinicRules(ctx, ClinicRulesInput{})
+exec1, _ := prompts.SalesPersona.Render(ctx, SalesPersonaInput{Tone: "formal"})
+exec2, _ := prompts.ClinicRules.Render(ctx, ClinicRulesInput{})
 combined := &prompty.PromptExecution{
-    ModelOptions: exec1.ModelOptions,
-    Messages:     append(exec1.Messages, exec2.Messages...),
-    Tools:        append(exec1.Tools, exec2.Tools...),
+    ModelOptions:  exec1.ModelOptions,
+    Messages:      append(exec1.Messages, exec2.Messages...),
+    Tools:         append(exec1.Tools, exec2.Tools...),
+    RequiredTools: append(exec1.RequiredTools, exec2.RequiredTools...),
 }
 resp, err := invoker.Execute(ctx, combined)
 ```

@@ -27,6 +27,7 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		ID              string                    `json:"id"`
 		Version         string                    `json:"version"`
 		Description     string                    `json:"description"`
+		RequiredTools   []string                  `json:"required_tools"`
 		ModelOptionsRaw json.RawMessage           `json:"model_config"`
 		Metadata        map[string]any            `json:"metadata"`
 		InputSchema     *prompty.SchemaDefinition `json:"input_schema"`
@@ -51,6 +52,7 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 	raw.ID = wire.ID
 	raw.Version = wire.Version
 	raw.Description = wire.Description
+	raw.RequiredTools = wire.RequiredTools
 	raw.Metadata = wire.Metadata
 	raw.InputSchema = wire.InputSchema
 	raw.Tools = wire.Tools

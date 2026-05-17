@@ -169,8 +169,8 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		ids = append(ids, spec.ID)
 	}
 
-	// Shared file: PromptID, Prompts, NewPrompts, validate, AllPromptIDs
-	sharedFile, err := gen.GenerateSharedTypes(pkg.PackageName, ids)
+	// Shared file: PromptID, Prompts container, NewPrompts, validate, AllPromptIDs
+	sharedFile, err := gen.GenerateSharedTypes(pkg.PackageName, specs)
 	if err != nil {
 		return fmt.Errorf("generate shared: %w", err)
 	}
@@ -180,7 +180,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", sharedPath)
 
-	// Per-manifest files: const, Input/Output, Render<Name>
+	// Per-manifest files: const, Input/Output, per-prompt type (Render, RequiredTools, ID)
 	for i, fpath := range files {
 		manifestFile, err := gen.GenerateManifestTypes(specs[i], pkg.PackageName)
 		if err != nil {
@@ -265,8 +265,13 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 		return nil, err
 	}
 
+	requiredTools := tpl.RequiredTools
+	if requiredTools == nil {
+		requiredTools = []string{}
+	}
 	return &gen.PromptSpec{
 		ID:             tpl.Metadata.ID,
+		RequiredTools:  requiredTools,
 		InputSchema:    tpl.InputSchema,
 		ResponseFormat: tpl.ResponseFormat,
 	}, nil

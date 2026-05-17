@@ -1,6 +1,6 @@
 module github.com/skosovsky/prompty/examples/git_prompts
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/skosovsky/prompty v0.0.0

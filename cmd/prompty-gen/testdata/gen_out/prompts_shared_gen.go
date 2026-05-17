@@ -12,11 +12,11 @@ type PromptID string
 var validate = validator.New()
 
 type Prompts struct {
-	registry prompty.Registry
+	SupportAgent *SupportAgentPrompt
 }
 
 func NewPrompts(r prompty.Registry) *Prompts {
-	return &Prompts{registry: r}
+	return &Prompts{SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
 func AllPromptIDs() []PromptID {

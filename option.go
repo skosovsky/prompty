@@ -19,6 +19,13 @@ func WithTools(tools []ToolDefinition) ChatTemplateOption {
 	}
 }
 
+// WithRequiredTools sets tool names the prompt contract requires (from manifest required_tools).
+func WithRequiredTools(tools []string) ChatTemplateOption {
+	return func(c *ChatPromptTemplate) {
+		c.RequiredTools = tools
+	}
+}
+
 // WithModelOptions sets model options (e.g. temperature, max_tokens).
 func WithModelOptions(config *ModelOptions) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {

@@ -136,6 +136,47 @@ func TestRenderToolsAsJSON_InvalidType(t *testing.T) {
 	assert.Contains(t, err.Error(), "expected []ToolDefinition")
 }
 
+func TestHasTool(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		allowed any
+		tool    string
+		want    bool
+	}{
+		{"string slice hit", []string{"a", "b"}, "b", true},
+		{"string slice miss", []string{"a", "b"}, "c", false},
+		{"empty slice", []string{}, "a", false},
+		{"nil allowed", nil, "a", false},
+		{"any slice", []any{"x", "y"}, "y", true},
+		{"tool definitions", []ToolDefinition{{Name: "get_weather"}}, "get_weather", true},
+		{"invalid type", 123, "a", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, hasTool(tt.allowed, tt.tool))
+		})
+	}
+}
+
+func TestFuncMap_HasTool_Integration(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleSystem, Content: TextContent(`{{ if hasTool .allowed "my_tool" }}Use my tool!{{ end }}`)},
+	})
+	require.NoError(t, err)
+	exec, err := tpl.Format(map[string]any{"allowed": []string{"my_tool"}})
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	text := exec.Messages[0].Content[0].(TextPart).Text
+	assert.Equal(t, "Use my tool!", text)
+	exec2, err := tpl.Format(map[string]any{"allowed": []string{"other"}})
+	require.NoError(t, err)
+	text2 := exec2.Messages[0].Content[0].(TextPart).Text
+	assert.Empty(t, text2)
+}
+
 func TestFuncMap_EscapeXML(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

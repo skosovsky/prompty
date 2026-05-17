@@ -138,6 +138,7 @@ type ModelOptions struct {
 type PromptExecution struct {
 	Messages       []ChatMessage
 	Tools          []ToolDefinition
+	RequiredTools  []string
 	ModelOptions   *ModelOptions
 	Metadata       PromptMetadata
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
@@ -201,6 +202,7 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 	return &PromptExecution{
 		Messages:       out,
 		Tools:          cloneToolDefinitions(e.Tools),
+		RequiredTools:  cloneStringSlice(e.RequiredTools),
 		ModelOptions:   cloneModelOptions(e.ModelOptions),
 		Metadata:       clonePromptMetadata(e.Metadata),
 		ResponseFormat: cloneSchemaDefinition(e.ResponseFormat),

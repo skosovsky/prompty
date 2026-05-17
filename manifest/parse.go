@@ -137,6 +137,7 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	if len(raw.Tools) > 0 {
 		opts = append(opts, prompty.WithTools(raw.Tools))
 	}
+	opts = append(opts, prompty.WithRequiredTools(normalizeRequiredTools(raw.RequiredTools)))
 	if raw.ModelOptions != nil {
 		opts = append(opts, prompty.WithModelOptions(raw.ModelOptions))
 	}
@@ -176,4 +177,12 @@ func copyCacheControl(in *prompty.CacheControl) *prompty.CacheControl {
 	}
 	out := *in
 	return &out
+}
+
+// normalizeRequiredTools returns a non-nil empty slice when required_tools is absent.
+func normalizeRequiredTools(tools []string) []string {
+	if tools == nil {
+		return []string{}
+	}
+	return tools
 }

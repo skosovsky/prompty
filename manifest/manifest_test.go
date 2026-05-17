@@ -46,6 +46,41 @@ func TestParse_NilParser(t *testing.T) {
 	assert.ErrorIs(t, err, prompty.ErrNoParser)
 }
 
+func TestParse_RequiredTools(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"doctor_agent",
+		"version":"1",
+		"required_tools":["doctor_search_knowledge_base","get_current_time"],
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, tpl.RequiredTools)
+	exec, err := tpl.Format(map[string]any{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, exec.RequiredTools)
+}
+
+func TestParse_RequiredToolsAbsentReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"simple",
+		"version":"1",
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl)
+	assert.NotNil(t, tpl.RequiredTools)
+	assert.Empty(t, tpl.RequiredTools)
+	exec, err := tpl.Format(map[string]any{})
+	require.NoError(t, err)
+	assert.NotNil(t, exec.RequiredTools)
+	assert.Empty(t, exec.RequiredTools)
+}
+
 func TestParse_ValidFull(t *testing.T) {
 	t.Parallel()
 	data, err := testdataFS.ReadFile("testdata/valid_full.json")

@@ -35,6 +35,7 @@ type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
+	RequiredTools  []string                  `json:"required_tools,omitempty" yaml:"required_tools,omitempty"`
 	ModelOptions   *prompty.ModelOptions     `json:"model_config"`
 	Metadata       map[string]any            `json:"metadata"`
 	InputSchema    *prompty.SchemaDefinition `json:"input_schema"`

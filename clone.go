@@ -17,6 +17,7 @@ func clonePromptExecution(exec *PromptExecution) *PromptExecution {
 	return &PromptExecution{
 		Messages:       cloneMessages(exec.Messages),
 		Tools:          cloneToolDefinitions(exec.Tools),
+		RequiredTools:  cloneStringSlice(exec.RequiredTools),
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
@@ -30,6 +31,7 @@ func cloneExecutionWithMessages(exec *PromptExecution, messages []ChatMessage) *
 	return &PromptExecution{
 		Messages:       messages,
 		Tools:          cloneToolDefinitions(exec.Tools),
+		RequiredTools:  cloneStringSlice(exec.RequiredTools),
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),

@@ -24,6 +24,63 @@ func defaultFuncMap(tc TokenCounter) template.FuncMap {
 		"render_tools_as_json": renderToolsAsJSON,
 		"escapeXML":            escapeXML,
 		"randomHex":            randomHex,
+		"hasTool":              hasTool,
+	}
+}
+
+// hasTool reports whether toolName is present in allowedTools (slice of tool names or definitions).
+func hasTool(allowedTools any, toolName string) bool {
+	names, ok := toolNamesFromAny(allowedTools)
+	if !ok {
+		return false
+	}
+	for _, t := range names {
+		if t == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+func toolNamesFromAny(allowedTools any) ([]string, bool) {
+	if allowedTools == nil {
+		return nil, true
+	}
+	switch v := allowedTools.(type) {
+	case []string:
+		return v, true
+	case *[]string:
+		if v == nil {
+			return nil, true
+		}
+		return *v, true
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	case []ToolDefinition:
+		out := make([]string, len(v))
+		for i, t := range v {
+			out[i] = t.Name
+		}
+		return out, true
+	case *[]ToolDefinition:
+		if v == nil {
+			return nil, true
+		}
+		out := make([]string, len(*v))
+		for i, t := range *v {
+			out[i] = t.Name
+		}
+		return out, true
+	default:
+		return nil, false
 	}
 }
 

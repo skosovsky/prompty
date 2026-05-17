@@ -47,7 +47,8 @@ func TestGenerateConstsPackage(t *testing.T) {
 // --- Shared types tests ---
 
 func TestGenerateSharedTypes(t *testing.T) {
-	f, err := GenerateSharedTypes("prompts", []string{"support_agent", "greeter"})
+	specs := []*PromptSpec{{ID: "support_agent"}, {ID: "greeter"}}
+	f, err := GenerateSharedTypes("prompts", specs)
 	if err != nil {
 		t.Fatalf("GenerateSharedTypes: %v", err)
 	}
@@ -64,6 +65,12 @@ func TestGenerateSharedTypes(t *testing.T) {
 	}
 	if !strings.Contains(out, "type Prompts struct") {
 		t.Error("expected Prompts struct")
+	}
+	if !strings.Contains(out, "SupportAgent") || !strings.Contains(out, "*SupportAgentPrompt") {
+		t.Error("expected SupportAgent field on Prompts")
+	}
+	if !strings.Contains(out, "Greeter") || !strings.Contains(out, "*GreeterPrompt") {
+		t.Error("expected Greeter field on Prompts")
 	}
 	if !strings.Contains(out, "func NewPrompts(") {
 		t.Error("expected NewPrompts")
@@ -113,8 +120,17 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "type SupportAgentInput struct") {
 		t.Error("expected SupportAgentInput struct")
 	}
-	if !strings.Contains(out, "func (p *Prompts) RenderSupportAgent(") {
-		t.Error("expected RenderSupportAgent method")
+	if !strings.Contains(out, "type SupportAgentPrompt struct") {
+		t.Error("expected SupportAgentPrompt type")
+	}
+	if !strings.Contains(out, "func (p *SupportAgentPrompt) Render(") {
+		t.Error("expected Render method on SupportAgentPrompt")
+	}
+	if !strings.Contains(out, "func (p *SupportAgentPrompt) RequiredTools()") {
+		t.Error("expected RequiredTools method on SupportAgentPrompt")
+	}
+	if !strings.Contains(out, "func (p *SupportAgentPrompt) ID()") {
+		t.Error("expected ID method on SupportAgentPrompt")
 	}
 	if !strings.Contains(out, "validate.Struct") {
 		t.Error("expected input validation")
@@ -355,8 +371,36 @@ func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	if !strings.Contains(out, "type NoVarsInput struct") {
 		t.Error("expected empty Input struct")
 	}
-	if !strings.Contains(out, "func (p *Prompts) RenderNoVars(") {
-		t.Error("expected RenderNoVars")
+	if !strings.Contains(out, "func (p *NoVarsPrompt) Render(") {
+		t.Error("expected Render on NoVarsPrompt")
+	}
+}
+
+func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
+	spec := &PromptSpec{
+		ID:            "doctor_agent",
+		RequiredTools: []string{"doctor_search_knowledge_base", "get_current_time"},
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"doctor_search_knowledge_base"`) {
+		t.Error("expected doctor_search_knowledge_base in RequiredTools return")
+	}
+	if !strings.Contains(out, `"get_current_time"`) {
+		t.Error("expected get_current_time in RequiredTools return")
 	}
 }
 
@@ -760,7 +804,7 @@ func TestGenerate_Golden(t *testing.T) {
 	}
 
 	// Shared
-	shared, err := GenerateSharedTypes("prompts", []string{"support_agent"})
+	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
 	if err != nil {
 		t.Fatalf("GenerateSharedTypes: %v", err)
 	}
@@ -811,7 +855,7 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 	}
 
 	compareGolden(t, goldenDir, "shared_gen.go.golden", func() (string, error) {
-		f, err := GenerateSharedTypes("prompts", []string{"support_agent"})
+		f, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
 		if err != nil {
 			return "", err
 		}

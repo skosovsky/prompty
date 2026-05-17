@@ -1,0 +1,16 @@
+id: doctor_agent
+version: "1"
+
+required_tools:
+  - doctor_search_knowledge_base
+  - get_current_time
+
+input_schema:
+  name: doctor_agent_input
+  schema:
+    type: object
+    properties: {}
+
+messages:
+  - role: system
+    content: "You are a doctor assistant."
