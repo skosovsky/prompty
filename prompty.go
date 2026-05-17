@@ -147,7 +147,8 @@ type PromptExecution struct {
 // NewExecution creates a new prompt execution from a set of messages.
 func NewExecution(messages []ChatMessage) *PromptExecution {
 	return &PromptExecution{
-		Messages: cloneMessages(messages),
+		Messages:      cloneMessages(messages),
+		RequiredTools: []string{},
 	}
 }
 

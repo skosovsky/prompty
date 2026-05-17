@@ -224,6 +224,8 @@ func TestNewExecution_DefensiveCopy(t *testing.T) {
 	exec := NewExecution(messages)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 1)
+	require.NotNil(t, exec.RequiredTools)
+	assert.Empty(t, exec.RequiredTools)
 
 	messages[0].Metadata["nested"].(map[string]any)["env"] = "prod"
 	part := messages[0].Content[0].(MediaPart)

@@ -43,7 +43,7 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	initDict := jen.Dict{}
 	for _, spec := range sorted {
 		rootName := toPascal(spec.ID)
-		initDict[jen.Id(rootName)] = jen.Op("&").Id(rootName+"Prompt").Values(jen.Dict{
+		initDict[jen.Id(rootName)] = jen.Op("&").Id(rootName + "Prompt").Values(jen.Dict{
 			jen.Id("registry"): jen.Id("r"),
 		})
 	}

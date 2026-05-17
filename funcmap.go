@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"html"
+	"slices"
 	"strings"
 	"text/template"
 	"unicode/utf8"
@@ -34,12 +35,7 @@ func hasTool(allowedTools any, toolName string) bool {
 	if !ok {
 		return false
 	}
-	for _, t := range names {
-		if t == toolName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, toolName)
 }
 
 func toolNamesFromAny(allowedTools any) ([]string, bool) {

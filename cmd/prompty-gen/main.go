@@ -148,7 +148,6 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 // runTypes generates shared _shared_gen.go plus per-manifest _gen.go (hybrid types mode).
 func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
 	var specs []*gen.PromptSpec
-	var ids []string
 	seenIDs := make(map[string]string) // id -> first fpath
 	for _, fpath := range files {
 		spec, err := loadSpec(fpath, configDir, pkg.Queries)
@@ -166,7 +165,6 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		}
 		seenIDs[spec.ID] = fpath
 		specs = append(specs, spec)
-		ids = append(ids, spec.ID)
 	}
 
 	// Shared file: PromptID, Prompts container, NewPrompts, validate, AllPromptIDs
