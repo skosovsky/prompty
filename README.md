@@ -8,14 +8,14 @@
 
 The project is split into multiple Go modules. Install only what you need:
 
-| Layer   | Package | Install |
-|---------|---------|---------|
-| Core    | prompty (templates, registries in-tree) | `go get github.com/skosovsky/prompty` |
-| Adapters | OpenAI  | `go get github.com/skosovsky/prompty/adapter/openai` |
-|         | Gemini  | `go get github.com/skosovsky/prompty/adapter/gemini` |
-|         | Anthropic | `go get github.com/skosovsky/prompty/adapter/anthropic` |
-|         | Ollama  | `go get github.com/skosovsky/prompty/adapter/ollama` |
-| Registries | Git (remote) | `go get github.com/skosovsky/prompty/remoteregistry/git` |
+| Layer      | Package                                 | Install                                                  |
+| ---------- | --------------------------------------- | -------------------------------------------------------- |
+| Core       | prompty (templates, registries in-tree) | `go get github.com/skosovsky/prompty`                    |
+| Adapters   | OpenAI                                  | `go get github.com/skosovsky/prompty/adapter/openai`     |
+|            | Gemini                                  | `go get github.com/skosovsky/prompty/adapter/gemini`     |
+|            | Anthropic                               | `go get github.com/skosovsky/prompty/adapter/anthropic`  |
+|            | Ollama                                  | `go get github.com/skosovsky/prompty/adapter/ollama`     |
+| Registries | Git (remote)                            | `go get github.com/skosovsky/prompty/remoteregistry/git` |
 
 `fileregistry` and `embedregistry` are part of the core module (`github.com/skosovsky/prompty`).
 
@@ -74,11 +74,11 @@ Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **
 
 ## Registries
 
-| Package | Description |
-|---------|-------------|
-| `github.com/skosovsky/prompty/fileregistry` | Load manifests (JSON or YAML via WithParser) from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
-| `github.com/skosovsky/prompty/embedregistry` | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials |
-| `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); explicit cache via `WithCache`; `Close()` for resource cleanup |
+| Package                                       | Description                                                                                                                                                                 |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.com/skosovsky/prompty/fileregistry`   | Load manifests (JSON or YAML via WithParser) from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
+| `github.com/skosovsky/prompty/embedregistry`  | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials                                                                       |
+| `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); explicit cache via `WithCache`; `Close()` for resource cleanup                                                                           |
 
 All three registries also implement optional `prompty.Lister` (`List(ctx)`) and `prompty.Statter` (`Stat(ctx, id)`). When you have a variable of type `prompty.Registry` and need to list IDs or get template metadata, use a type assertion: `if l, ok := reg.(prompty.Lister); ok { ids, err := l.List(ctx); ... }`.
 
@@ -86,14 +86,38 @@ Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml
 
 ## Adapters
 
-| Package | Translate result | Notes |
-|---------|------------------|--------|
-| `github.com/skosovsky/prompty/adapter/openai` | `*openai.ChatCompletionNewParams` | Tools, MIME-routed media (image/audio/file), tool calls |
-| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams` | `image/*` and PDF media (base64 or URL), `text/plain` document blocks (base64), tool calls |
-| `github.com/skosovsky/prompty/adapter/gemini` | `*gemini.Request` | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes |
-| `github.com/skosovsky/prompty/adapter/ollama` | `*api.ChatRequest` | Native Ollama tools |
+| Package                                          | Translate result                  | Notes                                                                                      |
+| ------------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
+| `github.com/skosovsky/prompty/adapter/openai`    | `*openai.ChatCompletionNewParams` | Tools, MIME-routed media (image/audio/file), tool calls                                    |
+| `github.com/skosovsky/prompty/adapter/anthropic` | `*anthropic.MessageNewParams`     | `image/*` and PDF media (base64 or URL), `text/plain` document blocks (base64), tool calls |
+| `github.com/skosovsky/prompty/adapter/gemini`    | `*gemini.Request`                 | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes     |
+| `github.com/skosovsky/prompty/adapter/ollama`    | `*api.ChatRequest`                | Native Ollama tools                                                                        |
 
 Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. When URL media is unsupported by the target adapter, call `exec.ResolvedMedia(ctx, fetcher)` first; otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
+
+## Provider settings
+
+Use `model_config.provider_settings` for vendor-specific knobs. The core keeps this map as-is in `ModelOptions.ProviderSettings`; provider key mapping lives in adapters.
+
+Clean break contract: vendor keys must be inside `provider_settings`. Unknown top-level keys in `model_config` are rejected with a parse error.
+
+```yaml
+model_config:
+  model: gpt-4o
+  temperature: 0.3
+  provider_settings:
+    reasoning_effort: low
+    seed: 42
+```
+
+Supported `provider_settings` keys:
+
+- OpenAI: `presence_penalty`, `frequency_penalty`, `seed`, `logprobs`, `top_logprobs`, `reasoning_effort`
+- Gemini: `top_k`, `presence_penalty`, `frequency_penalty`, `stop_sequences`, `thinking`, `thinking_budget`, `gemini_search_grounding`
+- Anthropic: `top_k`, `stop_sequences`
+- Ollama: `top_k`, `seed`, `num_ctx`, `repeat_penalty`
+
+Type conversion is fail-safe: invalid values for a specific key are ignored (other valid keys are still applied).
 
 ## Architecture
 

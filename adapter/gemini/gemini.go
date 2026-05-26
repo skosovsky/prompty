@@ -10,6 +10,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/internal/cast"
 
 	"google.golang.org/genai"
 )
@@ -82,6 +83,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			config.StopSequences = exec.ModelOptions.Stop
 		}
 	}
+	wantGoogleSearch := applyGeminiProviderSettings(config, modelProviderSettings(exec.ModelOptions))
 	var systemParts []string
 	var contents []*genai.Content
 	for _, msg := range exec.Messages {
@@ -114,13 +116,6 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
 	// CacheControl is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
-	// ProviderSettings safety hatch: gemini_search_grounding(bool) enables Google Search tool.
-	var wantGoogleSearch bool
-	if exec.ModelOptions != nil && exec.ModelOptions.ProviderSettings != nil {
-		if v, ok := exec.ModelOptions.ProviderSettings["gemini_search_grounding"].(bool); ok && v {
-			wantGoogleSearch = true
-		}
-	}
 	if len(exec.Tools) > 0 {
 		config.Tools = []*genai.Tool{{
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),
@@ -309,6 +304,70 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, ArgsChunk: argsChunk})
 	}
 	return out, nil
+}
+
+func modelProviderSettings(opts *prompty.ModelOptions) map[string]any {
+	if opts == nil {
+		return nil
+	}
+	return opts.ProviderSettings
+}
+
+func applyGeminiProviderSettings(config *genai.GenerateContentConfig, settings map[string]any) bool {
+	if len(settings) == 0 {
+		return false
+	}
+	if raw, ok := settings["top_k"]; ok {
+		if topK, err := cast.ToFloat32(raw); err == nil {
+			config.TopK = &topK
+		}
+	}
+	if raw, ok := settings["presence_penalty"]; ok {
+		if penalty, err := cast.ToFloat32(raw); err == nil {
+			config.PresencePenalty = &penalty
+		}
+	}
+	if raw, ok := settings["frequency_penalty"]; ok {
+		if penalty, err := cast.ToFloat32(raw); err == nil {
+			config.FrequencyPenalty = &penalty
+		}
+	}
+	if raw, ok := settings["stop_sequences"]; ok {
+		if stops, err := cast.ToStringSlice(raw); err == nil {
+			config.StopSequences = stops
+		}
+	}
+
+	thinkingCfg := config.ThinkingConfig
+	var hasThinkingSettings bool
+	if raw, ok := settings["thinking"]; ok {
+		if includeThoughts, err := cast.ToBool(raw); err == nil {
+			if thinkingCfg == nil {
+				thinkingCfg = &genai.ThinkingConfig{}
+			}
+			thinkingCfg.IncludeThoughts = includeThoughts
+			hasThinkingSettings = true
+		}
+	}
+	if raw, ok := settings["thinking_budget"]; ok {
+		if budget, err := cast.ToInt32(raw); err == nil {
+			if thinkingCfg == nil {
+				thinkingCfg = &genai.ThinkingConfig{}
+			}
+			thinkingCfg.ThinkingBudget = &budget
+			hasThinkingSettings = true
+		}
+	}
+	if hasThinkingSettings {
+		config.ThinkingConfig = thinkingCfg
+	}
+
+	if raw, ok := settings["gemini_search_grounding"]; ok {
+		if enabled, err := cast.ToBool(raw); err == nil {
+			return enabled
+		}
+	}
+	return false
 }
 
 var _ adapter.ProviderAdapter[*Request, *genai.GenerateContentResponse] = (*Adapter)(nil)

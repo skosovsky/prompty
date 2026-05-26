@@ -20,7 +20,7 @@ func metadataToPromptMetadata(raw *RawManifest) prompty.PromptMetadata {
 	}
 	if raw.Metadata != nil {
 		if tags, ok := raw.Metadata["tags"]; ok {
-			if ss, ok := cast.ToStringSlice(tags); ok {
+			if ss, err := cast.ToStringSlice(tags); err == nil {
 				meta.Tags = ss
 			}
 		}
@@ -117,7 +117,7 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		opts = append(opts, prompty.WithInputSchema(raw.InputSchema))
 		if schema := raw.InputSchema.Schema; schema != nil {
 			if req, ok := schema["required"]; ok {
-				if ss, ok := cast.ToStringSlice(req); ok && len(ss) > 0 {
+				if ss, err := cast.ToStringSlice(req); err == nil && len(ss) > 0 {
 					opts = append(opts, prompty.WithRequiredVars(ss))
 				}
 			}

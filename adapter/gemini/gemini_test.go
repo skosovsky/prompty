@@ -190,6 +190,65 @@ func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
 	assert.True(t, hasGoogleSearch, "ProviderSettings gemini_search_grounding: true must add Google Search tool")
 }
 
+func TestTranslate_ProviderSettingsMapping(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":             1,
+				"presence_penalty":  0.4,
+				"frequency_penalty": 0.2,
+				"stop_sequences":    []any{"STOP", "END"},
+				"thinking":          true,
+				"thinking_budget":   512,
+			},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.TopK)
+	assert.InDelta(t, 1.0, float64(*req.Config.TopK), 1e-6)
+	require.NotNil(t, req.Config.PresencePenalty)
+	assert.InDelta(t, 0.4, float64(*req.Config.PresencePenalty), 1e-6)
+	require.NotNil(t, req.Config.FrequencyPenalty)
+	assert.InDelta(t, 0.2, float64(*req.Config.FrequencyPenalty), 1e-6)
+	assert.Equal(t, []string{"STOP", "END"}, req.Config.StopSequences)
+	require.NotNil(t, req.Config.ThinkingConfig)
+	assert.True(t, req.Config.ThinkingConfig.IncludeThoughts)
+	require.NotNil(t, req.Config.ThinkingConfig.ThinkingBudget)
+	assert.Equal(t, int32(512), *req.Config.ThinkingConfig.ThinkingBudget)
+}
+
+func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":            "bad",
+				"presence_penalty": 0.3,
+				"thinking_budget":  "invalid",
+				"thinking":         true,
+			},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.Nil(t, req.Config.TopK)
+	require.NotNil(t, req.Config.PresencePenalty)
+	assert.InDelta(t, 0.3, float64(*req.Config.PresencePenalty), 1e-6)
+	require.NotNil(t, req.Config.ThinkingConfig)
+	assert.True(t, req.Config.ThinkingConfig.IncludeThoughts)
+	assert.Nil(t, req.Config.ThinkingConfig.ThinkingBudget)
+}
+
 func TestTranslate_ToolResult(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -262,7 +321,7 @@ func TestTranslate_ModelOptions(t *testing.T) {
 	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.Temperature)
-	assert.InDelta(t, 0.5, float64(*req.Config.Temperature), 1e-9)
+	assert.InDelta(t, 0.5, float64(*req.Config.Temperature), 1e-6)
 	assert.Equal(t, int32(100), req.Config.MaxOutputTokens)
 }
 

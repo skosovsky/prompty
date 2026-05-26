@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToFloat64(t *testing.T) {
@@ -64,6 +65,8 @@ func TestToInt64(t *testing.T) {
 		{"uint64 overflow clamped", uint64(math.MaxInt64) + 999, math.MaxInt64, true},
 		{"float64", float64(9), 9, true},
 		{"float32", float32(10), 10, true},
+		{"float64 fractional", float64(9.5), 0, false},
+		{"float32 fractional", float32(10.25), 0, false},
 		{"string", "1", 0, false},
 		{"bool", false, 0, false},
 		{"nil", nil, 0, false},
@@ -83,25 +86,146 @@ func TestToInt64(t *testing.T) {
 func TestToStringSlice(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		v      any
-		want   []string
-		wantOk bool
+		name    string
+		v       any
+		want    []string
+		wantErr bool
 	}{
-		{"[]string", []string{"a", "b"}, []string{"a", "b"}, true},
-		{"[]any all strings", []any{"x", "y"}, []string{"x", "y"}, true},
-		{"[]any empty", []any{}, []string{}, true},
-		{"[]any mixed types", []any{"a", 123, "b"}, nil, false},
-		{"[]any with bool", []any{"a", true}, nil, false},
-		{"non-slice", "not a slice", nil, false},
-		{"nil", nil, nil, false},
-		{"map", map[string]any{}, nil, false},
+		{"[]string", []string{"a", "b"}, []string{"a", "b"}, false},
+		{"[]any all strings", []any{"x", "y"}, []string{"x", "y"}, false},
+		{"[]any empty", []any{}, []string{}, false},
+		{"[]any mixed types", []any{"a", 123, "b"}, nil, true},
+		{"[]any with bool", []any{"a", true}, nil, true},
+		{"non-slice", "not a slice", nil, true},
+		{"nil", nil, nil, true},
+		{"map", map[string]any{}, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := ToStringSlice(tt.v)
-			assert.Equal(t, tt.wantOk, ok)
+			got, err := ToStringSlice(tt.v)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestToFloat32(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		v       any
+		want    float32
+		wantErr bool
+	}{
+		{"int", 1, 1, false},
+		{"float64", 1.25, 1.25, false},
+		{"float32", float32(2.5), 2.5, false},
+		{"float64 overflow", 1e100, 0, true},
+		{"float64 inf", math.Inf(1), 0, true},
+		{"float64 nan", math.NaN(), 0, true},
+		{"string", "1.0", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ToFloat32(tt.v)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.InDelta(t, tt.want, got, 1e-6)
+		})
+	}
+}
+
+func TestToInt32(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		v       any
+		want    int32
+		wantErr bool
+	}{
+		{"int", 1, 1, false},
+		{"float64", 2.0, 2, false},
+		{"float32", float32(3), 3, false},
+		{"float64 fractional", 2.5, 0, true},
+		{"float32 fractional", float32(3.5), 0, true},
+		{"min boundary", int64(math.MinInt32), math.MinInt32, false},
+		{"max boundary", int64(math.MaxInt32), math.MaxInt32, false},
+		{"underflow", int64(math.MinInt32) - 1, 0, true},
+		{"overflow", int64(math.MaxInt32) + 1, 0, true},
+		{"string", "1", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ToInt32(tt.v)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestToBool(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		v       any
+		want    bool
+		wantErr bool
+	}{
+		{"true", true, true, false},
+		{"false", false, false, false},
+		{"string", "true", false, true},
+		{"int", 1, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ToBool(tt.v)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestToString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		v       any
+		want    string
+		wantErr bool
+	}{
+		{"string", "abc", "abc", false},
+		{"empty", "", "", false},
+		{"int", 1, "", true},
+		{"bool", true, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ToString(tt.v)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}

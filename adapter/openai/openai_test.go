@@ -217,9 +217,94 @@ func TestTranslate_ModelOptions(t *testing.T) {
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	assert.True(t, params.Temperature.Valid())
-	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-9)
+	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-6)
 	assert.True(t, params.MaxTokens.Valid())
 	assert.Equal(t, int64(100), params.MaxTokens.Value)
+}
+
+func TestTranslate_ProviderSettingsMapping(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			Model:       "o3-mini",
+			Temperature: new(0.8),
+			MaxTokens:   new(int64(200)),
+			ProviderSettings: map[string]any{
+				"presence_penalty":  0.2,
+				"frequency_penalty": 0.4,
+				"seed":              42,
+				"logprobs":          true,
+				"top_logprobs":      5,
+				"reasoning_effort":  "low",
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.True(t, params.PresencePenalty.Valid())
+	assert.InDelta(t, 0.2, params.PresencePenalty.Value, 1e-6)
+	assert.True(t, params.FrequencyPenalty.Valid())
+	assert.InDelta(t, 0.4, params.FrequencyPenalty.Value, 1e-6)
+	assert.True(t, params.Seed.Valid())
+	assert.Equal(t, int64(42), params.Seed.Value)
+	assert.True(t, params.Logprobs.Valid())
+	assert.True(t, params.Logprobs.Value)
+	assert.True(t, params.TopLogprobs.Valid())
+	assert.Equal(t, int64(5), params.TopLogprobs.Value)
+	assert.Equal(t, "low", string(params.ReasoningEffort))
+	// Guardrail: with reasoning_effort we don't send temperature and switch to max_completion_tokens.
+	assert.False(t, params.Temperature.Valid())
+	assert.False(t, params.MaxTokens.Valid())
+	assert.True(t, params.MaxCompletionTokens.Valid())
+	assert.Equal(t, int64(200), params.MaxCompletionTokens.Value)
+}
+
+func TestTranslate_ReasoningModelIgnoresTemperatureWithoutReasoningEffort(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			Model:       "o3-mini",
+			Temperature: new(0.7),
+			MaxTokens:   new(int64(150)),
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.False(t, params.Temperature.Valid())
+	assert.False(t, params.MaxTokens.Valid())
+	assert.True(t, params.MaxCompletionTokens.Valid())
+	assert.Equal(t, int64(150), params.MaxCompletionTokens.Value)
+}
+
+func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"presence_penalty": 0.2,
+				"seed":             "invalid",
+				"logprobs":         "yes",
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.True(t, params.PresencePenalty.Valid())
+	assert.InDelta(t, 0.2, params.PresencePenalty.Value, 1e-6)
+	assert.False(t, params.Seed.Valid())
+	assert.False(t, params.Logprobs.Valid())
 }
 
 func TestTranslate_NilExecution(t *testing.T) {

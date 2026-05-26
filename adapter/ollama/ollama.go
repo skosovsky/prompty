@@ -10,6 +10,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/internal/cast"
 )
 
 // Adapter implements adapter.ProviderAdapter for the Ollama Chat API.
@@ -58,9 +59,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 		Messages: make([]api.Message, 0, len(exec.Messages)),
 	}
 	if exec.ModelOptions != nil {
+		providerSettings := exec.ModelOptions.ProviderSettings
 		if exec.ModelOptions.Temperature != nil || exec.ModelOptions.MaxTokens != nil ||
 			exec.ModelOptions.TopP != nil ||
-			len(exec.ModelOptions.Stop) > 0 {
+			len(exec.ModelOptions.Stop) > 0 ||
+			len(providerSettings) > 0 {
 			req.Options = make(map[string]any)
 			if exec.ModelOptions.Temperature != nil {
 				req.Options["temperature"] = *exec.ModelOptions.Temperature
@@ -74,6 +77,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			if len(exec.ModelOptions.Stop) > 0 {
 				req.Options["stop"] = exec.ModelOptions.Stop
 			}
+			applyOllamaProviderSettings(req.Options, providerSettings)
 		}
 	}
 	for _, msg := range exec.Messages {
@@ -314,3 +318,29 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 }
 
 var _ adapter.ProviderAdapter[*api.ChatRequest, *api.ChatResponse] = (*Adapter)(nil)
+
+func applyOllamaProviderSettings(options map[string]any, settings map[string]any) {
+	if options == nil || len(settings) == 0 {
+		return
+	}
+	if raw, ok := settings["top_k"]; ok {
+		if topK, err := cast.ToInt32(raw); err == nil {
+			options["top_k"] = int(topK)
+		}
+	}
+	if raw, ok := settings["seed"]; ok {
+		if seed, err := cast.ToInt32(raw); err == nil {
+			options["seed"] = int(seed)
+		}
+	}
+	if raw, ok := settings["num_ctx"]; ok {
+		if numCtx, err := cast.ToInt32(raw); err == nil {
+			options["num_ctx"] = int(numCtx)
+		}
+	}
+	if raw, ok := settings["repeat_penalty"]; ok {
+		if repeatPenalty, err := cast.ToFloat32(raw); err == nil {
+			options["repeat_penalty"] = float64(repeatPenalty)
+		}
+	}
+}

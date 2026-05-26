@@ -2,11 +2,13 @@ package manifest
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 
 	"github.com/skosovsky/prompty"
 )
 
-var knownModelOptionKeys = map[string]struct{}{
+var allowedModelOptionKeys = map[string]struct{}{
 	"model":             {},
 	"temperature":       {},
 	"max_tokens":        {},
@@ -16,10 +18,15 @@ var knownModelOptionKeys = map[string]struct{}{
 }
 
 // DecodeModelOptions converts a normalized model_config block into typed ModelOptions.
-// Unknown top-level keys are preserved in ProviderSettings, while explicit provider_settings wins on conflicts.
+// Vendor-specific settings are accepted only from model_config.provider_settings.
 func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 	if len(raw) == 0 {
 		return nil, nil
+	}
+	for _, key := range sortedModelOptionKeys(raw) {
+		if _, ok := allowedModelOptionKeys[key]; !ok {
+			return nil, fmt.Errorf("invalid model_config key: %s; use provider_settings", key)
+		}
 	}
 
 	data, err := json.Marshal(raw)
@@ -33,28 +40,6 @@ func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 		return nil, err
 	}
 
-	var all map[string]any
-	if err := json.Unmarshal(data, &all); err != nil {
-		return nil, err
-	}
-	for key := range knownModelOptionKeys {
-		delete(all, key)
-	}
-
-	providerSettings := typed.ProviderSettings
-	if len(all) > 0 {
-		if providerSettings == nil {
-			providerSettings = all
-		} else {
-			for key, value := range all {
-				if _, exists := providerSettings[key]; !exists {
-					providerSettings[key] = value
-				}
-			}
-		}
-	}
-	typed.ProviderSettings = providerSettings
-
 	opts := prompty.ModelOptions(typed)
 	if opts.Model == "" &&
 		opts.Temperature == nil &&
@@ -65,4 +50,13 @@ func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 		return nil, nil
 	}
 	return &opts, nil
+}
+
+func sortedModelOptionKeys(raw map[string]any) []string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/internal/cast"
 )
 
 const defaultMaxTokens int64 = 1024
@@ -78,6 +79,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		if len(exec.ModelOptions.Stop) > 0 {
 			params.StopSequences = exec.ModelOptions.Stop
 		}
+		applyAnthropicProviderSettings(params, exec.ModelOptions.ProviderSettings)
 	}
 	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
@@ -686,5 +688,21 @@ func usageFromAnthropic(usage anthropic.Usage) prompty.Usage {
 		TotalTokens:               int(promptTokens + usage.OutputTokens),
 		PromptTokensCached:        int(usage.CacheReadInputTokens),
 		PromptTokensCacheCreation: int(usage.CacheCreationInputTokens),
+	}
+}
+
+func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings map[string]any) {
+	if len(settings) == 0 {
+		return
+	}
+	if raw, ok := settings["top_k"]; ok {
+		if topK, err := cast.ToInt32(raw); err == nil {
+			params.TopK = anthropic.Int(int64(topK))
+		}
+	}
+	if raw, ok := settings["stop_sequences"]; ok {
+		if stops, err := cast.ToStringSlice(raw); err == nil {
+			params.StopSequences = stops
+		}
 	}
 }

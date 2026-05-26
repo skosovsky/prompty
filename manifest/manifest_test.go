@@ -188,7 +188,6 @@ func TestParse_ModelOptions_JSON(t *testing.T) {
 			"max_tokens":2048,
 			"top_p":0.8,
 			"stop":["END"],
-			"frequency_penalty":0.2,
 			"provider_settings":{"frequency_penalty":0.5,"custom_flag":true}
 		},
 		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
@@ -208,6 +207,23 @@ func TestParse_ModelOptions_JSON(t *testing.T) {
 	require.NotNil(t, tpl.ModelOptions.ProviderSettings)
 	assert.InDelta(t, 0.5, tpl.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
 	assert.Equal(t, true, tpl.ModelOptions.ProviderSettings["custom_flag"])
+}
+
+func TestParse_ModelOptions_JSON_RejectsTopLevelVendorKeys(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"model_opts_top_level_vendor_keys",
+		"version":"1",
+		"model_config":{
+			"model":"gpt-4o",
+			"custom_mode":"fast",
+			"provider_settings":{"custom_flag":true}
+		},
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid model_config key: custom_mode; use provider_settings")
 }
 
 func TestParse_ModelOptions_JSON_EmptyBlockReturnsNil(t *testing.T) {

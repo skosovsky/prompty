@@ -156,8 +156,56 @@ func TestTranslate_ModelOptions(t *testing.T) {
 	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, req.Options)
-	assert.InDelta(t, 0.5, req.Options["temperature"], 1e-9)
+	assert.InDelta(t, 0.5, req.Options["temperature"], 1e-6)
 	assert.Equal(t, int64(100), req.Options["num_predict"])
+}
+
+func TestTranslate_ProviderSettingsMapping(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":          10,
+				"seed":           42,
+				"num_ctx":        4096,
+				"repeat_penalty": 1.1,
+			},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Options)
+	assert.Equal(t, 10, req.Options["top_k"])
+	assert.Equal(t, 42, req.Options["seed"])
+	assert.Equal(t, 4096, req.Options["num_ctx"])
+	assert.InDelta(t, 1.1, req.Options["repeat_penalty"], 1e-6)
+}
+
+func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":          10,
+				"num_ctx":        "invalid",
+				"repeat_penalty": "invalid",
+			},
+		},
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Options)
+	assert.Equal(t, 10, req.Options["top_k"])
+	assert.NotContains(t, req.Options, "num_ctx")
+	assert.NotContains(t, req.Options, "repeat_penalty")
 }
 
 func TestTranslate_ImagePartData(t *testing.T) {

@@ -195,6 +195,47 @@ func TestTranslate_ModelOptions(t *testing.T) {
 	assert.InDelta(t, 0.3, params.Temperature.Value, 1e-9)
 }
 
+func TestTranslate_ProviderSettingsMapping(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":          3,
+				"stop_sequences": []any{"STOP", "END"},
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.True(t, params.TopK.Valid())
+	assert.Equal(t, int64(3), params.TopK.Value)
+	assert.Equal(t, []string{"STOP", "END"}, params.StopSequences)
+}
+
+func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: map[string]any{
+				"top_k":          "bad",
+				"stop_sequences": []any{"STOP"},
+			},
+		},
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.False(t, params.TopK.Valid())
+	assert.Equal(t, []string{"STOP"}, params.StopSequences)
+}
+
 func TestTranslate_NilExecution(t *testing.T) {
 	t.Parallel()
 	a := New()

@@ -16,6 +16,7 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
+	"github.com/skosovsky/prompty/internal/cast"
 )
 
 // Adapter implements adapter.ProviderAdapter for the OpenAI Chat Completions API.
@@ -214,17 +215,24 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		if exec.ModelOptions.Model != "" {
 			params.Model = shared.ChatModel(exec.ModelOptions.Model) //nolint:unconvert // ChatModel is a distinct type
 		}
-		if exec.ModelOptions.Temperature != nil {
-			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
-		}
-		if exec.ModelOptions.MaxTokens != nil {
-			params.MaxTokens = openai.Int(*exec.ModelOptions.MaxTokens)
-		}
+		reasoningModel := isOpenAIReasoningModel(params.Model)
 		if exec.ModelOptions.TopP != nil {
 			params.TopP = openai.Float(*exec.ModelOptions.TopP)
 		}
 		if len(exec.ModelOptions.Stop) > 0 {
 			params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: exec.ModelOptions.Stop}
+		}
+
+		reasoningEffortSet := applyOpenAIProviderSettings(params, exec.ModelOptions.ProviderSettings)
+		if exec.ModelOptions.MaxTokens != nil {
+			if reasoningEffortSet || reasoningModel {
+				params.MaxCompletionTokens = openai.Int(*exec.ModelOptions.MaxTokens)
+			} else {
+				params.MaxTokens = openai.Int(*exec.ModelOptions.MaxTokens)
+			}
+		}
+		if exec.ModelOptions.Temperature != nil && !reasoningEffortSet && !reasoningModel {
+			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
 		}
 	}
 	for _, msg := range exec.Messages {
@@ -519,10 +527,7 @@ func (a *Adapter) ExecuteStream(
 				FinishReason: finishReason,
 			}
 			if !yield(resChunk, nil) {
-				// Policy: always check stream.Err() before exit; propagate if consumer stopped early.
-				if err := stream.Err(); err != nil {
-					yield(nil, err)
-				}
+				// Consumer requested stop; do not call yield again.
 				return
 			}
 		}
@@ -546,4 +551,69 @@ func usageFromOpenAI(usage openai.CompletionUsage) prompty.Usage {
 		PromptTokensCached:        int(usage.PromptTokensDetails.CachedTokens),
 		CompletionTokensReasoning: int(usage.CompletionTokensDetails.ReasoningTokens),
 	}
+}
+
+func applyOpenAIProviderSettings(params *openai.ChatCompletionNewParams, settings map[string]any) bool {
+	if len(settings) == 0 {
+		return false
+	}
+	if raw, ok := settings["presence_penalty"]; ok {
+		if penalty, err := cast.ToFloat32(raw); err == nil {
+			params.PresencePenalty = openai.Float(float64(penalty))
+		}
+	}
+	if raw, ok := settings["frequency_penalty"]; ok {
+		if penalty, err := cast.ToFloat32(raw); err == nil {
+			params.FrequencyPenalty = openai.Float(float64(penalty))
+		}
+	}
+	if raw, ok := settings["seed"]; ok {
+		if seed, err := cast.ToInt32(raw); err == nil {
+			params.Seed = openai.Int(int64(seed))
+		}
+	}
+	if raw, ok := settings["logprobs"]; ok {
+		if logprobs, err := cast.ToBool(raw); err == nil {
+			params.Logprobs = openai.Bool(logprobs)
+		}
+	}
+	if raw, ok := settings["top_logprobs"]; ok {
+		if topLogprobs, err := cast.ToInt32(raw); err == nil {
+			params.TopLogprobs = openai.Int(int64(topLogprobs))
+		}
+	}
+	if raw, ok := settings["reasoning_effort"]; ok {
+		if effort, err := cast.ToString(raw); err == nil {
+			reasoningEffort, ok := parseReasoningEffort(effort)
+			if ok {
+				params.ReasoningEffort = reasoningEffort
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseReasoningEffort(v string) (shared.ReasoningEffort, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "none":
+		return shared.ReasoningEffortNone, true
+	case "minimal":
+		return shared.ReasoningEffortMinimal, true
+	case "low":
+		return shared.ReasoningEffortLow, true
+	case "medium":
+		return shared.ReasoningEffortMedium, true
+	case "high":
+		return shared.ReasoningEffortHigh, true
+	case "xhigh":
+		return shared.ReasoningEffortXhigh, true
+	default:
+		return "", false
+	}
+}
+
+func isOpenAIReasoningModel(model shared.ChatModel) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3")
 }

@@ -162,7 +162,6 @@ model_config:
   top_p: 0.8
   stop:
     - END
-  frequency_penalty: 0.2
   provider_settings:
     frequency_penalty: 0.5
     custom_flag: true
@@ -185,6 +184,24 @@ messages:
 	require.NotNil(t, raw.ModelOptions.ProviderSettings)
 	assert.InDelta(t, 0.5, raw.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
 	assert.Equal(t, true, raw.ModelOptions.ProviderSettings["custom_flag"])
+}
+
+func TestUnmarshal_ModelOptionsTyped_RejectsTopLevelVendorKeys(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: yaml_model_opts_legacy
+version: "1"
+model_config:
+  model: gpt-4o
+  custom_mode: fast
+messages:
+  - role: system
+    content: "Hi"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid model_config key: custom_mode; use provider_settings")
 }
 
 func TestUnmarshal_ModelOptionsEmptyBlockReturnsNil(t *testing.T) {
@@ -212,7 +229,8 @@ model_config:
   model: gemini-2.5-pro
   temperature: 0.3
   top_p: 0.9
-  custom_mode: fast
+  provider_settings:
+    custom_mode: fast
 messages:
   - role: system
     content: "Hi"
