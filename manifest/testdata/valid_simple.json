@@ -5,7 +5,7 @@
     {
       "role": "system",
       "content": [
-        {"type": "text", "text": "Hello, {{ .user_name }}."}
+        {"type": "text", "text": "Hello, {{ .Input.user_name }}."}
       ]
     }
   ]

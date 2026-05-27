@@ -27,13 +27,16 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		ID              string                    `json:"id"`
 		Version         string                    `json:"version"`
 		Description     string                    `json:"description"`
+		LayerKind       prompty.LayerKind         `json:"layer_kind,omitempty"`
 		RequiredTools   []string                  `json:"required_tools"`
-		ModelOptionsRaw json.RawMessage           `json:"model_config"`
+		ModelOptionsRaw json.RawMessage           `json:"model_options"`
 		Metadata        map[string]any            `json:"metadata"`
-		InputSchema     *prompty.SchemaDefinition `json:"input_schema"`
+		InputsRaw       map[string]any            `json:"inputs"`
 		Tools           []prompty.ToolDefinition  `json:"tools"`
 		ResponseFormat  *prompty.SchemaDefinition `json:"response_format"`
 		Messages        []RawMessage              `json:"messages"`
+		LegacyModelRaw  map[string]any            `json:"model_config"`
+		LegacyInputs    *prompty.SchemaDefinition `json:"input_schema"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(in))
 	dec.DisallowUnknownFields()
@@ -52,12 +55,20 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 	raw.ID = wire.ID
 	raw.Version = wire.Version
 	raw.Description = wire.Description
+	raw.LayerKind = wire.LayerKind
 	raw.RequiredTools = wire.RequiredTools
 	raw.Metadata = wire.Metadata
-	raw.InputSchema = wire.InputSchema
 	raw.Tools = wire.Tools
 	raw.ResponseFormat = wire.ResponseFormat
 	raw.Messages = wire.Messages
+	raw.LegacyModelConfig = wire.LegacyModelRaw
+	raw.LegacyInputSchema = wire.LegacyInputs
+
+	inputs, err := DecodeInputs(wire.InputsRaw)
+	if err != nil {
+		return err
+	}
+	raw.InputSchema = inputs
 
 	if len(wire.ModelOptionsRaw) == 0 || string(wire.ModelOptionsRaw) == "null" {
 		raw.ModelOptions = nil
@@ -65,8 +76,8 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 	}
 
 	var cfg map[string]any
-	if err := json.Unmarshal(wire.ModelOptionsRaw, &cfg); err != nil {
-		return err
+	if unmarshalErr := json.Unmarshal(wire.ModelOptionsRaw, &cfg); unmarshalErr != nil {
+		return unmarshalErr
 	}
 	opts, err := DecodeModelOptions(cfg)
 	if err != nil {

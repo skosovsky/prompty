@@ -18,6 +18,7 @@ func clonePromptExecution(exec *PromptExecution) *PromptExecution {
 		Messages:       cloneMessages(exec.Messages),
 		Tools:          cloneToolDefinitions(exec.Tools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
+		ForcedTool:     exec.ForcedTool,
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
@@ -32,6 +33,7 @@ func cloneExecutionWithMessages(exec *PromptExecution, messages []ChatMessage) *
 		Messages:       messages,
 		Tools:          cloneToolDefinitions(exec.Tools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
+		ForcedTool:     exec.ForcedTool,
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
@@ -119,6 +121,8 @@ func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
 			Optional:     msg.Optional,
 			CacheControl: cloneCacheControl(msg.CacheControl),
 			Metadata:     cloneMapAny(msg.Metadata),
+			SourceID:     msg.SourceID,
+			LayerKind:    msg.LayerKind,
 		}
 	}
 	return out
@@ -147,6 +151,8 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 			Content:      cloneContentParts(msg.Content),
 			CacheControl: cloneCacheControl(msg.CacheControl),
 			Metadata:     cloneMapAny(msg.Metadata),
+			SourceID:     msg.SourceID,
+			LayerKind:    msg.LayerKind,
 		}
 	}
 	return out

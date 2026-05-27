@@ -49,9 +49,9 @@ func fetchCandidateIDs(id, env string) []string {
 	return []string{id}
 }
 
-// GetTemplate returns a template by id.
+// loadTemplate returns a template by id.
 // With env, tries id.env first and then id.
-func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
@@ -66,6 +66,15 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 		}
 	}
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// Plan returns a deferred render plan for the selected prompt id.
+func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+	tpl, err := r.loadTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return prompty.NewRenderPlan(tpl, typedInput), nil
 }
 
 func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {

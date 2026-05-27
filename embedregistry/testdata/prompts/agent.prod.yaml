@@ -2,4 +2,4 @@ id: agent
 version: "1"
 messages:
   - role: system
-    content: "Agent prod {{ .user_name }}"
+    content: "Agent prod {{ .Input.user_name }}"

@@ -50,8 +50,8 @@ const outputFormatToolName = "output_format"
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
+	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
 	}
 	if exec.ResponseFormat != nil && len(exec.Tools) > 0 {
 		return nil, fmt.Errorf(
@@ -141,6 +141,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 			}
 			params.Tools = append(params.Tools, tool)
 		}
+	}
+	if exec.ForcedTool != "" && len(params.Tools) > 0 {
+		params.ToolChoice = anthropic.ToolChoiceParamOfTool(exec.ForcedTool)
 	}
 	return params, nil
 }

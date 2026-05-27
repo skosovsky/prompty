@@ -2,6 +2,6 @@ id: demo
 version: "1"
 messages:
   - role: system
-    content: "You answer briefly. Topic: {{ .topic }}."
+    content: "You answer briefly. Topic: {{ .Input.topic }}."
   - role: user
-    content: "{{ .question }}"
+    content: "{{ .Input.question }}"

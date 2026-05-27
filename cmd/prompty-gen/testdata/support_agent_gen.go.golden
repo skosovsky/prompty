@@ -19,26 +19,34 @@ type SupportAgentPrompt struct {
 	registry prompty.Registry
 }
 
-func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput) (*prompty.PromptExecution, error) {
+func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
+	if input.BotName == nil {
+		v := "SupportBot"
+		input.BotName = &v
+	}
 	if err := validate.Struct(&input); err != nil {
 		return nil, fmt.Errorf("validate input: %w", err)
 	}
-	tmpl, err := p.registry.GetTemplate(ctx, string(SupportAgent))
+	plan, err := p.registry.Plan(ctx, string(SupportAgent), input)
 	if err != nil {
-		return nil, fmt.Errorf("get template: %w", err)
+		return nil, fmt.Errorf("build render plan: %w", err)
 	}
-	vars := make(map[string]any, 2)
-	if input.BotName != nil {
-		vars["bot_name"] = *input.BotName
-	} else {
-		vars["bot_name"] = "SupportBot"
+	return plan, nil
+}
+
+func (p *SupportAgentPrompt) renderFromAny(ctx context.Context, input any) (*prompty.RenderPlan, error) {
+	switch typed := input.(type) {
+	case SupportAgentInput:
+		return p.Render(ctx, typed)
+	case *SupportAgentInput:
+		if typed == nil {
+			return nil, fmt.Errorf("invalid input type for %s: got nil pointer", SupportAgent)
+		}
+		return p.Render(ctx, *typed)
+	default:
+		var expected SupportAgentInput
+		return nil, fmt.Errorf("invalid input type for %s: expected %T, got %T", SupportAgent, expected, input)
 	}
-	vars["user_query"] = input.UserQuery
-	exec, err := tmpl.Format(vars)
-	if err != nil {
-		return nil, fmt.Errorf("format template: %w", err)
-	}
-	return exec, nil
 }
 
 func (p *SupportAgentPrompt) RequiredTools() []string {

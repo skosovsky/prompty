@@ -203,8 +203,8 @@ func makeStrictPropertyNullable(schema map[string]any) {
 
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
+	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
 	}
 	// CacheControl is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
@@ -250,6 +250,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 				Description: openai.String(t.Description),
 				Parameters:  shared.FunctionParameters(t.Parameters),
 			}))
+		}
+		if exec.ForcedTool != "" {
+			params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(
+				openai.ChatCompletionNamedToolChoiceFunctionParam{Name: exec.ForcedTool},
+			)
 		}
 	}
 	if exec.ResponseFormat != nil {

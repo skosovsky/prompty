@@ -10,6 +10,9 @@ import (
 // Role is the message role in a chat (system, developer, user, assistant, tool).
 type Role string
 
+// LayerKind identifies a prompt layer category for composition/replacement.
+type LayerKind string
+
 // Chat message roles.
 const (
 	RoleSystem    Role = "system"
@@ -94,6 +97,8 @@ type ChatMessage struct {
 	Content      []ContentPart
 	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 	Metadata     map[string]any // Provider-specific message-scoped extras
+	SourceID     string         `json:"source_id,omitempty"     yaml:"source_id,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"` //nolint:tagalign // Keep golines-compatible formatting for this struct block.
 }
 
 // ToolDefinition is the universal tool schema.
@@ -139,6 +144,7 @@ type PromptExecution struct {
 	Messages       []ChatMessage
 	Tools          []ToolDefinition
 	RequiredTools  []string
+	ForcedTool     string
 	ModelOptions   *ModelOptions
 	Metadata       PromptMetadata
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
@@ -204,6 +210,7 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 		Messages:       out,
 		Tools:          cloneToolDefinitions(e.Tools),
 		RequiredTools:  cloneStringSlice(e.RequiredTools),
+		ForcedTool:     e.ForcedTool,
 		ModelOptions:   cloneModelOptions(e.ModelOptions),
 		Metadata:       clonePromptMetadata(e.Metadata),
 		ResponseFormat: cloneSchemaDefinition(e.ResponseFormat),
@@ -224,6 +231,8 @@ func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 		Content:      content,
 		CacheControl: mergeMessageCacheControl(a.CacheControl, b.CacheControl),
 		Metadata:     cloneMapAny(a.Metadata),
+		SourceID:     a.SourceID,
+		LayerKind:    a.LayerKind,
 	}
 }
 
@@ -254,7 +263,10 @@ type Fetcher interface {
 
 // ResolvedMedia returns a cloned execution where MediaParts with URL and empty Data are fetched via Fetcher.
 // MIME type is populated from fetcher response; callers can use this for image/audio/video/document URLs.
-func (e *PromptExecution) ResolvedMedia(ctx context.Context, fetcher Fetcher) (*PromptExecution, error) {
+func (e *PromptExecution) ResolvedMedia(
+	ctx context.Context,
+	fetcher Fetcher,
+) (*PromptExecution, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -368,6 +380,8 @@ type MessageTemplate struct {
 	Optional     bool           // true → skip if all referenced variables are zero-value
 	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
+	SourceID     string         `json:"source_id,omitempty"     yaml:"source_id,omitempty"`
+	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.
@@ -380,7 +394,7 @@ type TemplateInfo struct {
 // Registry returns a chat prompt template by id.
 // id is a single identifier (e.g. "doctor", "doctor.prod"); environments are expressed via file layout.
 type Registry interface {
-	GetTemplate(ctx context.Context, id string) (*ChatPromptTemplate, error)
+	Plan(ctx context.Context, id string, typedInput any) (*RenderPlan, error)
 }
 
 // Lister is optional. When implemented by a registry, List returns available template ids.

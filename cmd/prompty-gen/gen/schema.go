@@ -123,44 +123,6 @@ func toFloat(v any) (float64, bool) {
 	}
 }
 
-// defaultToJenLit converts propSchema["default"] to jen literal for code generation.
-// Returns (nil, false) if no default or unsupported type. Supported: string, integer, number, boolean.
-func defaultToJenLit(propSchema map[string]any) (jen.Code, bool) {
-	def, ok := propSchema["default"]
-	if !ok || def == nil {
-		return nil, false
-	}
-	typ, _ := propSchema["type"].(string)
-	switch typ {
-	case jsonSchemaTypeString:
-		s, ok := def.(string)
-		if !ok {
-			s = fmt.Sprintf("%v", def)
-		}
-		return jen.Lit(s), true
-	case jsonSchemaTypeInteger:
-		if v, ok := toFloat(def); ok {
-			return jen.Lit(int64(v)), true
-		}
-		return nil, false
-	case jsonSchemaTypeNumber:
-		if v, ok := toFloat(def); ok {
-			return jen.Lit(v), true
-		}
-		return nil, false
-	case jsonSchemaTypeBoolean:
-		if b, ok := def.(bool); ok {
-			if b {
-				return jen.True(), true
-			}
-			return jen.False(), true
-		}
-		return nil, false
-	default:
-		return nil, false
-	}
-}
-
 // getRequired returns property names from schema["required"].
 func getRequired(schema map[string]any) map[string]bool {
 	req := make(map[string]bool)

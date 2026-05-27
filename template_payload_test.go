@@ -102,10 +102,10 @@ func TestExtractVarsFromTree(t *testing.T) {
 		want []string
 	}{
 		{"no vars", "plain text", nil},
-		{"one var", "{{ .user_name }}", []string{"user_name"}},
-		{"two vars", "{{ .a }} {{ .b }}", []string{"a", "b"}},
-		{"Tools excluded", "{{ .user }} {{ .Tools }}", []string{"user"}},
-		{"nested", "{{ .x }} {{ if .y }}{{ .z }}{{ end }}", []string{"x", "y", "z"}},
+		{"one var", "{{ .Input.user_name }}", []string{"user_name"}},
+		{"two vars", "{{ .Input.a }} {{ .Input.b }}", []string{"a", "b"}},
+		{"Tools excluded", "{{ .Input.user }} {{ .Tools }}", []string{"user"}},
+		{"nested", "{{ .Input.x }} {{ if .Input.y }}{{ .Input.z }}{{ end }}", []string{"x", "y", "z"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

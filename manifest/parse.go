@@ -82,6 +82,12 @@ func Parse(data []byte, u Unmarshaler, opts ...ParseOption) (*prompty.ChatPrompt
 
 // BuildFromRaw builds ChatPromptTemplate from RawManifest (used by parsers and tests).
 func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate, error) {
+	if raw.LegacyModelConfig != nil || raw.LegacyInputSchema != nil {
+		return nil, fmt.Errorf(
+			"%w: use model_options/inputs instead of model_config/input_schema",
+			prompty.ErrLegacyManifestVersion,
+		)
+	}
 	if raw.ID == "" {
 		return nil, fmt.Errorf("%w: missing id", prompty.ErrInvalidManifest)
 	}
@@ -91,6 +97,10 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	messages := make([]prompty.MessageTemplate, len(raw.Messages))
 	for i := range raw.Messages {
 		rm := &raw.Messages[i]
+		layerKind := rm.LayerKind
+		if layerKind == "" {
+			layerKind = raw.LayerKind
+		}
 		content := make([]prompty.TemplatePart, len(rm.Content))
 		for j, p := range rm.Content {
 			content[j] = prompty.TemplatePart{
@@ -104,6 +114,8 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		}
 		messages[i] = prompty.MessageTemplate{
 			Role:         prompty.Role(rm.Role),
+			LayerKind:    layerKind,
+			SourceID:     rm.SourceID,
 			Content:      content,
 			Optional:     rm.Optional,
 			CacheControl: copyCacheControl(rm.CacheControl),

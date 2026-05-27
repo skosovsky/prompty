@@ -51,8 +51,8 @@ func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
-func (m *mockRegistryWithExtras) GetTemplate(_ context.Context, _ string) (*prompty.ChatPromptTemplate, error) {
-	return prompty.CloneTemplate(m.tpl), nil
+func (m *mockRegistryWithExtras) Plan(_ context.Context, _ string, typedInput any) (*prompty.RenderPlan, error) {
+	return prompty.NewRenderPlan(prompty.CloneTemplate(m.tpl), typedInput), nil
 }
 
 func (m *mockRegistryWithExtras) List(_ context.Context) ([]string, error) {
@@ -70,18 +70,18 @@ func (m *mockRegistryWithExtras) Close() error {
 
 func TestRegistry_GetTemplate_Success(t *testing.T) {
 	t.Parallel()
-	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`
+	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .Input.user_name }}"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"support_agent": []byte(manifestJSON)}}
 	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	tpl, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
 	assert.Equal(t, 1, m.called)
-	tpl2, err := reg.GetTemplate(ctx, "support_agent")
+	tpl2, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	assert.Equal(t, "support_agent", tpl2.Metadata.ID)
 	assert.Equal(t, 1, m.called)
@@ -95,7 +95,7 @@ func TestRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p")
+	tpl, err := templateFromPlan(ctx, reg, "p")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -114,7 +114,7 @@ func TestRegistry_GetTemplate_EnvFallbackBaseAndStaging(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "env_test")
+	tpl, err := templateFromPlan(ctx, reg, "env_test")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -134,7 +134,7 @@ func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p")
+	tpl, err := templateFromPlan(ctx, reg, "p")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -151,7 +151,7 @@ func TestRegistry_GetTemplate_FetchError(t *testing.T) {
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "x")
+	_, err = templateFromPlan(ctx, reg, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
 }
@@ -166,7 +166,7 @@ func TestRegistry_GetTemplate_NotFoundWrapsErrTemplateNotFound(t *testing.T) {
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "missing")
+	_, err = templateFromPlan(ctx, reg, "missing")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -177,7 +177,7 @@ func TestRegistry_GetTemplate_InvalidManifest(t *testing.T) {
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "bad")
+	_, err = templateFromPlan(ctx, reg, "bad")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -196,14 +196,14 @@ func TestRegistry_GetTemplate_TTLExpiry(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, 50*time.Millisecond)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "ttl_test")
+	tpl, err := templateFromPlan(ctx, reg, "ttl_test")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(60 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "ttl_test")
+	tpl2, err := templateFromPlan(ctx, reg, "ttl_test")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
@@ -224,14 +224,14 @@ func TestRegistry_GetTemplate_InfiniteTTL(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, 0)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "infinite")
+	tpl, err := templateFromPlan(ctx, reg, "infinite")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, 1, called)
 
 	time.Sleep(20 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "infinite")
+	tpl2, err := templateFromPlan(ctx, reg, "infinite")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl2.Messages[0].Content[0].Text)
@@ -252,12 +252,12 @@ func TestRegistry_GetTemplate_NegativeTTLNeverExpires(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, -time.Hour)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "neg_ttl")
+	tpl, err := templateFromPlan(ctx, reg, "neg_ttl")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
 	time.Sleep(30 * time.Millisecond)
-	tpl2, err := reg.GetTemplate(ctx, "neg_ttl")
+	tpl2, err := templateFromPlan(ctx, reg, "neg_ttl")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
@@ -271,12 +271,12 @@ func TestRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl1, err := reg.GetTemplate(ctx, "safe")
+	tpl1, err := templateFromPlan(ctx, reg, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
 	tpl1.Messages[0].Content = []prompty.TemplatePart{{Type: "text", Text: "Mutated"}}
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
-	tpl2, err := reg.GetTemplate(ctx, "safe")
+	tpl2, err := templateFromPlan(ctx, reg, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
 	require.Len(t, tpl2.Messages[0].Content, 1)
@@ -297,7 +297,7 @@ func TestRegistry_GetTemplate_ContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = reg.GetTemplate(ctx, "x")
+	_, err = templateFromPlan(ctx, reg, "x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -316,7 +316,7 @@ func TestRegistry_GetTemplate_Concurrent(t *testing.T) {
 	results := make(chan result, 50)
 	for range 50 {
 		go func() {
-			tpl, err := reg.GetTemplate(ctx, "conc")
+			tpl, err := templateFromPlan(ctx, reg, "conc")
 			results <- result{tpl: tpl, err: err}
 		}()
 	}
@@ -345,7 +345,7 @@ func TestCachedRegistry_GetTemplate_ConcurrentDedupe(t *testing.T) {
 	errs := make(chan error, workers)
 	for range workers {
 		go func() {
-			tpl, getErr := reg.GetTemplate(ctx, "conc_cached")
+			tpl, getErr := templateFromPlan(ctx, reg, "conc_cached")
 			if getErr == nil && (tpl == nil || tpl.Metadata.ID != "conc_cached") {
 				getErr = errors.New("unexpected template returned from cache")
 			}
@@ -385,12 +385,12 @@ func TestCachedRegistry_GetTemplate_CallerCancellationIsolation(t *testing.T) {
 	defer cancel()
 	firstErr := make(chan error, 1)
 	go func() {
-		_, getErr := reg.GetTemplate(firstCtx, "ctx_isolation")
+		_, getErr := templateFromPlan(firstCtx, reg, "ctx_isolation")
 		firstErr <- getErr
 	}()
 
 	<-started
-	tpl, err := reg.GetTemplate(context.Background(), "ctx_isolation")
+	tpl, err := templateFromPlan(context.Background(), reg, "ctx_isolation")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "ctx_isolation", tpl.Metadata.ID)
@@ -432,11 +432,11 @@ func TestCachedRegistry_GetTemplate_CancelsSharedFetchWhenAllWaitersCancel(t *te
 
 	errs := make(chan error, 2)
 	go func() {
-		_, getErr := reg.GetTemplate(ctx1, "ctx_cancel_all")
+		_, getErr := templateFromPlan(ctx1, reg, "ctx_cancel_all")
 		errs <- getErr
 	}()
 	go func() {
-		_, getErr := reg.GetTemplate(ctx2, "ctx_cancel_all")
+		_, getErr := templateFromPlan(ctx2, reg, "ctx_cancel_all")
 		errs <- getErr
 	}()
 
@@ -458,7 +458,7 @@ func TestCachedRegistry_GetTemplate_CancelsSharedFetchWhenAllWaitersCancel(t *te
 
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel3()
-	_, err = reg.GetTemplate(ctx3, "ctx_cancel_all")
+	_, err = templateFromPlan(ctx3, reg, "ctx_cancel_all")
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Equal(t, 2, m.called, "failed/canceled shared fetch must not populate cache")
@@ -470,7 +470,7 @@ func TestRegistry_GetTemplate_InvalidID(t *testing.T) {
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "invalid:name")
+	_, err = templateFromPlan(ctx, reg, "invalid:name")
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidName)
 	assert.Contains(t, err.Error(), ":")
@@ -498,11 +498,11 @@ func TestRegistry_Evict(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "evict_me")
+	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
 	assert.Equal(t, 1, m.called)
 	reg.Evict("evict_me")
-	_, err = reg.GetTemplate(ctx, "evict_me")
+	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
 	assert.Equal(t, 2, m.called, "after Evict, next GetTemplate should fetch again")
 }
@@ -515,10 +515,10 @@ func TestRegistry_EvictAll(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "all")
+	_, err = templateFromPlan(ctx, reg, "all")
 	require.NoError(t, err)
 	reg.EvictAll()
-	_, err = reg.GetTemplate(ctx, "all")
+	_, err = templateFromPlan(ctx, reg, "all")
 	require.NoError(t, err)
 	assert.Equal(t, 2, m.called)
 }

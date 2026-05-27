@@ -21,6 +21,8 @@ type RawContentPart struct {
 // RawMessage is the raw representation of a single message.
 type RawMessage struct {
 	Role         string                `json:"role"`
+	LayerKind    prompty.LayerKind     `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
+	SourceID     string                `json:"source_id,omitempty"     yaml:"source_id,omitempty"`
 	Content      []RawContentPart      `json:"content"`
 	Optional     bool                  `json:"optional"`
 	CacheControl *prompty.CacheControl `json:"cache_control,omitempty"`
@@ -35,11 +37,16 @@ type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
+	LayerKind      prompty.LayerKind         `json:"layer_kind,omitempty"     yaml:"layer_kind,omitempty"`
 	RequiredTools  []string                  `json:"required_tools,omitempty" yaml:"required_tools,omitempty"`
-	ModelOptions   *prompty.ModelOptions     `json:"model_config"`
+	ModelOptions   *prompty.ModelOptions     `json:"model_options"`
 	Metadata       map[string]any            `json:"metadata"`
-	InputSchema    *prompty.SchemaDefinition `json:"input_schema"`
+	InputSchema    *prompty.SchemaDefinition `json:"inputs"`
 	Tools          []prompty.ToolDefinition  `json:"tools"`
 	ResponseFormat *prompty.SchemaDefinition `json:"response_format"`
 	Messages       []RawMessage              `json:"messages"`
+
+	// Legacy v1 fields: strict-mode parser rejects manifests that still use them.
+	LegacyModelConfig map[string]any            `json:"model_config,omitempty" yaml:"model_config,omitempty"`
+	LegacyInputSchema *prompty.SchemaDefinition `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
 }

@@ -63,17 +63,20 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "var validate = validator.New()") {
 		t.Error("expected package-level validate singleton")
 	}
-	if !strings.Contains(out, "type Prompts struct") {
-		t.Error("expected Prompts struct")
+	if !strings.Contains(out, "type PromptCatalog interface") {
+		t.Error("expected PromptCatalog interface")
 	}
-	if !strings.Contains(out, "SupportAgent") || !strings.Contains(out, "*SupportAgentPrompt") {
-		t.Error("expected SupportAgent field on Prompts")
+	if !strings.Contains(out, "RenderSupportAgent") {
+		t.Error("expected typed RenderSupportAgent method in catalog")
 	}
-	if !strings.Contains(out, "Greeter") || !strings.Contains(out, "*GreeterPrompt") {
-		t.Error("expected Greeter field on Prompts")
+	if !strings.Contains(out, "RenderGreeter") {
+		t.Error("expected typed RenderGreeter method in catalog")
 	}
-	if !strings.Contains(out, "func NewPrompts(") {
-		t.Error("expected NewPrompts")
+	if !strings.Contains(out, "func NewPromptCatalog(") {
+		t.Error("expected NewPromptCatalog")
+	}
+	if !strings.Contains(out, "func (c *promptCatalog) RenderByID(") {
+		t.Error("expected RenderByID implementation")
 	}
 	if !strings.Contains(out, "func AllPromptIDs()") {
 		t.Error("expected AllPromptIDs")
@@ -135,14 +138,17 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "validate.Struct") {
 		t.Error("expected input validation")
 	}
-	if !strings.Contains(out, "p.registry.GetTemplate") {
-		t.Error("expected GetTemplate call")
+	if !strings.Contains(out, "p.registry.Plan") {
+		t.Error("expected Plan call")
 	}
 	if !strings.Contains(out, "string(SupportAgent)") {
-		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
+		t.Error("DoD: Plan must receive string(PromptID) for Registry interface")
 	}
-	if !strings.Contains(out, "tmpl.Format(vars)") {
-		t.Error("expected exact Format(vars) call")
+	if !strings.Contains(out, "build render plan") {
+		t.Error("expected render-plan build error wrapping")
+	}
+	if !strings.Contains(out, "func (p *SupportAgentPrompt) renderFromAny(") {
+		t.Error("expected renderFromAny helper for RenderByID")
 	}
 	if strings.Contains(out, "Format(ctx,") {
 		t.Error("DoD: generated code must not use the removed Format(ctx, ...) signature")
@@ -223,9 +229,9 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	if !strings.Contains(out, "type GreeterOutput struct") {
 		t.Error("expected GreeterOutput when response_format present")
 	}
-	// Output is generated for downstream use (e.g. prompty.Execute), but Render returns *PromptExecution
-	if !strings.Contains(out, "(*prompty.PromptExecution, error)") {
-		t.Error("Render must return (*PromptExecution, error)")
+	// Output is generated for downstream use, while Render returns deferred plan.
+	if !strings.Contains(out, "(*prompty.RenderPlan, error)") {
+		t.Error("Render must return (*prompty.RenderPlan, error)")
 	}
 }
 
@@ -303,8 +309,8 @@ func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
 	if !strings.Contains(out, "Payload *RouterInputPayload") {
 		t.Error("expected field Payload *RouterInputPayload (parent-based naming)")
 	}
-	if !strings.Contains(out, `vars["payload"] = nil`) {
-		t.Error("expected optional nested object without default to set vars[\"payload\"] = nil in else branch")
+	if strings.Contains(out, `vars["payload"]`) {
+		t.Error("must not generate legacy vars map assignments")
 	}
 }
 
@@ -550,8 +556,8 @@ func TestGenerateManifestTypes_RequiredBoolWithFalse(t *testing.T) {
 	if !strings.Contains(out, "validate:\"required\"") && !strings.Contains(out, "validate:`required`") {
 		t.Error("required bool must have validate required tag")
 	}
-	if !strings.Contains(out, "*input.Enabled") {
-		t.Error("required bool must be passed to vars as value (dereferenced *bool)")
+	if strings.Contains(out, "vars[") {
+		t.Error("must not generate legacy vars map assignments")
 	}
 }
 
@@ -714,8 +720,8 @@ func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, `vars["subtitle"] = ""`) {
-		t.Errorf("expected optional string without default to use empty string in else branch; got:\n%s", out)
+	if strings.Contains(out, `vars["subtitle"]`) {
+		t.Errorf("must not generate legacy vars map assignment for subtitle; got:\n%s", out)
 	}
 }
 
@@ -745,8 +751,8 @@ func TestGenerateManifestTypes_OptionalArrayNoDefaultElseNil(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, `vars["tags"] = nil`) {
-		t.Errorf("expected optional array without default to set nil in else branch; got:\n%s", out)
+	if strings.Contains(out, `vars["tags"]`) {
+		t.Errorf("must not generate legacy vars map assignment for tags; got:\n%s", out)
 	}
 }
 
@@ -774,8 +780,68 @@ func TestGenerateManifestTypes_Default(t *testing.T) {
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, `"Hello"`) {
-		t.Error("expected default value Hello in vars else block")
+	if !strings.Contains(out, "type GreeterInput struct") {
+		t.Error("expected generated input struct")
+	}
+	if !strings.Contains(out, "if input.Greeting == nil") {
+		t.Error("expected default guard for optional greeting")
+	}
+	if !strings.Contains(out, `v := "Hello"`) {
+		t.Error("expected literal default assignment for greeting")
+	}
+	if strings.Contains(out, `vars["greeting"]`) {
+		t.Error("must not generate legacy vars default assignment")
+	}
+}
+
+func TestGenerateManifestTypes_Default_UnsupportedTypeFailsFast(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "with_array_default",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"tags": map[string]any{
+						"type":    "array",
+						"items":   map[string]any{"type": "string"},
+						"default": []any{"a", "b"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := GenerateManifestTypes(spec, "prompts")
+	if err == nil {
+		t.Fatal("expected error for unsupported array default")
+	}
+	if !strings.Contains(err.Error(), `unsupported type "array"`) {
+		t.Fatalf("expected unsupported array type error, got: %v", err)
+	}
+}
+
+func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "bad_default_literal",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"enabled": map[string]any{
+						"type":    "boolean",
+						"default": "yes",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := GenerateManifestTypes(spec, "prompts")
+	if err == nil {
+		t.Fatal("expected error for invalid boolean default literal")
+	}
+	if !strings.Contains(err.Error(), "expected boolean default value") {
+		t.Fatalf("expected boolean default value error, got: %v", err)
 	}
 }
 
@@ -854,31 +920,39 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		},
 	}
 
+	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
+	if err != nil {
+		t.Fatalf("GenerateSharedTypes: %v", err)
+	}
 	compareGolden(t, goldenDir, "shared_gen.go.golden", func() (string, error) {
-		f, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
-		if err != nil {
-			return "", err
-		}
 		var b strings.Builder
-		_ = f.Render(&b)
+		if renderErr := shared.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
 		return b.String(), nil
 	})
+
+	manifestFile, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
 	compareGolden(t, goldenDir, "support_agent_gen.go.golden", func() (string, error) {
-		f, err := GenerateManifestTypes(spec, "prompts")
-		if err != nil {
-			return "", err
-		}
 		var b strings.Builder
-		_ = f.Render(&b)
+		if renderErr := manifestFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
 		return b.String(), nil
 	})
+
 	compareGolden(t, goldenDir, "consts_gen.go.golden", func() (string, error) {
 		f, err := GenerateConstsPackage("prompts", []string{"support_agent"})
 		if err != nil {
 			return "", err
 		}
 		var b strings.Builder
-		_ = f.Render(&b)
+		if renderErr := f.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
 		return b.String(), nil
 	})
 }

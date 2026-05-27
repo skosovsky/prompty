@@ -86,7 +86,7 @@ id: support_agent
 version: "1"
 messages:
   - role: system
-    content: "Hello {{ .user_name }}"
+    content: "Hello {{ .Input.user_name }}"
 `,
 	})
 	fileURL := "file://" + dir
@@ -167,8 +167,9 @@ messages:
 	reg, err := remoteregistry.New(g, remoteregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "integ")
+	plan, err := reg.Plan(ctx, "integ", nil)
 	require.NoError(t, err)
+	tpl := plan.Template()
 	require.NotNil(t, tpl)
 	require.Equal(t, "integ", tpl.Metadata.ID)
 }
@@ -411,8 +412,9 @@ func TestFetcher_ListIDs_IncludesJson(t *testing.T) {
 	// Fetch and List should be consistent: GetTemplate works for listed ids
 	reg, err := remoteregistry.New(g, remoteregistry.WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
-	tpl, err := reg.GetTemplate(ctx, "json_only")
+	plan, err := reg.Plan(ctx, "json_only", nil)
 	require.NoError(t, err)
+	tpl := plan.Template()
 	require.NotNil(t, tpl)
 	require.Equal(t, "json_only", tpl.Metadata.ID)
 }

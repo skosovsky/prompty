@@ -34,12 +34,12 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .user_name }}")
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .Input.user_name }}")
 }
 
 // TestEmbedRegistry_GetTemplate_BaseId returns base file for id "agent".
@@ -48,11 +48,11 @@ func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .user_name }}")
+	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .Input.user_name }}")
 	assert.NotContains(t, tpl.Messages[0].Content[0].Text, "Agent prod")
 }
 
@@ -61,7 +61,7 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -74,7 +74,7 @@ func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "agent/staging")
+	_, err = templateFromPlan(ctx, reg, "agent/staging")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -84,7 +84,7 @@ func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "nonexistent")
+	_, err = templateFromPlan(ctx, reg, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -216,7 +216,7 @@ func TestEmbedRegistry_Stat_EnvFallback(t *testing.T) {
 	info, err := reg.Stat(ctx, "agent")
 	require.NoError(t, err)
 	assert.Equal(t, "agent", info.ID)
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -238,7 +238,7 @@ func TestEmbedRegistry_WithVersion(t *testing.T) {
 	info, err := reg.Stat(ctx, "agent")
 	require.NoError(t, err)
 	assert.Equal(t, "abc123", info.Version)
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "abc123", tpl.Metadata.Version)
@@ -261,10 +261,10 @@ func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "doctor")
+	tpl, err := templateFromPlan(ctx, reg, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)

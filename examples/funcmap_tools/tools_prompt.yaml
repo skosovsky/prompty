@@ -17,4 +17,4 @@ messages:
       You have these tools (as JSON): {{ render_tools_as_json .Tools }}
       Use them when the user asks. Reply briefly.
   - role: user
-    content: "{{ .query }}"
+    content: "{{ .Input.query }}"

@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 
 	"github.com/skosovsky/prompty"
@@ -39,6 +40,23 @@ var (
 	ErrStructuredOutputNotSupported = errors.New(
 		"adapter: structured output (response_format) not supported by this provider",
 	)
-	ErrMediaNotResolved = errors.New("adapter: media URL not resolved (call ResolvedMedia first)")
-	ErrNoClient         = errors.New("adapter: SDK client not set (use WithClient)")
+	ErrMediaNotResolved   = errors.New("adapter: media URL not resolved (call ResolvedMedia first)")
+	ErrNoClient           = errors.New("adapter: SDK client not set (use WithClient)")
+	ErrForcedToolNotFound = errors.New("adapter: forced tool is not declared in execution tools")
 )
+
+// ValidateExecution performs cross-provider preflight validation.
+func ValidateExecution(exec *prompty.PromptExecution) error {
+	if exec == nil {
+		return ErrNilExecution
+	}
+	if exec.ForcedTool == "" {
+		return nil
+	}
+	for _, tool := range exec.Tools {
+		if tool.Name == exec.ForcedTool {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrForcedToolNotFound, exec.ForcedTool)
+}

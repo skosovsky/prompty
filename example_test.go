@@ -11,7 +11,7 @@ import (
 func ExampleNewChatPromptTemplate() {
 	msgs := []prompty.MessageTemplate{
 		{Role: prompty.RoleSystem, Content: prompty.TextContent("You are a helpful assistant.")},
-		{Role: prompty.RoleUser, Content: prompty.TextContent("Hello, {{ .user_name }}!")},
+		{Role: prompty.RoleUser, Content: prompty.TextContent("Hello, {{ .Input.user_name }}!")},
 	}
 	tpl, err := prompty.NewChatPromptTemplate(msgs)
 	if err != nil {
@@ -21,14 +21,11 @@ func ExampleNewChatPromptTemplate() {
 	// Output: 2
 }
 
-func ExampleChatPromptTemplate_FormatStruct() {
+func ExampleRenderPlan_Execute() {
 	tpl, _ := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
-		{Role: prompty.RoleSystem, Content: prompty.TextContent("Hello, {{ .name }}!")},
+		{Role: prompty.RoleSystem, Content: prompty.TextContent("Hello, {{ .Input.name }}!")},
 	})
-	type Payload struct {
-		Name string `prompt:"name"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{Name: "Alice"})
+	exec, err := prompty.NewRenderPlan(tpl, map[string]any{"name": "Alice"}).Execute(context.Background())
 	if err != nil {
 		panic(err)
 	}
@@ -53,18 +50,15 @@ func ExampleWithTools() {
 func Example() {
 	tpl, err := prompty.NewChatPromptTemplate(
 		[]prompty.MessageTemplate{
-			{Role: prompty.RoleSystem, Content: prompty.TextContent("You are {{ .bot_name }}.")},
-			{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .query }}")},
+			{Role: prompty.RoleSystem, Content: prompty.TextContent("You are {{ .Input.bot_name }}.")},
+			{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .Input.query }}")},
 		},
 		prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
 	)
 	if err != nil {
 		panic(err)
 	}
-	type Payload struct {
-		Query string `prompt:"query"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{Query: "What is 2+2?"})
+	exec, err := prompty.NewRenderPlan(tpl, map[string]any{"query": "What is 2+2?"}).Execute(context.Background())
 	if err != nil {
 		panic(err)
 	}

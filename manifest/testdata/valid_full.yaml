@@ -2,22 +2,17 @@ id: support_agent
 version: "1.2"
 description: "Customer support agent"
 
-model_config:
+model_options:
   temperature: 0.7
   max_tokens: 2048
 
-input_schema:
-  name: support_agent_input
-  schema:
-    type: object
-    properties:
-      user_query:
-        type: string
-      bot_name:
-        type: string
-        default: "SupportBot"
-    required:
-      - user_query
+inputs:
+  user_query:
+    type: string
+    required: true
+  bot_name:
+    type: string
+    default: "SupportBot"
 
 tools:
   - name: get_order_status
@@ -30,7 +25,7 @@ tools:
 
 messages:
   - role: system
-    content: "You are {{ .bot_name }}. {{ render_tools_as_xml .Tools }}"
+    content: "You are {{ .Input.bot_name }}. {{ render_tools_as_xml .Tools }}"
   - role: user
-    content: "{{ .user_query }}"
+    content: "{{ .Input.user_query }}"
     optional: true

@@ -22,7 +22,10 @@ func ExampleAdapter_Translate() {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	req, _ := a.Translate(exec)
@@ -35,7 +38,10 @@ func TestTranslate_TextOnly(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -50,7 +56,10 @@ func TestTranslate_SystemMessage(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}},
+			{
+				Role:    prompty.RoleSystem,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
+			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
@@ -68,7 +77,10 @@ func TestTranslate_WithTools(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}},
+			},
 		},
 		Tools: []prompty.ToolDefinition{
 			{
@@ -84,6 +96,28 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "function", req.Tools[0].Type)
 	assert.Equal(t, "get_weather", req.Tools[0].Function.Name)
 	assert.Equal(t, "Get weather", req.Tools[0].Function.Description)
+}
+
+func TestTranslate_WithForcedToolInstruction(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}},
+			},
+		},
+		Tools: []prompty.ToolDefinition{
+			{Name: "get_weather", Parameters: map[string]any{"type": "object"}},
+		},
+		ForcedTool: "get_weather",
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, req.Messages, 2)
+	assert.Equal(t, "system", req.Messages[0].Role)
+	assert.Contains(t, req.Messages[0].Content, `"get_weather"`)
 }
 
 func TestTranslate_ToolResult(t *testing.T) {
@@ -215,7 +249,11 @@ func TestTranslate_ImagePartData(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
 				prompty.TextPart{Text: "What is this?"},
-				prompty.MediaPart{MediaType: "image", Data: []byte{0xff, 0xd8}, MIMEType: "image/jpeg"},
+				prompty.MediaPart{
+					MediaType: "image",
+					Data:      []byte{0xff, 0xd8},
+					MIMEType:  "image/jpeg",
+				},
 			}},
 		},
 	}
@@ -266,7 +304,11 @@ func TestTranslate_ImagePartData_MIMEWinsOverConflictingMediaType(t *testing.T) 
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "document", MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+				prompty.MediaPart{
+					MediaType: "document",
+					MIMEType:  "image/png",
+					Data:      []byte{0x89, 0x50, 0x4e, 0x47},
+				},
 			}},
 		},
 	}
@@ -314,7 +356,11 @@ func TestTranslate_UserAudioPartRejected(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "audio", MIMEType: "audio/mpeg", Data: []byte{0x01, 0x02}},
+				prompty.MediaPart{
+					MediaType: "audio",
+					MIMEType:  "audio/mpeg",
+					Data:      []byte{0x01, 0x02},
+				},
 			}},
 		},
 	}
@@ -330,7 +376,11 @@ func TestTranslate_UserMediaPartNonImageMIMERejected_EvenWithImageMediaType(t *t
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", MIMEType: "application/pdf", Data: []byte("%PDF-1.7")},
+				prompty.MediaPart{
+					MediaType: "image",
+					MIMEType:  "application/pdf",
+					Data:      []byte("%PDF-1.7"),
+				},
 			}},
 		},
 	}
@@ -346,6 +396,23 @@ func TestTranslate_NilExecution(t *testing.T) {
 	_, err := a.Translate(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
+}
+
+func TestTranslate_ForcedToolNotDeclared_ReturnsError(t *testing.T) {
+	t.Parallel()
+	a := New()
+	_, err := a.Translate(&prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call tool"}},
+			},
+		},
+		Tools:      []prompty.ToolDefinition{{Name: "other_tool"}},
+		ForcedTool: "missing_tool",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrForcedToolNotFound)
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {

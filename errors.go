@@ -11,14 +11,16 @@ import (
 // Sentinel errors for template and registry operations.
 // All use prefix "prompty:" for identification. Callers should use [errors.Is] and [errors.As].
 var (
-	ErrMissingVariable  = errors.New("prompty: required template variable not provided")
-	ErrTemplateRender   = errors.New("prompty: template rendering failed")
-	ErrTemplateParse    = errors.New("prompty: template parsing failed")
-	ErrInvalidPayload   = errors.New("prompty: payload struct is invalid or missing prompt tags")
-	ErrTemplateNotFound = errors.New("prompty: template not found in registry")
-	ErrInvalidManifest  = errors.New("prompty: manifest file is malformed")
-	ErrNoFetcher        = errors.New("prompty: fetcher is required but not provided")
-	ErrReservedVariable = errors.New(
+	ErrMissingVariable       = errors.New("prompty: required template variable not provided")
+	ErrTemplateRender        = errors.New("prompty: template rendering failed")
+	ErrTemplateParse         = errors.New("prompty: template parsing failed")
+	ErrInvalidPayload        = errors.New("prompty: payload struct is invalid or missing prompt tags")
+	ErrTemplateNotFound      = errors.New("prompty: template not found in registry")
+	ErrInvalidManifest       = errors.New("prompty: manifest file is malformed")
+	ErrLegacyManifestVersion = errors.New("prompty: legacy manifest version is not supported")
+	ErrNoFetcher             = errors.New("prompty: fetcher is required but not provided")
+	ErrNilRenderPlan         = errors.New("prompty: render plan is nil")
+	ErrReservedVariable      = errors.New(
 		"prompty: reserved variable name in payload (use a different prompt tag than Tools)",
 	)
 	// ErrInvalidName indicates template name or env contains invalid characters (e.g. ':', path separators).

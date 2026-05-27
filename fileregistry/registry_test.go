@@ -23,13 +23,13 @@ func TestFileRegistry_GetTemplate_Success(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "support_agent.json")
 	data := []byte(
-		`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`,
+		`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .Input.user_name }}"}]}]}`,
 	)
 	require.NoError(t, os.WriteFile(dest, data, 0600))
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	tpl, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
@@ -44,7 +44,7 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 		os.WriteFile(
 			basePath,
 			[]byte(
-				`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base {{ .user_name }}"}]}]}`,
+				`{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Base {{ .Input.user_name }}"}]}]}`,
 			),
 			0600,
 		),
@@ -52,7 +52,7 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	tpl, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -86,7 +86,7 @@ func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("production"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	tpl, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -109,7 +109,7 @@ func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 	// With env "prod", GetTemplate("p") tries p.prod.json first; it has invalid JSON
-	_, err = reg.GetTemplate(ctx, "p")
+	_, err = templateFromPlan(ctx, reg, "p")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -125,7 +125,7 @@ func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "agent", tpl.Metadata.ID)
@@ -149,12 +149,12 @@ func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl1, err := reg.GetTemplate(ctx, "safe")
+	tpl1, err := templateFromPlan(ctx, reg, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl1)
 	tpl1.Messages[0].Content = []prompty.TemplatePart{{Type: "text", Text: "Mutated"}}
 	tpl1.Tools = append(tpl1.Tools, prompty.ToolDefinition{Name: "extra", Description: "Extra"})
-	tpl2, err := reg.GetTemplate(ctx, "safe")
+	tpl2, err := templateFromPlan(ctx, reg, "safe")
 	require.NoError(t, err)
 	require.NotNil(t, tpl2)
 	require.Len(t, tpl2.Messages[0].Content, 1)
@@ -197,7 +197,7 @@ func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T)
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "internal/router")
+	tpl, err := templateFromPlan(ctx, reg, "internal/router")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -221,7 +221,7 @@ func TestFileRegistry_GetTemplate_WithEnvironment_FallbackToBase(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages[0].Content, 1)
@@ -234,7 +234,7 @@ func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	_, err = reg.GetTemplate(ctx, "nonexistent")
+	_, err = templateFromPlan(ctx, reg, "nonexistent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
@@ -288,7 +288,7 @@ func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
 			reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment(tt.env))
 			require.NoError(t, err)
 			ctx := context.Background()
-			tpl, err := reg.GetTemplate(ctx, tt.id)
+			tpl, err := templateFromPlan(ctx, reg, tt.id)
 			require.NoError(t, err)
 			require.NotNil(t, tpl)
 			require.Len(t, tpl.Messages[0].Content, 1)
@@ -475,7 +475,7 @@ func TestFileRegistry_Reload(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "p")
+	tpl, err := templateFromPlan(ctx, reg, "p")
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
@@ -488,7 +488,7 @@ func TestFileRegistry_Reload(t *testing.T) {
 			0600,
 		),
 	)
-	tpl2, err := reg.GetTemplate(ctx, "p")
+	tpl2, err := templateFromPlan(ctx, reg, "p")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v2", tpl2.Messages[0].Content[0].Text)
@@ -515,7 +515,7 @@ func TestFileRegistry_Concurrent(t *testing.T) {
 	done := make(chan result, 50)
 	for range 50 {
 		go func() {
-			tpl, err := reg.GetTemplate(ctx, "p")
+			tpl, err := templateFromPlan(ctx, reg, "p")
 			done <- result{tpl: tpl, err: err}
 		}()
 	}
@@ -554,10 +554,10 @@ func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
 	reg, err := New(dir, WithPartials("partials/*.tmpl"), WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "doctor")
+	tpl, err := templateFromPlan(ctx, reg, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -587,7 +587,7 @@ func TestFileRegistry_ConcurrentReloadAndGet(t *testing.T) {
 	done := make(chan struct{})
 	for range 30 {
 		go func() {
-			_, _ = reg.GetTemplate(ctx, "q")
+			_, _ = templateFromPlan(ctx, reg, "q")
 			done <- struct{}{}
 		}()
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 // TestUnmarshal_NormalizedMapTypes verifies that YAML parsing normalizes map[any]any to map[string]any
-// for input_schema.Schema, tools[].Parameters, response_format.Schema, and message metadata.
+// for inputs/properties, tools[].Parameters, response_format.Schema, and message metadata.
 // This regression test ensures gopkg.in/yaml.v3 nested maps work with prompty-gen and manifest BuildFromRaw.
 func TestUnmarshal_NormalizedMapTypes(t *testing.T) {
 	t.Parallel()
@@ -24,20 +24,16 @@ messages:
     metadata:
       custom_key: "val"
   - role: user
-    content: "{{ .query }}"
-input_schema:
-  schema:
+    content: "{{ .Input.query }}"
+inputs:
+  query:
+    type: string
+    required: true
+  nested:
     type: object
     properties:
-      query:
+      foo:
         type: string
-      nested:
-        type: object
-        properties:
-          foo:
-            type: string
-    required:
-      - query
 tools:
   - name: my_tool
     description: "Tool"
@@ -59,11 +55,11 @@ response_format:
 	err := p.Unmarshal(yamlData, &raw)
 	require.NoError(t, err)
 
-	// input_schema.Schema["properties"] must be map[string]any (not map[any]any)
+	// inputs.Schema["properties"] must be map[string]any (not map[any]any)
 	require.NotNil(t, raw.InputSchema)
 	require.NotNil(t, raw.InputSchema.Schema)
 	props, ok := raw.InputSchema.Schema["properties"].(map[string]any)
-	require.True(t, ok, "input_schema.Schema[properties] must be map[string]any")
+	require.True(t, ok, "inputs.Schema[properties] must be map[string]any")
 	require.NotNil(t, props)
 	assert.Contains(t, props, "query")
 	assert.Contains(t, props, "nested")
@@ -93,17 +89,16 @@ response_format:
 	assert.Equal(t, "val", raw.Messages[0].Metadata["custom_key"])
 }
 
-// TestUnmarshal_InputSchema_FlatFormat verifies that flat-format input_schema (type/properties at top level)
-// is correctly parsed and wrapped into SchemaDefinition.Schema, so prompty-gen receives non-empty properties.
-func TestUnmarshal_InputSchema_FlatFormat(t *testing.T) {
+// TestUnmarshal_InputsFlatFormatRejected verifies that raw JSON-schema style inputs are rejected in v2.
+func TestUnmarshal_InputsFlatFormatRejected(t *testing.T) {
 	t.Parallel()
 	yamlData := []byte(`
 id: flat_schema
 version: "1"
 messages:
   - role: user
-    content: "{{ .query }}"
-input_schema:
+    content: "{{ .Input.query }}"
+inputs:
   type: object
   properties:
     current_doctor_time:
@@ -125,29 +120,29 @@ response_format:
 	var raw manifest.RawManifest
 	p := New()
 	err := p.Unmarshal(yamlData, &raw)
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contract-style")
+}
 
-	// Flat format: whole input_schema block is the JSON schema, wrapped in SchemaDefinition.Schema
-	require.NotNil(t, raw.InputSchema)
-	require.NotNil(t, raw.InputSchema.Schema)
-	assert.Equal(t, "object", raw.InputSchema.Schema["type"])
-	props, ok := raw.InputSchema.Schema["properties"].(map[string]any)
-	require.True(t, ok, "input_schema.Schema[properties] must be map[string]any in flat format")
-	require.NotNil(t, props)
-	assert.Contains(t, props, "current_doctor_time")
-	assert.Contains(t, props, "timezone")
-	assert.Contains(t, props, "chat_history")
-	required, ok := raw.InputSchema.Schema["required"].([]any)
-	require.True(t, ok)
-	require.Len(t, required, 1)
-	assert.Equal(t, "current_doctor_time", required[0])
-
-	// response_format flat format
-	require.NotNil(t, raw.ResponseFormat)
-	require.NotNil(t, raw.ResponseFormat.Schema)
-	rfProps, ok := raw.ResponseFormat.Schema["properties"].(map[string]any)
-	require.True(t, ok)
-	assert.Contains(t, rfProps, "result")
+func TestUnmarshal_InputsSchemaWrapperRejected(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: wrapper_schema
+version: "1"
+messages:
+  - role: user
+    content: "{{ .Input.query }}"
+inputs:
+  schema:
+    type: object
+    properties:
+      query:
+        type: string
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contract-style")
 }
 
 func TestUnmarshal_ModelOptionsTyped(t *testing.T) {
@@ -155,7 +150,7 @@ func TestUnmarshal_ModelOptionsTyped(t *testing.T) {
 	yamlData := []byte(`
 id: yaml_model_opts
 version: "1"
-model_config:
+model_options:
   model: gpt-4o
   temperature: 0.7
   max_tokens: 2048
@@ -191,7 +186,7 @@ func TestUnmarshal_ModelOptionsTyped_RejectsTopLevelVendorKeys(t *testing.T) {
 	yamlData := []byte(`
 id: yaml_model_opts_legacy
 version: "1"
-model_config:
+model_options:
   model: gpt-4o
   custom_mode: fast
 messages:
@@ -201,7 +196,7 @@ messages:
 	var raw manifest.RawManifest
 	err := New().Unmarshal(yamlData, &raw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid model_config key: custom_mode; use provider_settings")
+	assert.Contains(t, err.Error(), "invalid model_options key: custom_mode; use provider_settings")
 }
 
 func TestUnmarshal_ModelOptionsEmptyBlockReturnsNil(t *testing.T) {
@@ -209,7 +204,7 @@ func TestUnmarshal_ModelOptionsEmptyBlockReturnsNil(t *testing.T) {
 	yamlData := []byte(`
 id: empty_model_opts
 version: "1"
-model_config: {}
+model_options: {}
 messages:
   - role: system
     content: "Hi"
@@ -225,7 +220,7 @@ func TestUnmarshal_ModelOptions_ParseIntegration(t *testing.T) {
 	yamlData := []byte(`
 id: yaml_parse_model_opts
 version: "1"
-model_config:
+model_options:
   model: gemini-2.5-pro
   temperature: 0.3
   top_p: 0.9
@@ -246,7 +241,7 @@ messages:
 	assert.InDelta(t, 0.9, *tpl.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, map[string]any{"custom_mode": "fast"}, tpl.ModelOptions.ProviderSettings)
 
-	exec, err := tpl.Format(map[string]any{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.NotNil(t, exec.ModelOptions)
@@ -267,7 +262,7 @@ messages:
       - type: media
         media_type: image
         mime_type: image/png
-        url: "{{ .img }}"
+        url: "{{ .Input.img }}"
 `)
 	tpl, err := manifest.Parse(yamlData, New())
 	require.NoError(t, err)
@@ -276,9 +271,9 @@ messages:
 	assert.Equal(t, "media", tpl.Messages[0].Content[1].Type)
 	assert.Equal(t, "image", tpl.Messages[0].Content[1].MediaType)
 	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
-	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
+	assert.Equal(t, "{{ .Input.img }}", tpl.Messages[0].Content[1].URL)
 
-	exec, err := tpl.Format(map[string]any{"img": "https://example.com/img.png"})
+	exec, err := executeTemplatePlan(tpl, map[string]any{"img": "https://example.com/img.png"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	require.Len(t, exec.Messages[0].Content, 2)
@@ -379,12 +374,38 @@ required_tools:
 messages:
   - role: system
     content: "Hi"
-input_schema:
-  schema:
-    type: object
-    properties: {}
+inputs:
+  query:
+    type: string
 `)
 	var raw manifest.RawManifest
 	require.NoError(t, New().Unmarshal(yamlData, &raw))
 	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, raw.RequiredTools)
+}
+
+func TestUnmarshal_ContractInputsAndTopLevelLayerKind(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+id: contract_layer
+version: "1"
+layer_kind: policy
+inputs:
+  query:
+    type: string
+    required: true
+  tone:
+    type: string
+    default: strict
+messages:
+  - role: user
+    content: "Q: {{ .Input.query }} ({{ .Input.tone }})"
+`)
+	var raw manifest.RawManifest
+	err := New().Unmarshal(yamlData, &raw)
+	require.NoError(t, err)
+	tpl, err := manifest.BuildFromRaw(&raw, nil)
+	require.NoError(t, err)
+	require.Len(t, tpl.Messages, 1)
+	assert.Equal(t, prompty.LayerKind("policy"), tpl.Messages[0].LayerKind)
+	assert.Equal(t, "strict", tpl.PartialVariables["tone"])
 }

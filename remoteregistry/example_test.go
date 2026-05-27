@@ -20,13 +20,13 @@ func (s *staticFetcher) Fetch(_ context.Context, id string) ([]byte, error) {
 	return nil, fmt.Errorf("%w: %s", ErrFetchFailed, "not found")
 }
 
-func ExampleRegistry_GetTemplate() {
-	manifestJSON := `{"id":"demo","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .name }}"}]}]}`
+func ExampleRegistry_Plan() {
+	manifestJSON := `{"id":"demo","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .Input.name }}"}]}]}`
 	fetcher := &staticFetcher{data: map[string][]byte{"demo": []byte(manifestJSON)}}
 	base, _ := New(fetcher, WithParser(manifest.NewJSONParser()))
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "demo")
+	tpl, err := templateFromPlan(ctx, reg, "demo")
 	if err != nil {
 		panic(err)
 	}
@@ -43,7 +43,7 @@ func ExampleNew() {
 	base, _ := New(fetcher, WithParser(manifest.NewJSONParser()))
 	reg := WithCache(base, 5*time.Minute)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "demo")
+	tpl, err := templateFromPlan(ctx, reg, "demo")
 	if err != nil {
 		panic(err)
 	}

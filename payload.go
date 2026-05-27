@@ -144,7 +144,11 @@ func walkParseNodes(node parse.Node, visit func(parse.Node)) {
 	}
 }
 
-// extractVarsFromTree collects top-level variable names from template parse tree (e.g. .user_name -> "user_name").
+// extractVarsFromTree collects v2 input variable names from template parse tree.
+// Examples:
+//   - .Input.user_name -> "user_name"
+//   - .LateVars.allowed_tools -> ignored (late-bound, not required input)
+//   - .Tools -> ignored (reserved helper context)
 func extractVarsFromTree(tree *parse.Tree) []string {
 	if tree == nil || tree.Root == nil {
 		return nil
@@ -154,7 +158,16 @@ func extractVarsFromTree(tree *parse.Tree) []string {
 	walkParseNodes(tree.Root, func(n parse.Node) {
 		if fn, ok := n.(*parse.FieldNode); ok && len(fn.Ident) > 0 {
 			name := fn.Ident[0]
-			if name != "Tools" && !seen[name] {
+			switch name {
+			case "Tools", "LateVars":
+				return
+			case "Input":
+				if len(fn.Ident) < 2 {
+					return
+				}
+				name = fn.Ident[1]
+			}
+			if !seen[name] {
 				seen[name] = true
 				out = append(out, name)
 			}
@@ -183,6 +196,46 @@ func extractRequiredVarsFromParsed(parsed []parsedMessage) []string {
 				}
 			}
 		}
+	}
+	return out
+}
+
+func normalizeTemplateInput(input any) any {
+	if input == nil {
+		return nil
+	}
+	value := reflect.ValueOf(input)
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return input
+	}
+
+	typ := value.Type()
+	out := make(map[string]any, value.NumField())
+	for i := range value.NumField() {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		key := field.Tag.Get("prompt")
+		if key == "" {
+			jsonTag := field.Tag.Get("json")
+			if jsonTag != "" {
+				key = strings.Split(jsonTag, ",")[0]
+			}
+		}
+		if key == "" {
+			key = strings.ToLower(field.Name)
+		}
+		if key == "-" || key == "" {
+			continue
+		}
+		out[key] = normalizeTemplateInput(value.Field(i).Interface())
 	}
 	return out
 }

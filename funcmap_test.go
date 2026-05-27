@@ -163,15 +163,15 @@ func TestHasTool(t *testing.T) {
 func TestFuncMap_HasTool_Integration(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: TextContent(`{{ if hasTool .allowed "my_tool" }}Use my tool!{{ end }}`)},
+		{Role: RoleSystem, Content: TextContent(`{{ if hasTool .Input.allowed "my_tool" }}Use my tool!{{ end }}`)},
 	})
 	require.NoError(t, err)
-	exec, err := tpl.Format(map[string]any{"allowed": []string{"my_tool"}})
+	exec, err := executeTemplatePlan(tpl, map[string]any{"allowed": []string{"my_tool"}})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
 	assert.Equal(t, "Use my tool!", text)
-	exec2, err := tpl.Format(map[string]any{"allowed": []string{"other"}})
+	exec2, err := executeTemplatePlan(tpl, map[string]any{"allowed": []string{"other"}})
 	require.NoError(t, err)
 	text2 := exec2.Messages[0].Content[0].(TextPart).Text
 	assert.Empty(t, text2)
@@ -233,13 +233,13 @@ func TestFuncMap_RandomHex_ErrorPath(t *testing.T) {
 func TestFuncMap_EscapeXML_Integration(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: TextContent("Input: {{ .UserInput | escapeXML }}")},
+		{Role: RoleSystem, Content: TextContent("Input: {{ .Input.UserInput | escapeXML }}")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		UserInput string `prompt:"UserInput"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{UserInput: "x</tag>y"})
+	exec, err := executeTemplatePlan(tpl, &Payload{UserInput: "x</tag>y"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
@@ -258,7 +258,7 @@ func TestFuncMap_RandomHex_Integration(t *testing.T) {
 	type Payload struct {
 		X string `prompt:"x"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{X: "ok"})
+	exec, err := executeTemplatePlan(tpl, &Payload{X: "ok"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text

@@ -106,7 +106,7 @@ func TestRunGenerate_Testdata(t *testing.T) {
 		t.Error("DoD: generated full-mode code must not contain the legacy client type or ExecuteWithStructuredOutput")
 	}
 	if !strings.Contains(c, "string(SupportAgent)") {
-		t.Error("DoD: GetTemplate must receive string(PromptID) for Registry interface")
+		t.Error("DoD: Plan must receive string(PromptID) for Registry interface")
 	}
 }
 
@@ -213,13 +213,13 @@ func TestRunGenerate_ModeConsts(t *testing.T) {
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
 		t.Fatalf("mkdir prompts: %v", err)
 	}
-	// v2.0 manifest: messages and input_schema required for consts mode
+	// v2.0 manifest: messages and inputs required for consts mode
 	v2Manifest := `id: legacy_only
 version: "1"
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `
@@ -255,7 +255,7 @@ packages:
 	if !strings.Contains(content, "AllPromptIDs") {
 		t.Error("expected AllPromptIDs in consts output")
 	}
-	if strings.Contains(content, "type Prompts struct") {
+	if strings.Contains(content, "type PromptCatalog interface") {
 		t.Error("consts mode must not generate Prompts struct")
 	}
 	if strings.Contains(content, "Render") {
@@ -263,7 +263,7 @@ packages:
 	}
 }
 
-// TestRunGenerate_ModeConsts_LegacyFails verifies legacy manifests (no messages/input_schema) fail in consts mode.
+// TestRunGenerate_ModeConsts_LegacyFails verifies legacy manifests (no messages/inputs) fail in consts mode.
 func TestRunGenerate_ModeConsts_LegacyFails(t *testing.T) {
 	tmp := t.TempDir()
 	promptsDir := filepath.Join(tmp, "prompts")
@@ -290,8 +290,8 @@ packages:
 	if err == nil {
 		t.Fatal("expected error for legacy manifest in consts mode (v2.0 required)")
 	}
-	if !strings.Contains(err.Error(), "messages") && !strings.Contains(err.Error(), "input_schema") {
-		t.Errorf("expected messages or input_schema error, got: %v", err)
+	if !strings.Contains(err.Error(), "messages") && !strings.Contains(err.Error(), "inputs") {
+		t.Errorf("expected messages or inputs error, got: %v", err)
 	}
 }
 
@@ -307,7 +307,7 @@ version: "1"
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `
@@ -350,7 +350,7 @@ version: "1"
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `
@@ -375,7 +375,7 @@ input_schema:
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `
@@ -402,7 +402,7 @@ version: "1"
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `
@@ -441,7 +441,7 @@ func TestRunGenerate_TypesMode_RequiresInputSchema(t *testing.T) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Manifest with messages but no input_schema (legacy) - must fail in types mode
+	// Manifest with messages but no inputs (legacy) - must fail in types mode
 	body := `id: legacy_no_schema
 version: "1"
 messages:
@@ -465,10 +465,10 @@ packages:
 	}
 	err := runGenerate(cfgPath)
 	if err == nil {
-		t.Fatal("expected error for manifest without input_schema in types mode")
+		t.Fatal("expected error for manifest without inputs in types mode")
 	}
-	if !strings.Contains(err.Error(), "input_schema") {
-		t.Errorf("expected input_schema error, got: %v", err)
+	if !strings.Contains(err.Error(), "inputs") {
+		t.Errorf("expected inputs error, got: %v", err)
 	}
 }
 
@@ -483,7 +483,7 @@ version: "1"
 messages:
   - role: system
     content: "Hi"
-input_schema:
+inputs:
   type: object
   properties: {}
 `

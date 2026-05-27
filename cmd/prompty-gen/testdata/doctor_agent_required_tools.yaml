@@ -5,11 +5,9 @@ required_tools:
   - doctor_search_knowledge_base
   - get_current_time
 
-input_schema:
-  name: doctor_agent_input
-  schema:
-    type: object
-    properties: {}
+inputs:
+  query:
+    type: string
 
 messages:
   - role: system

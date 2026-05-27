@@ -31,9 +31,9 @@ func setupTempRepo(ctx context.Context) (string, error) {
 version: "1"
 messages:
   - role: system
-    content: "You answer briefly. Topic: {{ .topic }}."
+    content: "You answer briefly. Topic: {{ .Input.topic }}."
   - role: user
-    content: "{{ .question }}"
+    content: "{{ .Input.question }}"
 `)
 	if err := os.WriteFile(filepath.Join(dir, "demo.yaml"), manifest, 0600); err != nil {
 		return "", fmt.Errorf("WriteFile: %w", err)
@@ -75,17 +75,16 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("remoteregistry.New: %w", err)
 	}
-	tpl, err := reg.GetTemplate(ctx, "demo")
+	plan, err := reg.Plan(ctx, "demo", map[string]any{
+		"topic":    "math",
+		"question": "What is 3+3?",
+	})
 	if err != nil {
-		return fmt.Errorf("GetTemplate: %w", err)
+		return fmt.Errorf("plan: %w", err)
 	}
-	type Payload struct {
-		Topic    string `prompt:"topic"`
-		Question string `prompt:"question"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{Topic: "math", Question: "What is 3+3?"})
+	exec, err := plan.Execute(ctx)
 	if err != nil {
-		return fmt.Errorf("FormatStruct: %w", err)
+		return fmt.Errorf("execute: %w", err)
 	}
 
 	if os.Getenv("GEMINI_API_KEY") == "" {

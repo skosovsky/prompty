@@ -6,7 +6,7 @@ prompty-gen — генератор Go-кода для prompty-манифесто
 
 - **SRP:** генератор = контракт + Render; runtime = композиция + Execute.
 - Генератор не внедряет LLM-клиент и не генерирует Execute — только типы и Render.
-- Исполнение промптов: `exec, _ := prompts.Xxx.Render(ctx, input)` → `invoker.Execute(ctx, exec)`.
+- Исполнение промптов: `plan, _ := prompts.Xxx.Render(ctx, input)` → `exec, _ := plan.Execute(ctx)` → `invoker.Execute(ctx, exec)`.
 
 ## Установка
 
@@ -49,10 +49,10 @@ packages:
 
 ### Режимы
 
-| Режим      | Описание                                                                                                                                   |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **consts** | Только `PromptID` const и `AllPromptIDs()`. Манифесты должны быть v2.0 (`messages` + `input_schema`). Вывод: `<package>_consts_gen.go`.    |
-| **types**  | Полная модель: shared-файл (Prompts, NewPrompts, validate) + per-manifest файлы (Input/Output, per-prompt type с Render/RequiredTools/ID). |
+| Режим      | Описание                                                                                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **consts** | Только `PromptID` const и `AllPromptIDs()`. Манифесты должны быть v2.0 (`messages` + `inputs`). Вывод: `<package>_consts_gen.go`.                            |
+| **types**  | Полная модель: shared-файл (`PromptCatalog`, `NewPromptCatalog`, `validate`) + per-manifest файлы (Input/Output, per-prompt type с Render/RequiredTools/ID). |
 
 **Примечание:** Режимы `lite` и `full` удалены (breaking change).
 
@@ -81,10 +81,10 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Prompts` (контейнер per-prompt полей), `func NewPrompts(r prompty.Registry) *Prompts`, `func AllPromptIDs() []PromptID`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type PromptCatalog` (интерфейс), `func NewPromptCatalog(r prompty.Registry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, методы `Render`, `RequiredTools()`, `ID()`.
 
-Render выполняет: validate input → GetTemplate → vars map → `tmpl.Format(vars)`. `RequiredTools()` возвращает литерал из `required_tools` манифеста. Без Execute и Invoker.
+Render выполняет: validate input → `registry.Plan(ctx, id, input)` и возвращает `*prompty.RenderPlan`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
 
 ## Mapping JSON Schema → Go
 
@@ -98,54 +98,64 @@ Render выполняет: validate input → GetTemplate → vars map → `tmpl
 ### Семантика полей
 
 - **required bool:** генерируется как `*bool` + `validate:"required"`. Presence проверяется через non-nil: `nil` = отсутствует (ошибка), `false` и `true` = валидны.
-- **default:** применяется только к optional полям. Для required игнорируется.
+- **default:** применяется для optional pointer-полей в сгенерированном `Render(...)` до валидации и вызова `registry.Plan(...)`.
+- Supported defaults: `string`, `integer`, `number`, `boolean` (optional поля).
+- Defaults для неподдерживаемых типов (например `array`, вложенный `object`) приводят к fail-fast ошибке генерации.
 - `minItems` / `maxItems` → validate-теги `min` / `max` для длины массива.
 
 ## Tutorial: композиция Render + Execute
 
 ```go
 reg, _ := fileregistry.New("./prompts", fileregistry.WithParser(yaml.New()))
-prompts := NewPrompts(reg)
+catalog := NewPromptCatalog(reg)
 var invoker prompty.Invoker // e.g. adapter.NewClient(openaiAdapter)
 
-// 1. Render промпта
-exec, err := prompts.SupportAgent.Render(ctx, SupportAgentInput{
-    UserQuery: "Where is my order?",
-    BotName:   ptr("SupportBot"),
+// 1. RenderPlan промпта
+plan, err := catalog.RenderSupportAgent(ctx, SupportAgentInput{
+	UserQuery: "Where is my order?",
 })
 if err != nil {
-    return err
+	return err
 }
 
-// Contract: tools required by this prompt (from manifest required_tools)
-_ = prompts.SupportAgent.RequiredTools()
+exec, err := plan.WithLateVariables(map[string]any{
+	"allowed_tools": []string{"get_order_status"},
+}).Execute(ctx)
+if err != nil {
+	return err
+}
 
-// 2. Выполнение — на ваше усмотрение (adapter.NewClient(...), middleware, streaming, etc.)
+// 2. Выполнение — на ваше усмотрение (adapter.NewClient(...), middleware, streaming и т.д.)
 resp, err := invoker.Execute(ctx, exec)
 ```
+
+### Full v2 flow checklist
+
+1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed `RenderXxx`.
+2. Runtime рендер: `catalog.RenderXxx(...)` -> `*prompty.RenderPlan`.
+3. Композиция (опционально): `WithLateVariables`, `ReplaceLayer`.
+4. Выполнение плана: `plan.Execute(ctx)` -> `*prompty.PromptExecution`.
+5. Вызов модели: `invoker.Execute(ctx, exec)`.
 
 Для prewarm кэша registry по всем ID:
 
 ```go
 for _, id := range AllPromptIDs() {
-    _, _ = reg.GetTemplate(ctx, string(id))
+    _, _ = reg.Plan(ctx, string(id), nil)
 }
 ```
 
-### Композиция нескольких Render перед Execute
+### Композиция нескольких планов перед Execute
 
-Склейте сообщения из нескольких промптов и отправьте в `invoker.Execute`:
+Скомпонуйте слои через `ReplaceLayer`, затем выполните единый план:
 
 ```go
-exec1, _ := prompts.SalesPersona.Render(ctx, SalesPersonaInput{Tone: "formal"})
-exec2, _ := prompts.ClinicRules.Render(ctx, ClinicRulesInput{})
-combined := &prompty.PromptExecution{
-    ModelOptions:  exec1.ModelOptions,
-    Messages:      append(exec1.Messages, exec2.Messages...),
-    Tools:         append(exec1.Tools, exec2.Tools...),
-    RequiredTools: append(exec1.RequiredTools, exec2.RequiredTools...),
-}
-resp, err := invoker.Execute(ctx, combined)
+basePlan, _ := catalog.RenderSalesPersona(ctx, SalesPersonaInput{Tone: "formal"})
+rulesPlan, _ := catalog.RenderClinicRules(ctx, ClinicRulesInput{})
+
+composed, _ := basePlan.ReplaceLayer("rules", rulesPlan)
+exec, _ := composed.Execute(ctx)
+resp, err := invoker.Execute(ctx, exec)
 ```
 
 ## Интеграция в Makefile / Git Sync
@@ -199,4 +209,4 @@ After changing prompty or prompty-gen (e.g. YAML normalization in task17-1), run
 
 1. `go install ./cmd/prompty-gen` (from prompty repo)
 2. `make generate` (in kosmify-prompts)
-3. **DoD check:** Generated Input structs (e.g. `PromptsInternalRouterInput`) must contain expected fields (`CurrentDoctorTime`, `Timezone`, `ChatHistory`, etc.), not be empty — this validates YAML `input_schema.properties` are correctly normalized from `map[any]any` to `map[string]any`.
+3. **DoD check:** Generated Input structs (e.g. `PromptsInternalRouterInput`) must contain expected fields (`CurrentDoctorTime`, `Timezone`, `ChatHistory`, etc.), not be empty — это проверяет корректный разбор contract-style `inputs.<field>` в типы.

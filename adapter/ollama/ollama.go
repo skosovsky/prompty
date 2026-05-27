@@ -44,8 +44,8 @@ func New(opts ...Option) *Adapter {
 
 // Translate converts PromptExecution into *api.ChatRequest.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
+	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
 	}
 	if exec.ResponseFormat != nil {
 		return nil, adapter.ErrStructuredOutputNotSupported
@@ -96,6 +96,12 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			}
 			req.Tools = append(req.Tools, tool)
 		}
+	}
+	if exec.ForcedTool != "" && len(req.Tools) > 0 {
+		req.Messages = append([]api.Message{{
+			Role:    "system",
+			Content: fmt.Sprintf("You must call tool %q for the next tool-use step.", exec.ForcedTool),
+		}}, req.Messages...)
 	}
 	return req, nil
 }

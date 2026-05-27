@@ -167,7 +167,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		specs = append(specs, spec)
 	}
 
-	// Shared file: PromptID, Prompts container, NewPrompts, validate, AllPromptIDs
+	// Shared file: PromptID, PromptCatalog API, constructor, validate, AllPromptIDs
 	sharedFile, err := gen.GenerateSharedTypes(pkg.PackageName, specs)
 	if err != nil {
 		return fmt.Errorf("generate shared: %w", err)
@@ -250,12 +250,12 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 			return nil, errors.New("manifest has no id field and could not derive id from path")
 		}
 	}
-	// Clean Break v2.0: types mode requires messages and input_schema
+	// Clean Break v2.0: types mode requires messages and inputs
 	if len(raw.Messages) == 0 {
 		return nil, errors.New("manifest missing messages block (v2.0 required)")
 	}
 	if raw.InputSchema == nil {
-		return nil, errors.New("manifest missing input_schema block (v2.0 required)")
+		return nil, errors.New("manifest missing inputs block (v2.0 required)")
 	}
 
 	tpl, err := manifest.BuildFromRaw(&raw, nil)
@@ -275,18 +275,18 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 	}, nil
 }
 
-// loadManifestID reads the manifest id field and validates v2.0 clean-break (messages, input_schema).
+// loadManifestID reads the manifest id field and validates v2.0 clean-break (messages, inputs).
 // Priority 1: explicit id from YAML/JSON. Priority 2: fallback from relative path.
-// Consts flow rejects legacy manifests missing messages or input_schema.
+// Consts flow rejects manifests missing messages or inputs.
 func loadManifestID(fpath string, configDir string, queries []string) (string, error) {
 	data, err := os.ReadFile(fpath)
 	if err != nil {
 		return "", err
 	}
 	var v2Check struct {
-		ID          string `json:"id"           yaml:"id"`
-		Messages    []any  `json:"messages"     yaml:"messages"`
-		InputSchema any    `json:"input_schema" yaml:"input_schema"`
+		ID       string `json:"id"       yaml:"id"`
+		Messages []any  `json:"messages" yaml:"messages"`
+		Inputs   any    `json:"inputs"   yaml:"inputs"`
 	}
 	switch strings.ToLower(filepath.Ext(fpath)) {
 	case extYAML, extYML:
@@ -300,12 +300,12 @@ func loadManifestID(fpath string, configDir string, queries []string) (string, e
 	default:
 		return "", errors.New("unsupported manifest format")
 	}
-	// Clean Break v2.0: consts mode requires messages and input_schema
+	// Clean Break v2.0: consts mode requires messages and inputs
 	if len(v2Check.Messages) == 0 {
 		return "", errors.New("manifest missing messages block (v2.0 required)")
 	}
-	if v2Check.InputSchema == nil {
-		return "", errors.New("manifest missing input_schema block (v2.0 required)")
+	if v2Check.Inputs == nil {
+		return "", errors.New("manifest missing inputs block (v2.0 required)")
 	}
 	if v2Check.ID != "" {
 		return v2Check.ID, nil

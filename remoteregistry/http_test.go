@@ -17,7 +17,7 @@ import (
 
 func TestHTTPFetcher_Fetch_Success(t *testing.T) {
 	t.Parallel()
-	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .user_name }}"}]}]}`
+	manifestJSON := `{"id":"support_agent","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello {{ .Input.user_name }}"}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/support_agent.yaml", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
@@ -30,7 +30,7 @@ func TestHTTPFetcher_Fetch_Success(t *testing.T) {
 	reg, err := New(h, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	tpl, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
@@ -172,7 +172,7 @@ func TestHTTPFetcher_Fetch_BodyTooLarge(t *testing.T) {
 
 	reg, err := New(h, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
-	_, err = reg.GetTemplate(context.Background(), "large")
+	_, err = templateFromPlan(context.Background(), reg, "large")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFetchFailed)
 }
@@ -190,7 +190,7 @@ func TestHTTPFetcher_IntegrationWithRegistry(t *testing.T) {
 	reg, err := New(h, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "integ")
+	tpl, err := templateFromPlan(ctx, reg, "integ")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "integ", tpl.Metadata.ID)
@@ -278,7 +278,7 @@ func TestHTTPFetcher_Fetch_SlashId(t *testing.T) {
 	reg, err := New(h, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "internal/router")
+	tpl, err := templateFromPlan(ctx, reg, "internal/router")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "internal/router", tpl.Metadata.ID)

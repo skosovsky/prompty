@@ -56,11 +56,11 @@ func main() {
 
 ## Main abstractions
 
-- **Registry** — supplies `ChatPromptTemplate` by id (from files, embed, or remote). Interface: `GetTemplate(ctx, id) (*ChatPromptTemplate, error)`.
+- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, typedInput) (*RenderPlan, error)`.
 - **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
-- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; you pass a typed payload (struct with `prompt` tags) to `FormatStruct(payload)` to get a `PromptExecution`. Registries can load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
+- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
-Pipeline: **Registry** → **Template** + payload → **PromptExecution** → **Adapter** → provider API. HTTP/transport is the caller’s responsibility.
+Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables/ReplaceLayer** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
 
 ## Features
 
@@ -97,12 +97,12 @@ Each adapter implements `Translate(exec) (Req, error)` where Req is the provider
 
 ## Provider settings
 
-Use `model_config.provider_settings` for vendor-specific knobs. The core keeps this map as-is in `ModelOptions.ProviderSettings`; provider key mapping lives in adapters.
+Use `model_options.provider_settings` for vendor-specific knobs. The core keeps this map as-is in `ModelOptions.ProviderSettings`; provider key mapping lives in adapters.
 
-Clean break contract: vendor keys must be inside `provider_settings`. Unknown top-level keys in `model_config` are rejected with a parse error.
+Clean break contract: vendor keys must be inside `provider_settings`. Unknown top-level keys in `model_options` are rejected with a parse error.
 
 ```yaml
-model_config:
+model_options:
   model: gpt-4o
   temperature: 0.3
   provider_settings:
@@ -124,22 +124,88 @@ Type conversion is fail-safe: invalid values for a specific key are ignored (oth
 ```mermaid
 flowchart LR
     Registry[Registry]
-    Template[ChatPromptTemplate]
-    Format[FormatStruct]
+    Plan[RenderPlan]
+    Execute[Execute]
     Exec[PromptExecution]
     Adapter[ProviderAdapter]
     API[LLM API]
 
-    Registry -->|GetTemplate| Template
-    Template -->|FormatStruct + payload| Format
-    Format --> Exec
+    Registry -->|Plan(ctx,id,input)| Plan
+    Plan -->|WithLateVariables / ReplaceLayer| Execute
+    Execute --> Exec
     Exec -->|Translate| Adapter
     Adapter -->|request| API
     API -->|raw response| Adapter
     Adapter -->|ParseResponse| Response["*Response"]
 ```
 
-Pipeline: **Registry** → **Template** + typed payload → **Fail-fast validation** → **Rendering** (with tool injection) → **PromptExecution** → **Adapter** → LLM API. HTTP/transport is the caller’s responsibility.
+Pipeline: **Registry.Plan(...)** → **RenderPlan composition** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → LLM API.
+
+## Migration v1 -> v2
+
+Migration guide: [`MIGRATION_V1_TO_V2.md`](./MIGRATION_V1_TO_V2.md).
+
+## V2 tutorial (task29)
+
+`prompty` v2 is a deferred pipeline. Render first, compose plans, execute once:
+
+```go
+reg, err := fileregistry.New("./prompts", fileregistry.WithParser(yaml.New()))
+if err != nil {
+	return err
+}
+
+plan, err := reg.Plan(ctx, "support_agent", map[string]any{
+	"user_query": "Where is my order?",
+})
+if err != nil {
+	return err
+}
+
+policyPlan, err := reg.Plan(ctx, "policy_overlay", map[string]any{
+	"policy_name": "strict",
+})
+if err != nil {
+	return err
+}
+
+composed, err := plan.ReplaceLayer("policy", policyPlan)
+if err != nil {
+	return err
+}
+
+exec, err := composed.WithLateVariables(map[string]any{
+	"allowed_tools": []string{"get_order_status"},
+}).Execute(ctx)
+if err != nil {
+	return err
+}
+```
+
+Then execute `exec` via adapter client (`adapter.NewClient(...)`), including streaming if needed.
+
+If you use `prompty-gen`, runtime flow is the same:
+
+```go
+catalog := prompts.NewPromptCatalog(reg)
+renderPlan, err := catalog.RenderSupportAgent(ctx, prompts.SupportAgentInput{
+	UserQuery: "Where is my order?",
+})
+if err != nil {
+	return err
+}
+exec, err := renderPlan.Execute(ctx)
+if err != nil {
+	return err
+}
+```
+
+Clean-break rules in v2:
+
+- no `Registry.GetTemplate(...)` in production code
+- no `ChatPromptTemplate.Format(...)` / `FormatStruct(...)`
+- manifests must use `model_options` + contract-style `inputs`
+- template context is explicit: `.Input.*` and `.LateVars.*`
 
 ## Resilience, timeouts, and structured output
 
@@ -186,7 +252,7 @@ To prevent prompt injection (e.g. user input closing a `<patient_input>` tag), e
 ```yaml
 {{ $delim := randomHex 8 }}
 <data_{{ $delim }}>
-{{ .UserInput | escapeXML }}
+{{ .Input.UserInput | escapeXML }}
 </data_{{ $delim }}>
 ```
 
@@ -217,7 +283,7 @@ Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./ad
 **Benchmarks:** the library is optimized for zero-allocation rendering (sync.Pool). To check allocs/op and B/op (and ensure PRs do not regress them), run:
 
 ```bash
-go test -bench=BenchmarkFormatStruct -benchmem ./...
+go test -bench=BenchmarkRenderPlanExecute -benchmem ./...
 ```
 
 **Running examples locally:** `go.work` includes `./examples/basic_chat`, `./examples/git_prompts`, `./examples/funcmap_tools`, and `./examples/secure_prompt`. From the repo root run `go run ./examples/basic_chat` (or `go run ./examples/secure_prompt` for the data-isolation example). Or `cd` into an example dir and `go run .`. The secure_prompt example embeds its manifest and works from any working directory; it demonstrates both escapeXML and randomHex (randomized delimiters). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.

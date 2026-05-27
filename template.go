@@ -66,6 +66,8 @@ type parsedMessage struct {
 	cacheControl *CacheControl
 	metadata     map[string]any // provider-specific; copied to ChatMessage on render
 	vars         []string       // pre-computed from all parts for optional-skip check
+	sourceID     string
+	layerKind    LayerKind
 }
 
 // NewChatPromptTemplate builds a template with defensive copies and applies options.
@@ -219,6 +221,8 @@ func NewChatPromptTemplate(
 			cacheControl: cloneCacheControl(m.CacheControl),
 			metadata:     meta,
 			vars:         allVars,
+			sourceID:     m.SourceID,
+			layerKind:    m.LayerKind,
 		})
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
@@ -344,6 +348,8 @@ func (c *ChatPromptTemplate) renderTemplates(
 			Content:      contentParts,
 			CacheControl: cloneCacheControl(pm.cacheControl),
 			Metadata:     maps.Clone(pm.metadata),
+			SourceID:     pm.sourceID,
+			LayerKind:    pm.layerKind,
 		})
 	}
 	out = spliceHistory(out, cloneMessages(history))
@@ -357,66 +363,42 @@ func (c *ChatPromptTemplate) renderTemplates(
 	}, nil
 }
 
-// Format renders the template using the given input map (reflection-free).
-// Same merge and validation as FormatStruct. History is not supported.
-func (c *ChatPromptTemplate) Format(vars map[string]any) (*PromptExecution, error) {
-	if vars == nil {
-		vars = make(map[string]any)
-	}
+func (c *ChatPromptTemplate) formatContext(data renderContext) (*PromptExecution, error) {
 	merged := maps.Clone(c.PartialVariables)
 	if merged == nil {
 		merged = make(map[string]any)
 	}
-	maps.Copy(merged, vars)
-	merged["Tools"] = c.Tools
-	required := mergeRequiredVars(c.RequiredVars, c.requiredFromAST)
-	for _, name := range required {
-		if _, ok := merged[name]; !ok {
-			return nil, &VariableError{
-				Variable: name,
-				Template: c.Metadata.ID,
-				Err:      ErrMissingVariable,
-			}
-		}
+	inputVars := maps.Clone(c.PartialVariables)
+	if inputVars == nil {
+		inputVars = make(map[string]any)
 	}
+	normalizedInput := normalizeTemplateInput(data.Input)
+	if inputMap, ok := normalizedInput.(map[string]any); ok {
+		maps.Copy(inputVars, inputMap)
+		merged["Input"] = inputVars
+	} else if normalizedInput == nil {
+		merged["Input"] = inputVars
+	} else {
+		merged["Input"] = normalizedInput
+	}
+	merged["LateVars"] = cloneMapAny(data.LateVars)
+	merged["Tools"] = c.Tools
 	return c.renderTemplates(merged, nil)
-}
-
-// FormatStruct renders the template using payload struct (prompt tags), merges input fields, validates, splices history.
-func (c *ChatPromptTemplate) FormatStruct(payload any) (*PromptExecution, error) {
-	vars, history, err := getPayloadFields(payload)
-	if err != nil {
-		return nil, err
-	}
-	merged := maps.Clone(c.PartialVariables)
-	if merged == nil {
-		merged = make(map[string]any)
-	}
-	maps.Copy(merged, vars)
-	merged["Tools"] = c.Tools
-	required := mergeRequiredVars(c.RequiredVars, c.requiredFromAST)
-	for _, name := range required {
-		if _, ok := merged[name]; !ok {
-			return nil, &VariableError{
-				Variable: name,
-				Template: c.Metadata.ID,
-				Err:      ErrMissingVariable,
-			}
-		}
-	}
-	return c.renderTemplates(merged, history)
 }
 
 // ValidateVariables runs a dry-run execute with the given data (same merge as FormatStruct: PartialVariables + data + Tools).
 // Returns an error with role/message index context if any template references a missing or invalid input field.
 func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
-	merged := maps.Clone(c.PartialVariables)
-	if merged == nil {
-		merged = make(map[string]any)
+	input := maps.Clone(c.PartialVariables)
+	if input == nil {
+		input = make(map[string]any)
 	}
 	if data != nil {
-		maps.Copy(merged, data)
+		maps.Copy(input, data)
 	}
+	merged := make(map[string]any)
+	merged["Input"] = input
+	merged["LateVars"] = map[string]any{}
 	merged["Tools"] = c.Tools
 	for i, pm := range c.parsedTemplates {
 		for j, part := range pm.parts {
@@ -562,8 +544,12 @@ func mergeRequiredVars(explicit, fromTemplates []string) []string {
 }
 
 func allVarsZeroForMessage(merged map[string]any, vars []string) bool {
+	inputVars, _ := merged["Input"].(map[string]any)
 	for _, name := range vars {
 		v, ok := merged[name]
+		if !ok && inputVars != nil {
+			v, ok = inputVars[name]
+		}
 		if !ok {
 			continue
 		}

@@ -2,11 +2,11 @@ package prompty
 
 import "testing"
 
-// Run with: go test -bench=BenchmarkFormatStruct -benchmem to verify allocs/op and B/op (sync.Pool reduces allocations).
-func BenchmarkFormatStruct(b *testing.B) {
+// Run with: go test -bench=BenchmarkRenderPlanExecute -benchmem to verify allocs/op and B/op.
+func BenchmarkRenderPlanExecute(b *testing.B) {
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: TextContent("You are {{ .bot_name }}.")},
-		{Role: RoleUser, Content: TextContent("{{ .query }}")},
+		{Role: RoleSystem, Content: TextContent("You are {{ .Input.bot_name }}.")},
+		{Role: RoleUser, Content: TextContent("{{ .Input.query }}")},
 	}, WithPartialVariables(map[string]any{"bot_name": "Helper"}))
 	if err != nil {
 		b.Fatal(err)
@@ -17,7 +17,7 @@ func BenchmarkFormatStruct(b *testing.B) {
 	payload := &P{Query: "What is 2+2?"}
 	b.ResetTimer()
 	for range b.N {
-		_, _ = tpl.FormatStruct(payload)
+		_, _ = executeTemplatePlan(tpl, payload)
 	}
 }
 

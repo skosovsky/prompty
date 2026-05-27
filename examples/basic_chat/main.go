@@ -23,17 +23,16 @@ func main() {
 		log.Fatalf("fileregistry.New: %v", err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	plan, err := reg.Plan(ctx, "support_agent", map[string]any{
+		"user_name": "Alice",
+		"query":     "What is 2+2?",
+	})
 	if err != nil {
-		log.Fatalf("GetTemplate: %v", err)
+		log.Fatalf("Plan: %v", err)
 	}
-	type Payload struct {
-		UserName string `prompt:"user_name"`
-		Query    string `prompt:"query"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice", Query: "What is 2+2?"})
+	exec, err := plan.Execute(ctx)
 	if err != nil {
-		log.Fatalf("FormatStruct: %v", err)
+		log.Fatalf("Execute: %v", err)
 	}
 
 	apiKey := os.Getenv("OPENAI_API_KEY")

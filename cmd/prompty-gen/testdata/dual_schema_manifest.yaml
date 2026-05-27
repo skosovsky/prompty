@@ -1,15 +1,10 @@
 id: fixtures/dual_schema
 version: "1"
 
-input_schema:
-  name: dual_schema_input
-  schema:
-    type: object
-    properties:
-      prompt:
-        type: string
-    required:
-      - prompt
+inputs:
+  prompt:
+    type: string
+    required: true
 
 response_format:
   name: dual_schema_output
@@ -47,4 +42,4 @@ response_format:
 
 messages:
   - role: user
-    content: "{{ .prompt }}"
+    content: "{{ .Input.prompt }}"

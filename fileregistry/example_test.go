@@ -9,17 +9,18 @@ import (
 	"github.com/skosovsky/prompty/parser/yaml"
 )
 
-func ExampleRegistry_GetTemplate() {
+func ExampleRegistry_Plan() {
 	dir := "testdata/prompts"
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	if err != nil {
 		panic(err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	plan, err := reg.Plan(ctx, "support_agent", nil)
 	if err != nil {
 		panic(err)
 	}
+	tpl := plan.Template()
 	fmt.Println(tpl.Metadata.ID)
 	fmt.Println(len(tpl.Messages))
 	// Output:
@@ -34,14 +35,11 @@ func ExampleNew() {
 		panic(err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "support_agent")
+	plan, err := reg.Plan(ctx, "support_agent", map[string]any{"user_name": "Alice"})
 	if err != nil {
 		panic(err)
 	}
-	type Payload struct {
-		UserName string `prompt:"user_name"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice"})
+	exec, err := plan.Execute(ctx)
 	if err != nil {
 		panic(err)
 	}

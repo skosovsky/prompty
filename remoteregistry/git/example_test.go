@@ -21,7 +21,7 @@ id: support_agent
 version: "1"
 messages:
   - role: system
-    content: "Hello {{ .user_name }}"
+    content: "Hello {{ .Input.user_name }}"
 `,
 	} {
 		full := filepath.Join(dir, path)

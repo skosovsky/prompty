@@ -24,16 +24,15 @@ func main() {
 		log.Fatalf("fileregistry.New: %v", err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "tools_demo")
+	plan, err := reg.Plan(ctx, "tools_demo", map[string]any{
+		"query": "What is the weather in Paris? (hint: use a tool)",
+	})
 	if err != nil {
-		log.Fatalf("GetTemplate: %v", err)
+		log.Fatalf("Plan: %v", err)
 	}
-	type Payload struct {
-		Query string `prompt:"query"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{Query: "What is the weather in Paris? (hint: use a tool)"})
+	exec, err := plan.Execute(ctx)
 	if err != nil {
-		log.Fatalf("FormatStruct: %v", err)
+		log.Fatalf("Execute: %v", err)
 	}
 
 	apiKey := os.Getenv("OPENAI_API_KEY")

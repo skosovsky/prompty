@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/internal/cast"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestMain(m *testing.M) {
 func TestParse_ValidSimple(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"simple_prompt","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello, {{ .user_name }}."}]}]}`,
+		`{"id":"simple_prompt","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"Hello, {{ .Input.user_name }}."}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
@@ -35,7 +36,7 @@ func TestParse_ValidSimple(t *testing.T) {
 	assert.Equal(t, prompty.RoleSystem, tpl.Messages[0].Role)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
-	assert.Equal(t, "Hello, {{ .user_name }}.", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "Hello, {{ .Input.user_name }}.", tpl.Messages[0].Content[0].Text)
 }
 
 func TestParse_NilParser(t *testing.T) {
@@ -58,7 +59,7 @@ func TestParse_RequiredTools(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, tpl.RequiredTools)
-	exec, err := tpl.Format(map[string]any{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"doctor_search_knowledge_base", "get_current_time"}, exec.RequiredTools)
 }
@@ -75,7 +76,7 @@ func TestParse_RequiredToolsAbsentReturnsEmptySlice(t *testing.T) {
 	require.NotNil(t, tpl)
 	assert.NotNil(t, tpl.RequiredTools)
 	assert.Empty(t, tpl.RequiredTools)
-	exec, err := tpl.Format(map[string]any{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	assert.NotNil(t, exec.RequiredTools)
 	assert.Empty(t, exec.RequiredTools)
@@ -182,7 +183,7 @@ func TestParse_ModelOptions_JSON(t *testing.T) {
 	data := []byte(`{
 		"id":"model_opts",
 		"version":"1",
-		"model_config":{
+		"model_options":{
 			"model":"gpt-4o",
 			"temperature":0.7,
 			"max_tokens":2048,
@@ -214,7 +215,7 @@ func TestParse_ModelOptions_JSON_RejectsTopLevelVendorKeys(t *testing.T) {
 	data := []byte(`{
 		"id":"model_opts_top_level_vendor_keys",
 		"version":"1",
-		"model_config":{
+		"model_options":{
 			"model":"gpt-4o",
 			"custom_mode":"fast",
 			"provider_settings":{"custom_flag":true}
@@ -223,7 +224,7 @@ func TestParse_ModelOptions_JSON_RejectsTopLevelVendorKeys(t *testing.T) {
 	}`)
 	_, err := Parse(data, jsonParser)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid model_config key: custom_mode; use provider_settings")
+	assert.Contains(t, err.Error(), "invalid model_options key: custom_mode; use provider_settings")
 }
 
 func TestParse_ModelOptions_JSON_EmptyBlockReturnsNil(t *testing.T) {
@@ -231,13 +232,26 @@ func TestParse_ModelOptions_JSON_EmptyBlockReturnsNil(t *testing.T) {
 	data := []byte(`{
 		"id":"empty_model_opts",
 		"version":"1",
-		"model_config":{},
+		"model_options":{},
 		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
 	}`)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Nil(t, tpl.ModelOptions)
+}
+
+func TestParse_LegacyKeysRejectedWithErrLegacyManifestVersion(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"id":"legacy_manifest",
+		"version":"1",
+		"model_config":{"model":"gpt-4o"},
+		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
+	}`)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrLegacyManifestVersion)
 }
 
 func TestParse_AcceptsCustomRole(t *testing.T) {
@@ -263,7 +277,7 @@ func TestParse_ContentScalar(t *testing.T) {
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
 	assert.Equal(t, "Ты ассистент", tpl.Messages[0].Content[0].Text)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -274,19 +288,19 @@ func TestParse_ContentScalar(t *testing.T) {
 func TestParse_ContentMultimodalArray(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .x }}"},{"type":"media","media_type":"image","mime_type":"image/png","url":"{{ .img }}"}]}]}`,
+		`{"id":"multimodal","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"Look: {{ .Input.x }}"},{"type":"media","media_type":"image","mime_type":"image/png","url":"{{ .Input.img }}"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages, 1)
 	require.Len(t, tpl.Messages[0].Content, 2)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
-	assert.Equal(t, "Look: {{ .x }}", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "Look: {{ .Input.x }}", tpl.Messages[0].Content[0].Text)
 	assert.Equal(t, "media", tpl.Messages[0].Content[1].Type)
 	assert.Equal(t, "image", tpl.Messages[0].Content[1].MediaType)
 	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
-	assert.Equal(t, "{{ .img }}", tpl.Messages[0].Content[1].URL)
-	exec, err := tpl.FormatStruct(&struct {
+	assert.Equal(t, "{{ .Input.img }}", tpl.Messages[0].Content[1].URL)
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X   string `json:"x"`
 		Img string `json:"img"`
 	}{X: "done", Img: "https://example.com/photo.png"})
@@ -327,7 +341,7 @@ func TestParse_ResponseFormat(t *testing.T) {
 	assert.Equal(t, "my_schema", tpl.ResponseFormat.Name)
 	require.NotNil(t, tpl.ResponseFormat.Schema)
 	assert.Equal(t, "object", tpl.ResponseFormat.Schema["type"])
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -352,12 +366,12 @@ func TestParse_MetadataPassThrough_ArbitraryKeys(t *testing.T) {
 func TestParse_MetadataPassThrough(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"with_metadata_pass","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper. {{ .x }}"}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+		`{"id":"with_metadata_pass","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"You are a helper. {{ .Input.x }}"}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{X: "ok"})
 	require.NoError(t, err)
@@ -388,7 +402,7 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 	assert.Equal(t, "ephemeral", tpl.Messages[0].Content[0].CacheControl.Type)
 	require.NotNil(t, tpl.Messages[0].Metadata)
 	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -407,12 +421,12 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 func TestParse_FuncMapHelpersManifestPath(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"secure","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"{{ $d := randomHex 8 }}\\n<data_{{ $d }}>{{ .user_input | escapeXML }}</data_{{ $d }}"}]}]}`,
+		`{"id":"secure","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"{{ $d := randomHex 8 }}\\n<data_{{ $d }}>{{ .Input.user_input | escapeXML }}</data_{{ $d }}"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		UserInput string `prompt:"user_input"`
 	}{UserInput: "</patient_input>"})
 	require.NoError(t, err)
@@ -429,4 +443,70 @@ func TestParse_FuncMapHelpersManifestPath(t *testing.T) {
 	delimClose := text[closeIdx+7 : closeIdx+7+16]
 	assert.Equal(t, delimOpen, delimClose, "same randomHex value must appear in both tags")
 	assert.Regexp(t, `^[0-9a-f]{16}$`, delimOpen)
+}
+
+func TestParse_InputsContractStyle_DefaultsAndRequired(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+	  "id":"contract_inputs",
+	  "version":"1",
+	  "inputs":{
+	    "user_name":{"type":"string","required":true},
+	    "tone":{"type":"string","default":"friendly"}
+	  },
+	  "messages":[{"role":"user","content":[{"type":"text","text":"Hi {{ .Input.user_name }} in {{ .Input.tone }} tone"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.NotNil(t, tpl.InputSchema)
+	require.NotNil(t, tpl.InputSchema.Schema)
+
+	properties, _ := tpl.InputSchema.Schema["properties"].(map[string]any)
+	require.Contains(t, properties, "user_name")
+	require.Contains(t, properties, "tone")
+
+	required, _ := cast.ToStringSlice(tpl.InputSchema.Schema["required"])
+	assert.ElementsMatch(t, []string{"user_name"}, required)
+	assert.Equal(t, "friendly", tpl.PartialVariables["tone"])
+}
+
+func TestParse_InputsWrapperRejected_JSON(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+	  "id":"wrapper_inputs",
+	  "version":"1",
+	  "inputs":{"schema":{"type":"object","properties":{"q":{"type":"string"}}}},
+	  "messages":[{"role":"user","content":[{"type":"text","text":"{{ .Input.q }}"}]}]
+	}`)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contract-style")
+}
+
+func TestParse_InputsRawSchemaRejected_JSON(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+	  "id":"raw_schema_inputs",
+	  "version":"1",
+	  "inputs":{"type":"object","properties":{"q":{"type":"string"}}},
+	  "messages":[{"role":"user","content":[{"type":"text","text":"{{ .Input.q }}"}]}]
+	}`)
+	_, err := Parse(data, jsonParser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contract-style")
+}
+
+func TestParse_TopLevelLayerKindAppliedToMessages(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+	  "id":"layered",
+	  "version":"1",
+	  "layer_kind":"policy",
+	  "inputs":{"query":{"type":"string","required":true}},
+	  "messages":[{"role":"user","content":[{"type":"text","text":"{{ .Input.query }}"}]}]
+	}`)
+	tpl, err := Parse(data, jsonParser)
+	require.NoError(t, err)
+	require.Len(t, tpl.Messages, 1)
+	assert.Equal(t, prompty.LayerKind("policy"), tpl.Messages[0].LayerKind)
 }

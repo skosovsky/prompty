@@ -57,7 +57,7 @@ func (r *CachedRegistry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 	return r.ttl <= 0 || now.Before(ent.expiresAt)
 }
 
-func (r *CachedRegistry) GetTemplate(
+func (r *CachedRegistry) loadTemplate(
 	ctx context.Context,
 	id string,
 ) (*prompty.ChatPromptTemplate, error) {
@@ -107,11 +107,21 @@ func (r *CachedRegistry) GetTemplate(
 	return r.waitForInflight(ctx, id, inFlight)
 }
 
+// Plan returns a deferred render plan using cached template data.
+func (r *CachedRegistry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+	tpl, err := r.loadTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return prompty.NewRenderPlan(tpl, typedInput), nil
+}
+
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	defer inFlight.cancel()
 
-	tpl, err := r.base.GetTemplate(inFlight.ctx, id)
+	plan, err := r.base.Plan(inFlight.ctx, id, nil)
 	if err == nil {
+		tpl := plan.Template()
 		if tpl == nil {
 			err = fmt.Errorf("remoteregistry: unexpected nil template for id %q", id)
 		} else {

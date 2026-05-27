@@ -18,7 +18,7 @@ func ExampleNew() {
 		panic(err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	if err != nil {
 		panic(err)
 	}
@@ -29,20 +29,17 @@ func ExampleNew() {
 	// 1
 }
 
-func ExampleRegistry_GetTemplate() {
+func ExampleRegistry_Plan() {
 	reg, err := New(exampleFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	if err != nil {
 		panic(err)
 	}
 	ctx := context.Background()
-	tpl, err := reg.GetTemplate(ctx, "agent")
+	tpl, err := templateFromPlan(ctx, reg, "agent")
 	if err != nil {
 		panic(err)
 	}
-	type Payload struct {
-		UserName string `prompt:"user_name"`
-	}
-	exec, err := tpl.FormatStruct(&Payload{UserName: "Bob"})
+	exec, err := executeTemplatePlan(tpl, map[string]any{"user_name": "Bob"})
 	if err != nil {
 		panic(err)
 	}

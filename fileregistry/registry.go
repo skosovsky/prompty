@@ -98,8 +98,8 @@ func idToPaths(dir, id, env string) []string {
 	return out
 }
 
-// GetTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
-func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+// loadTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
+func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
 	}
@@ -141,6 +141,15 @@ func (r *Registry) GetTemplate(ctx context.Context, id string) (*prompty.ChatPro
 		}
 	}
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// Plan returns a deferred render plan for the selected prompt id.
+func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+	tpl, err := r.loadTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return prompty.NewRenderPlan(tpl, typedInput), nil
 }
 
 // baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).

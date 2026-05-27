@@ -18,12 +18,12 @@ func TestMain(m *testing.M) {
 
 func TestNewChatPromptTemplate_DefensiveCopy(t *testing.T) {
 	t.Parallel()
-	msgs := []MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .name }}")}}
+	msgs := []MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .Input.name }}")}}
 	tpl, err := NewChatPromptTemplate(msgs)
 	require.NoError(t, err)
 	msgs[0].Content = []TemplatePart{{Type: "text", Text: "mutated"}}
 	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "Hi {{ .name }}", tpl.Messages[0].Content[0].Text)
+	assert.Equal(t, "Hi {{ .Input.name }}", tpl.Messages[0].Content[0].Text)
 }
 
 func TestNewChatPromptTemplate_DefensiveCopy_NestedState(t *testing.T) {
@@ -58,7 +58,11 @@ func TestNewChatPromptTemplate_DefensiveCopy_NestedState(t *testing.T) {
 	meta.Extras["trace"].(map[string]any)["env"] = "prod"
 
 	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
-	assert.Equal(t, "string", tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"])
+	assert.Equal(
+		t,
+		"string",
+		tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"],
+	)
 	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
 }
 
@@ -114,7 +118,7 @@ func TestNewChatPromptTemplate_DefensiveCopy_Schemas(t *testing.T) {
 func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 	t.Parallel()
 	msgs := []MessageTemplate{
-		{Role: "system", Content: TextContent("Hi {{ .name }}")},
+		{Role: "system", Content: TextContent("Hi {{ .Input.name }}")},
 		{Role: "user", Content: TextContent("{{ end }}")},
 	}
 	_, err := NewChatPromptTemplate(msgs)
@@ -125,13 +129,13 @@ func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 func TestFormatStruct_SimpleVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
+		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		UserName string `prompt:"user_name"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{UserName: "Alice"})
+	exec, err := executeTemplatePlan(tpl, &Payload{UserName: "Alice"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
@@ -148,9 +152,9 @@ func TestFormatStruct_MediaPart(t *testing.T) {
 				{Type: "text", Text: "Analyze this:"},
 				{
 					Type:      "media",
-					MediaType: "{{ .kind }}",
-					MIMEType:  "{{ .mime }}",
-					URL:       "{{ .url }}",
+					MediaType: "{{ .Input.kind }}",
+					MIMEType:  "{{ .Input.mime }}",
+					URL:       "{{ .Input.url }}",
 				},
 			},
 		},
@@ -161,7 +165,7 @@ func TestFormatStruct_MediaPart(t *testing.T) {
 		MIME string `prompt:"mime"`
 		URL  string `prompt:"url"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{
+	exec, err := executeTemplatePlan(tpl, &Payload{
 		Kind: "document",
 		MIME: "application/pdf",
 		URL:  "https://example.com/report.pdf",
@@ -188,8 +192,8 @@ func TestFormatStruct_MediaPart_InferTypeFromMIME(t *testing.T) {
 				{Type: "text", Text: "Analyze this:"},
 				{
 					Type:     "media",
-					MIMEType: "{{ .mime }}",
-					URL:      "{{ .url }}",
+					MIMEType: "{{ .Input.mime }}",
+					URL:      "{{ .Input.url }}",
 				},
 			},
 		},
@@ -199,7 +203,7 @@ func TestFormatStruct_MediaPart_InferTypeFromMIME(t *testing.T) {
 		MIME string `prompt:"mime"`
 		URL  string `prompt:"url"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{
+	exec, err := executeTemplatePlan(tpl, &Payload{
 		MIME: "application/pdf",
 		URL:  "https://example.com/report.pdf",
 	})
@@ -221,7 +225,7 @@ func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing
 			Content: []TemplatePart{
 				{
 					Type: "media",
-					URL:  "{{ .url }}",
+					URL:  "{{ .Input.url }}",
 				},
 			},
 		},
@@ -230,7 +234,7 @@ func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing
 	type Payload struct {
 		URL string `prompt:"url"`
 	}
-	_, err = tpl.FormatStruct(&Payload{URL: "https://example.com/file.bin"})
+	_, err = executeTemplatePlan(tpl, &Payload{URL: "https://example.com/file.bin"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrTemplateRender)
 	assert.Contains(t, err.Error(), "media_type is required")
@@ -239,13 +243,13 @@ func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing
 func TestFormatStruct_PartialVariables(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("{{ .bot_name }}: {{ .msg }}")},
+		{Role: "system", Content: TextContent("{{ .Input.bot_name }}: {{ .Input.msg }}")},
 	}, WithPartialVariables(map[string]any{"bot_name": "Bot", "msg": "default"}))
 	require.NoError(t, err)
 	type Payload struct {
 		Msg string `prompt:"msg"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{Msg: "overridden"})
+	exec, err := executeTemplatePlan(tpl, &Payload{Msg: "overridden"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
@@ -256,13 +260,13 @@ func TestFormatStruct_PartialVariables(t *testing.T) {
 func TestFormatStruct_MissingRequired(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "user", Content: TextContent("{{ .user_name }}")},
+		{Role: "user", Content: TextContent("{{ .Input.user_name }}")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		Other string `prompt:"other"`
 	}
-	_, err = tpl.FormatStruct(&Payload{Other: "x"})
+	_, err = executeTemplatePlan(tpl, &Payload{Other: "x"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingVariable)
 	var ve *VariableError
@@ -276,7 +280,12 @@ func TestValidateVariables_MediaPart(t *testing.T) {
 		{
 			Role: RoleUser,
 			Content: []TemplatePart{
-				{Type: "media", MediaType: "{{ .kind }}", MIMEType: "{{ .mime }}", URL: "{{ .url }}"},
+				{
+					Type:      "media",
+					MediaType: "{{ .Input.kind }}",
+					MIMEType:  "{{ .Input.mime }}",
+					URL:       "{{ .Input.url }}",
+				},
 			},
 		},
 	})
@@ -302,7 +311,7 @@ func TestValidateVariables_MediaPart_MissingTypeAndUnknownMIME(t *testing.T) {
 		{
 			Role: RoleUser,
 			Content: []TemplatePart{
-				{Type: "media", MIMEType: "{{ .mime }}", URL: "{{ .url }}"},
+				{Type: "media", MIMEType: "{{ .Input.mime }}", URL: "{{ .Input.url }}"},
 			},
 		},
 	})
@@ -327,19 +336,21 @@ func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 	type P struct {
 		Other string `prompt:"other"`
 	}
-	_, err = tpl.FormatStruct(&P{Other: "x"})
+	_, err = executeTemplatePlan(tpl, &P{Other: "x"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingVariable)
 }
 
 func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+	)
 	require.NoError(t, err)
 	type PayloadWithTools struct {
 		Tools string `prompt:"Tools"` // reserved
 	}
-	_, err = tpl.FormatStruct(&PayloadWithTools{Tools: "x"})
+	_, err = executeTemplatePlan(tpl, &PayloadWithTools{Tools: "x"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReservedVariable)
 }
@@ -351,13 +362,15 @@ func TestFormatStruct_ResponseFormatClone(t *testing.T) {
 	schema := map[string]any{"type": "object", "remove_me": true}
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
-		WithResponseFormat(&SchemaDefinition{Name: "original", Description: "desc", Schema: schema}),
+		WithResponseFormat(
+			&SchemaDefinition{Name: "original", Description: "desc", Schema: schema},
+		),
 	)
 	require.NoError(t, err)
 	type emptyPayload struct {
 		X string `prompt:"x"` // unused by template; needed for getPayloadFields
 	}
-	exec, err := tpl.FormatStruct(&emptyPayload{})
+	exec, err := executeTemplatePlan(tpl, &emptyPayload{})
 	require.NoError(t, err)
 	require.NotNil(t, exec.ResponseFormat)
 	require.NotNil(t, tpl.ResponseFormat)
@@ -370,7 +383,12 @@ func TestFormatStruct_ResponseFormatClone(t *testing.T) {
 	delete(exec.ResponseFormat.Schema, "remove_me")
 
 	// Template must be unchanged.
-	assert.Equal(t, origName, tpl.ResponseFormat.Name, "template ResponseFormat.Name must not be mutated")
+	assert.Equal(
+		t,
+		origName,
+		tpl.ResponseFormat.Name,
+		"template ResponseFormat.Name must not be mutated",
+	)
 	assert.True(t, origHasKey, "template ResponseFormat.Schema must not be mutated")
 	_, stillHasKey := tpl.ResponseFormat.Schema["remove_me"]
 	assert.True(t, stillHasKey, "template ResponseFormat.Schema must not share map with execution")
@@ -399,7 +417,12 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 	clone.ResponseFormat.Schema["new"] = "x"
 
 	// Original template must be unchanged.
-	assert.Equal(t, origName, tpl.ResponseFormat.Name, "original ResponseFormat.Name must not be mutated")
+	assert.Equal(
+		t,
+		origName,
+		tpl.ResponseFormat.Name,
+		"original ResponseFormat.Name must not be mutated",
+	)
 	assert.True(t, origHasKey, "original ResponseFormat.Schema must not be mutated")
 	_, stillHasKey := tpl.ResponseFormat.Schema["key"]
 	assert.True(t, stillHasKey)
@@ -488,21 +511,25 @@ func TestCloneTemplate_DoesNotMutateOriginalNestedState(t *testing.T) {
 	clone.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
 
 	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
-	assert.Equal(t, "string", tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"])
+	assert.Equal(
+		t,
+		"string",
+		tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"],
+	)
 	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
 }
 
 func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
+		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		UserName string `prompt:"user_name"`
 	}
 	p := &Payload{UserName: "Alice"}
-	exec, err := tpl.FormatStruct(&p) // pass **Payload
+	exec, err := executeTemplatePlan(tpl, &p) // pass **Payload
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "Hello, Alice!", exec.Messages[0].Content[0].(TextPart).Text)
@@ -513,9 +540,11 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 	type NoTags struct {
 		X string
 	}
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+	)
 	require.NoError(t, err)
-	_, err = tpl.FormatStruct(&NoTags{X: "y"})
+	_, err = executeTemplatePlan(tpl, &NoTags{X: "y"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -524,13 +553,13 @@ func TestFormatStruct_InvalidPayload(t *testing.T) {
 func TestFormatStruct_JsonTagFallback(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, Content: TextContent("Hello, {{ .user_name }}!")},
+		{Role: RoleSystem, Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		UserName string `json:"user_name,omitempty"` // no prompt tag; fallback to json first part
 	}
-	exec, err := tpl.FormatStruct(&Payload{UserName: "Bob"})
+	exec, err := executeTemplatePlan(tpl, &Payload{UserName: "Bob"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "Hello, Bob!", exec.Messages[0].Content[0].(TextPart).Text)
@@ -538,34 +567,40 @@ func TestFormatStruct_JsonTagFallback(t *testing.T) {
 
 func TestFormatStruct_NilPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+	)
 	require.NoError(t, err)
-	_, err = tpl.FormatStruct(nil)
+	_, err = executeTemplatePlan(tpl, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_NilPointerPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .x }}")}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .Input.x }}")}},
+	)
 	require.NoError(t, err)
 	type P struct {
 		X string `prompt:"x"`
 	}
 	var p *P // nil pointer
-	_, err = tpl.FormatStruct(p)
+	_, err = executeTemplatePlan(tpl, p)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestFormatStruct_NonStructPayload(t *testing.T) {
 	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: "system", Content: TextContent("Hi")}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
+	)
 	require.NoError(t, err)
-	_, err = tpl.FormatStruct(42)
+	_, err = executeTemplatePlan(tpl, 42)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
-	_, err = tpl.FormatStruct("string")
+	_, err = executeTemplatePlan(tpl, "string")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -573,7 +608,7 @@ func TestFormatStruct_NonStructPayload(t *testing.T) {
 func TestValidateVariables_Ok(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
+		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	err = tpl.ValidateVariables(map[string]any{"user_name": "Alice"})
@@ -583,7 +618,7 @@ func TestValidateVariables_Ok(t *testing.T) {
 func TestValidateVariables_MissingVar(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("Hello, {{ .user_name }}!")},
+		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	err = tpl.ValidateVariables(map[string]any{})
@@ -595,13 +630,13 @@ func TestFormatStruct_OptionalMessage(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("System")},
-		{Role: "user", Content: TextContent("{{ .extra }}"), Optional: true},
+		{Role: "user", Content: TextContent("{{ .Input.extra }}"), Optional: true},
 	})
 	require.NoError(t, err)
 	type Payload struct {
 		Extra string `prompt:"extra"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{Extra: ""})
+	exec, err := executeTemplatePlan(tpl, &Payload{Extra: ""})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "System", exec.Messages[0].Content[0].(TextPart).Text)
@@ -611,7 +646,7 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("You are a helper.")},
-		{Role: "user", Content: TextContent("{{ .query }}")},
+		{Role: "user", Content: TextContent("{{ .Input.query }}")},
 	})
 	require.NoError(t, err)
 	history := []ChatMessage{
@@ -622,7 +657,7 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 		Query   string        `prompt:"query"`
 		History []ChatMessage `prompt:"history"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{Query: "last", History: history})
+	exec, err := executeTemplatePlan(tpl, &Payload{Query: "last", History: history})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 4) // system, history[0], history[1], user
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
@@ -638,7 +673,7 @@ func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("System.")},
 		{Role: "developer", Content: TextContent("Developer.")},
-		{Role: "user", Content: TextContent("{{ .query }}")},
+		{Role: "user", Content: TextContent("{{ .Input.query }}")},
 	})
 	require.NoError(t, err)
 	history := []ChatMessage{
@@ -648,16 +683,15 @@ func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 		Query   string        `prompt:"query"`
 		History []ChatMessage `prompt:"history"`
 	}
-	exec, err := tpl.FormatStruct(&Payload{Query: "last", History: history})
+	exec, err := executeTemplatePlan(tpl, &Payload{Query: "last", History: history})
 	require.NoError(t, err)
-	// Expected: system, developer, history[0], user
-	require.Len(t, exec.Messages, 4)
+	// v2 normalization collapses consecutive system/developer anchors before history splice.
+	require.Len(t, exec.Messages, 3)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
-	assert.Equal(t, RoleDeveloper, exec.Messages[1].Role)
+	assert.Equal(t, RoleUser, exec.Messages[1].Role)
+	assert.Equal(t, "hist_user", exec.Messages[1].Content[0].(TextPart).Text)
 	assert.Equal(t, RoleUser, exec.Messages[2].Role)
-	assert.Equal(t, "hist_user", exec.Messages[2].Content[0].(TextPart).Text)
-	assert.Equal(t, RoleUser, exec.Messages[3].Role)
-	assert.Equal(t, "last", exec.Messages[3].Content[0].(TextPart).Text)
+	assert.Equal(t, "last", exec.Messages[2].Content[0].(TextPart).Text)
 }
 
 func TestFormatStruct_ToolsInjection(t *testing.T) {
@@ -669,7 +703,7 @@ func TestFormatStruct_ToolsInjection(t *testing.T) {
 	type Payload struct {
 		X string `prompt:"x"` // not referenced in template; payload must have at least one prompt tag
 	}
-	exec, err := tpl.FormatStruct(&Payload{})
+	exec, err := executeTemplatePlan(tpl, &Payload{})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	text := exec.Messages[0].Content[0].(TextPart).Text
@@ -692,13 +726,13 @@ func TestFormatStruct_ErrTemplateRender(t *testing.T) {
 	t.Parallel()
 	// Template parses but Execute fails because truncate_tokens uses a TokenCounter that returns error.
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("{{ truncate_tokens .text 10 }}")},
+		{Role: "system", Content: TextContent("{{ truncate_tokens .Input.text 10 }}")},
 	}, WithTokenCounter(failingTokenCounter{}))
 	require.NoError(t, err)
 	type P struct {
 		Text string `prompt:"text"`
 	}
-	_, err = tpl.FormatStruct(&P{Text: "hello"})
+	_, err = executeTemplatePlan(tpl, &P{Text: "hello"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTemplateRender)
 }
@@ -707,13 +741,19 @@ func TestWithTokenCounter_Nil(t *testing.T) {
 	t.Parallel()
 	// WithTokenCounter(nil) should fall back to CharFallbackCounter in truncate_tokens.
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("{{ truncate_tokens .text 2 }}")}, // 2 tokens, default ~4 chars/token
+		{
+			Role:    "system",
+			Content: TextContent("{{ truncate_tokens .Input.text 2 }}"),
+		}, // 2 tokens, default ~4 chars/token
 	}, WithTokenCounter(nil))
 	require.NoError(t, err)
 	type P struct {
 		Text string `prompt:"text"`
 	}
-	exec, err := tpl.FormatStruct(&P{Text: "12345678"}) // 8 chars -> 2 tokens, no truncation
+	exec, err := executeTemplatePlan(
+		tpl,
+		&P{Text: "12345678"},
+	) // 8 chars -> 2 tokens, no truncation
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "12345678", exec.Messages[0].Content[0].(TextPart).Text)
@@ -733,14 +773,17 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	)
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{
-			{Role: RoleSystem, Content: TextContent("You are a doctor.\n{{ template \"safety\" }}")},
+			{
+				Role:    RoleSystem,
+				Content: TextContent("You are a doctor.\n{{ template \"safety\" }}"),
+			},
 			{Role: RoleUser, Content: TextContent("Hi")},
 		},
 		WithPartialsGlob(filepath.Join(dir, "partials", "*.tmpl")),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := tpl.FormatStruct(&struct {
+	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
 	require.NoError(t, err)
@@ -754,7 +797,7 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: "system", Content: TextContent("{{ .x }}")},
+		{Role: "system", Content: TextContent("{{ .Input.x }}")},
 	})
 	require.NoError(t, err)
 	type P struct {
@@ -764,7 +807,7 @@ func TestFormatStruct_ConcurrentUse(t *testing.T) {
 	errCh := make(chan error, n)
 	for range n {
 		go func() {
-			exec, err := tpl.FormatStruct(&P{X: "v"})
+			exec, err := executeTemplatePlan(tpl, &P{X: "v"})
 			if err != nil {
 				errCh <- err
 				return
@@ -891,7 +934,11 @@ func TestPromptExecution_ResolvedMedia_NilFetcherOnNoOpPath(t *testing.T) {
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
 			{Role: RoleUser, Content: []ContentPart{
-				MediaPart{MediaType: "image", URL: "https://example.com/image.png", Data: []byte("already-resolved")},
+				MediaPart{
+					MediaType: "image",
+					URL:       "https://example.com/image.png",
+					Data:      []byte("already-resolved"),
+				},
 			}},
 		},
 	}
@@ -923,7 +970,11 @@ func TestPromptExecution_ResolvedMedia_TypedNilFetcherOnNoOpPath(t *testing.T) {
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
 			{Role: RoleUser, Content: []ContentPart{
-				MediaPart{MediaType: "image", URL: "https://example.com/image.png", Data: []byte("already-resolved")},
+				MediaPart{
+					MediaType: "image",
+					URL:       "https://example.com/image.png",
+					Data:      []byte("already-resolved"),
+				},
 			}},
 		},
 	}
@@ -997,7 +1048,11 @@ func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {
 				Role: RoleSystem,
 				Content: []ContentPart{
 					TextPart{Text: "First system."},
-					MediaPart{MediaType: "image", URL: "https://example.com/first.png", Data: []byte("one")},
+					MediaPart{
+						MediaType: "image",
+						URL:       "https://example.com/first.png",
+						Data:      []byte("one"),
+					},
 				},
 				Metadata: map[string]any{"scope": "first"},
 			},
@@ -1005,7 +1060,11 @@ func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {
 				Role: RoleDeveloper,
 				Content: []ContentPart{
 					TextPart{Text: "Second system."},
-					MediaPart{MediaType: "image", URL: "https://example.com/second.png", Data: []byte("two")},
+					MediaPart{
+						MediaType: "image",
+						URL:       "https://example.com/second.png",
+						Data:      []byte("two"),
+					},
 				},
 				Metadata: map[string]any{"scope": "second"},
 			},

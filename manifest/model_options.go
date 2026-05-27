@@ -17,15 +17,15 @@ var allowedModelOptionKeys = map[string]struct{}{
 	"provider_settings": {},
 }
 
-// DecodeModelOptions converts a normalized model_config block into typed ModelOptions.
-// Vendor-specific settings are accepted only from model_config.provider_settings.
+// DecodeModelOptions converts a normalized model_options block into typed ModelOptions.
+// Vendor-specific settings are accepted only from model_options.provider_settings.
 func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	for _, key := range sortedModelOptionKeys(raw) {
 		if _, ok := allowedModelOptionKeys[key]; !ok {
-			return nil, fmt.Errorf("invalid model_config key: %s; use provider_settings", key)
+			return nil, fmt.Errorf("invalid model_options key: %s; use provider_settings", key)
 		}
 	}
 

@@ -14,14 +14,20 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"))
+	goleak.VerifyTestMain(
+		m,
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	)
 }
 
 func ExampleAdapter_Translate() {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	req, _ := a.Translate(exec)
@@ -34,7 +40,10 @@ func TestTranslate_TextOnly(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -51,8 +60,10 @@ func TestTranslate_SystemOnlyAddsSyntheticUserContent(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:    prompty.RoleSystem,
-				Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a judge. Output JSON only."}},
+				Role: prompty.RoleSystem,
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "You are a judge. Output JSON only."},
+				},
 			},
 		},
 	}
@@ -60,7 +71,11 @@ func TestTranslate_SystemOnlyAddsSyntheticUserContent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.SystemInstruction)
 	require.Len(t, req.Config.SystemInstruction.Parts, 1)
-	assert.Equal(t, "You are a judge. Output JSON only.", req.Config.SystemInstruction.Parts[0].Text)
+	assert.Equal(
+		t,
+		"You are a judge. Output JSON only.",
+		req.Config.SystemInstruction.Parts[0].Text,
+	)
 	require.Len(t, req.Contents, 1)
 	assert.Equal(t, string(genai.RoleUser), req.Contents[0].Role)
 	require.Len(t, req.Contents[0].Parts, 1)
@@ -73,8 +88,10 @@ func TestTranslate_DeveloperOnlyAddsSyntheticUserContent(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:    prompty.RoleDeveloper,
-				Content: []prompty.ContentPart{prompty.TextPart{Text: "Developer preamble for the task."}},
+				Role: prompty.RoleDeveloper,
+				Content: []prompty.ContentPart{
+					prompty.TextPart{Text: "Developer preamble for the task."},
+				},
 			},
 		},
 	}
@@ -94,7 +111,10 @@ func TestTranslate_SystemMessage(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}},
+			{
+				Role:    prompty.RoleSystem,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
+			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
@@ -116,14 +136,20 @@ func TestTranslate_CacheControlIgnored(t *testing.T) {
 				Role:         prompty.RoleSystem,
 				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
-					prompty.TextPart{Text: "System", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.TextPart{
+						Text:         "System",
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
 				},
 			},
 			{
 				Role:         prompty.RoleUser,
 				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
-					prompty.TextPart{Text: "Look", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.TextPart{
+						Text:         "Look",
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
 					prompty.MediaPart{
 						MediaType:    "image",
 						MIMEType:     "image/png",
@@ -149,10 +175,17 @@ func TestTranslate_WithTools(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}},
+			},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
 		},
 	}
 	req, err := a.Translate(exec)
@@ -164,12 +197,49 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "Get weather", decls[0].Description)
 }
 
+func TestTranslate_WithForcedToolInstruction(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:    prompty.RoleSystem,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Follow policy"}},
+			},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call tool"}},
+			},
+		},
+		Tools: []prompty.ToolDefinition{
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		},
+		ForcedTool: "get_weather",
+	}
+	req, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, req.Config.SystemInstruction)
+	require.Len(t, req.Config.SystemInstruction.Parts, 1)
+	assert.Contains(
+		t,
+		req.Config.SystemInstruction.Parts[0].Text,
+		`You must call tool "get_weather"`,
+	)
+}
+
 func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "What is the weather?"}},
+			},
 		},
 		ModelOptions: &prompty.ModelOptions{
 			ProviderSettings: map[string]any{
@@ -187,7 +257,11 @@ func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, hasGoogleSearch, "ProviderSettings gemini_search_grounding: true must add Google Search tool")
+	assert.True(
+		t,
+		hasGoogleSearch,
+		"ProviderSettings gemini_search_grounding: true must add Google Search tool",
+	)
 }
 
 func TestTranslate_ProviderSettingsMapping(t *testing.T) {
@@ -333,6 +407,23 @@ func TestTranslate_NilExecution(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
 
+func TestTranslate_ForcedToolNotDeclared_ReturnsError(t *testing.T) {
+	t.Parallel()
+	a := New()
+	_, err := a.Translate(&prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call tool"}},
+			},
+		},
+		Tools:      []prompty.ToolDefinition{{Name: "other_tool"}},
+		ForcedTool: "missing_tool",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrForcedToolNotFound)
+}
+
 func TestTranslate_ImagePartData(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -360,7 +451,11 @@ func TestTranslate_ImagePartURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
+				prompty.MediaPart{
+					MediaType: "image",
+					URL:       "https://example.com/img.png",
+					MIMEType:  "image/png",
+				},
 			}},
 		},
 	}
@@ -414,7 +509,11 @@ func TestTranslate_AudioPartURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "audio", URL: "https://example.com/audio.mp3", MIMEType: "audio/mpeg"},
+				prompty.MediaPart{
+					MediaType: "audio",
+					URL:       "https://example.com/audio.mp3",
+					MIMEType:  "audio/mpeg",
+				},
 			}},
 		},
 	}
@@ -582,10 +681,16 @@ func TestTranslate_EmptyMessagesSlice(t *testing.T) {
 func TestTranslate_ResponseFormat(t *testing.T) {
 	t.Parallel()
 	a := New()
-	schema := map[string]any{"type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"answer": map[string]any{"type": "string"}},
+	}
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
+			},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Name: "out", Schema: schema},
 	}

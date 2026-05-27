@@ -72,6 +72,8 @@ func validateRawContentPartFields(node *yaml.Node) error {
 
 type rawMessage struct {
 	Role         string                `yaml:"role"`
+	LayerKind    prompty.LayerKind     `yaml:"layer_kind,omitempty"`
+	SourceID     string                `yaml:"source_id,omitempty"`
 	Content      rawContentSlice       `yaml:"content"`
 	Optional     bool                  `yaml:"optional"`
 	CacheControl *prompty.CacheControl `yaml:"cache_control,omitempty"`
@@ -82,13 +84,16 @@ type fileManifest struct {
 	ID              string                   `yaml:"id"`
 	Version         string                   `yaml:"version"`
 	Description     string                   `yaml:"description"`
+	LayerKind       prompty.LayerKind        `yaml:"layer_kind,omitempty"`
 	RequiredTools   []string                 `yaml:"required_tools"`
-	ModelOptionsRaw map[string]any           `yaml:"model_config"`
+	ModelOptionsRaw map[string]any           `yaml:"model_options"`
 	Metadata        map[string]any           `yaml:"metadata"`
-	InputSchema     map[string]any           `yaml:"input_schema"`
+	InputSchema     map[string]any           `yaml:"inputs"`
 	Tools           []prompty.ToolDefinition `yaml:"tools"`
 	ResponseFormat  map[string]any           `yaml:"response_format"`
 	Messages        []rawMessage             `yaml:"messages"`
+	LegacyModelRaw  map[string]any           `yaml:"model_config"`
+	LegacyInputsRaw map[string]any           `yaml:"input_schema"`
 }
 
 // Parser implements manifest.Unmarshaler for YAML manifests.
@@ -188,19 +193,29 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.RequiredTools = fm.RequiredTools
 	modelOptions, err := manifest.DecodeModelOptions(fm.ModelOptionsRaw)
 	if err != nil {
-		return fmt.Errorf("%w: model_config: %w", prompty.ErrInvalidManifest, err)
+		return fmt.Errorf("%w: model_options: %w", prompty.ErrInvalidManifest, err)
 	}
 	raw.ModelOptions = modelOptions
 	raw.Metadata = fm.Metadata
-	// rawToSchemaDefinition calls normalizeMap internally
-	raw.InputSchema = rawToSchemaDefinition(fm.InputSchema)
+	inputs, err := manifest.DecodeInputs(fm.InputSchema)
+	if err != nil {
+		return fmt.Errorf("%w: inputs: %w", prompty.ErrInvalidManifest, err)
+	}
+	raw.InputSchema = inputs
 	raw.ResponseFormat = rawToSchemaDefinition(fm.ResponseFormat)
 	raw.Tools = fm.Tools
+	raw.LayerKind = fm.LayerKind
+	raw.LegacyModelConfig = fm.LegacyModelRaw
+	if fm.LegacyInputsRaw != nil {
+		raw.LegacyInputSchema = rawToSchemaDefinition(fm.LegacyInputsRaw)
+	}
 	raw.Messages = make([]manifest.RawMessage, len(fm.Messages))
 	for i := range fm.Messages {
 		m := &fm.Messages[i]
 		raw.Messages[i] = manifest.RawMessage{
 			Role:         m.Role,
+			LayerKind:    m.LayerKind,
+			SourceID:     m.SourceID,
 			Optional:     m.Optional,
 			CacheControl: copyCacheControl(m.CacheControl),
 			Metadata:     m.Metadata,

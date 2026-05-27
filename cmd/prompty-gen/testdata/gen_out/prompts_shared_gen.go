@@ -3,6 +3,8 @@
 package prompts
 
 import (
+	"context"
+	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
 )
@@ -11,12 +13,30 @@ type PromptID string
 
 var validate = validator.New()
 
-type Prompts struct {
+type PromptCatalog interface {
+	RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error)
+	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
+}
+
+type promptCatalog struct {
 	SupportAgent *SupportAgentPrompt
 }
 
-func NewPrompts(r prompty.Registry) *Prompts {
-	return &Prompts{SupportAgent: &SupportAgentPrompt{registry: r}}
+func NewPromptCatalog(r prompty.Registry) PromptCatalog {
+	return &promptCatalog{SupportAgent: &SupportAgentPrompt{registry: r}}
+}
+
+func (c *promptCatalog) RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error) {
+	switch id {
+	case SupportAgent:
+		return c.SupportAgent.renderFromAny(ctx, input)
+	default:
+		return nil, fmt.Errorf("unknown prompt id: %q", id)
+	}
+}
+
+func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
+	return c.SupportAgent.Render(ctx, input)
 }
 
 func AllPromptIDs() []PromptID {

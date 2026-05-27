@@ -57,8 +57,8 @@ func New(opts ...Option) *Adapter {
 
 // Translate converts PromptExecution into *Request (Contents + Config).
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
-	if exec == nil {
-		return nil, adapter.ErrNilExecution
+	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
 	}
 	config := &genai.GenerateContentConfig{}
 	// Model is set on the genai request, not inside Config.
@@ -111,6 +111,12 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		default:
 			return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
 		}
+	}
+	if exec.ForcedTool != "" {
+		systemParts = append(
+			systemParts,
+			fmt.Sprintf("You must call tool %q for the next tool-use step.", exec.ForcedTool),
+		)
 	}
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)

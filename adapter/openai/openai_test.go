@@ -24,7 +24,10 @@ func ExampleAdapter_Translate() {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	params, _ := a.Translate(exec)
@@ -37,7 +40,10 @@ func TestTranslate_TextOnly(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Hello"}},
+			},
 		},
 	}
 	params, err := a.Translate(exec)
@@ -52,7 +58,10 @@ func TestTranslate_SystemMessage(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}}},
+			{
+				Role:    prompty.RoleSystem,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
+			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 	}
@@ -73,14 +82,20 @@ func TestTranslate_CacheControlIgnored(t *testing.T) {
 				Role:         prompty.RoleSystem,
 				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
-					prompty.TextPart{Text: "System", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.TextPart{
+						Text:         "System",
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
 				},
 			},
 			{
 				Role:         prompty.RoleUser,
 				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
-					prompty.TextPart{Text: "Look", CacheControl: &prompty.CacheControl{Type: "ephemeral"}},
+					prompty.TextPart{
+						Text:         "Look",
+						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+					},
 					prompty.MediaPart{
 						MediaType:    "image",
 						MIMEType:     "image/png",
@@ -107,10 +122,17 @@ func TestTranslate_WithTools(t *testing.T) {
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call get_weather"}},
+			},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
 		},
 	}
 	params, err := a.Translate(exec)
@@ -118,6 +140,27 @@ func TestTranslate_WithTools(t *testing.T) {
 	require.Len(t, params.Tools, 1)
 	assert.Equal(t, "get_weather", params.Tools[0].GetFunction().Name)
 	assert.Equal(t, "Get weather", params.Tools[0].GetFunction().Description.Value)
+}
+
+func TestTranslate_ForcedToolChoice(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
+		},
+		Tools: []prompty.ToolDefinition{{
+			Name:       "get_weather",
+			Parameters: map[string]any{"type": "object"},
+		}},
+		ForcedTool: "get_weather",
+	}
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+	fn := params.ToolChoice.GetFunction()
+	require.NotNil(t, fn)
+	assert.Equal(t, "get_weather", fn.Name)
 }
 
 func TestTranslate_ToolResult(t *testing.T) {
@@ -315,6 +358,23 @@ func TestTranslate_NilExecution(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrNilExecution)
 }
 
+func TestTranslate_ForcedToolNotDeclared_ReturnsError(t *testing.T) {
+	t.Parallel()
+	a := New()
+	_, err := a.Translate(&prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Call tool"}},
+			},
+		},
+		Tools:      []prompty.ToolDefinition{{Name: "other_tool"}},
+		ForcedTool: "missing_tool",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrForcedToolNotFound)
+}
+
 func TestTranslate_ImagePartData(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -343,7 +403,11 @@ func TestTranslate_ImagePartURL(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "image", URL: "https://example.com/img.png", MIMEType: "image/png"},
+				prompty.MediaPart{
+					MediaType: "image",
+					URL:       "https://example.com/img.png",
+					MIMEType:  "image/png",
+				},
 			}},
 		},
 	}
@@ -430,7 +494,11 @@ func TestTranslate_FilePartData(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.MediaPart{MediaType: "document", Data: []byte("%PDF-1.7"), MIMEType: "application/pdf"},
+				prompty.MediaPart{
+					MediaType: "document",
+					Data:      []byte("%PDF-1.7"),
+					MIMEType:  "application/pdf",
+				},
 			}},
 		},
 	}
@@ -603,7 +671,9 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 	t.Parallel()
 	a := New()
 	completion := &openai.ChatCompletion{
-		Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: ""}}},
+		Choices: []openai.ChatCompletionChoice{
+			{Message: openai.ChatCompletionMessage{Content: ""}},
+		},
 	}
 	_, err := a.ParseResponse(completion)
 	require.Error(t, err)
@@ -656,10 +726,16 @@ func TestUsageFromOpenAI_MapsBreakdownFields(t *testing.T) {
 func TestTranslate_ResponseFormat(t *testing.T) {
 	t.Parallel()
 	a := New()
-	schema := map[string]any{"type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"answer": map[string]any{"type": "string"}},
+	}
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
+			},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
 	}
@@ -673,7 +749,12 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	gotSchema, ok := js.Schema.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "object", gotSchema["type"])
-	assert.Equal(t, false, gotSchema["additionalProperties"], "strict mode requires additionalProperties: false")
+	assert.Equal(
+		t,
+		false,
+		gotSchema["additionalProperties"],
+		"strict mode requires additionalProperties: false",
+	)
 	// DoD: serialized request JSON must contain "strict":true
 	raw, err := json.Marshal(params)
 	require.NoError(t, err)
@@ -683,7 +764,12 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	require.True(t, ok, "response_format must be present in serialized JSON")
 	jsonSchema, ok := rf["json_schema"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, true, jsonSchema["strict"], "serialized JSON must contain strict: true for OpenAI strict mode")
+	assert.Equal(
+		t,
+		true,
+		jsonSchema["strict"],
+		"serialized JSON must contain strict: true for OpenAI strict mode",
+	)
 }
 
 func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T) {
@@ -718,7 +804,10 @@ func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T
 
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}}},
+			{
+				Role:    prompty.RoleUser,
+				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
+			},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
 	}
