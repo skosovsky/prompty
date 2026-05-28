@@ -73,7 +73,7 @@ func validateRawContentPartFields(node *yaml.Node) error {
 type rawMessage struct {
 	Role         string                `yaml:"role"`
 	LayerKind    prompty.LayerKind     `yaml:"layer_kind,omitempty"`
-	SourceID     string                `yaml:"source_id,omitempty"`
+	LayerID      string                `yaml:"layer_id,omitempty"`
 	Content      rawContentSlice       `yaml:"content"`
 	Optional     bool                  `yaml:"optional"`
 	CacheControl *prompty.CacheControl `yaml:"cache_control,omitempty"`
@@ -215,7 +215,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 		raw.Messages[i] = manifest.RawMessage{
 			Role:         m.Role,
 			LayerKind:    m.LayerKind,
-			SourceID:     m.SourceID,
+			LayerID:      m.LayerID,
 			Optional:     m.Optional,
 			CacheControl: copyCacheControl(m.CacheControl),
 			Metadata:     m.Metadata,

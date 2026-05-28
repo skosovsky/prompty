@@ -206,9 +206,10 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	working := adapter.PrepareTranslateExecution(exec)
 	// CacheControl is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
-		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(exec.Messages)),
+		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(working.Messages)),
 		Model:    a.defaultModel,
 	}
 	if exec.ModelOptions != nil {
@@ -235,7 +236,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
 		}
 	}
-	for _, msg := range exec.Messages {
+	for _, msg := range working.Messages {
 		unions, err := a.messageToUnions(msg)
 		if err != nil {
 			return nil, err

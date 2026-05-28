@@ -44,11 +44,29 @@ func TestTranslate_TextOnly(t *testing.T) {
 			},
 		},
 	}
+	before := exec.Clone()
 	req, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "user", req.Messages[0].Role)
 	assert.Equal(t, "Hello", req.Messages[0].Content)
+	assert.Equal(t, before.Messages, exec.Messages)
+}
+
+func TestTranslate_DoesNotMutatePromptExecution(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "A"}}},
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "B"}}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+	}
+	before := exec.Clone()
+	_, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.Equal(t, before.Messages, exec.Messages)
 }
 
 func TestTranslate_SystemMessage(t *testing.T) {

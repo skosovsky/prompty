@@ -97,6 +97,12 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	messages := make([]prompty.MessageTemplate, len(raw.Messages))
 	for i := range raw.Messages {
 		rm := &raw.Messages[i]
+		if rm.LegacySourceID != "" {
+			return nil, fmt.Errorf(
+				"%w: use layer_id instead of source_id",
+				prompty.ErrLegacyManifestVersion,
+			)
+		}
 		layerKind := rm.LayerKind
 		if layerKind == "" {
 			layerKind = raw.LayerKind
@@ -115,7 +121,7 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		messages[i] = prompty.MessageTemplate{
 			Role:         prompty.Role(rm.Role),
 			LayerKind:    layerKind,
-			SourceID:     rm.SourceID,
+			LayerID:      rm.LayerID,
 			Content:      content,
 			Optional:     rm.Optional,
 			CacheControl: copyCacheControl(rm.CacheControl),

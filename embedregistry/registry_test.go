@@ -29,7 +29,7 @@ func TestEmbedRegistry_New(t *testing.T) {
 	require.NotNil(t, reg)
 }
 
-func TestEmbedRegistry_GetTemplate(t *testing.T) {
+func TestEmbedRegistry_Plan(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -42,8 +42,8 @@ func TestEmbedRegistry_GetTemplate(t *testing.T) {
 	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent {{ .Input.user_name }}")
 }
 
-// TestEmbedRegistry_GetTemplate_BaseId returns base file for id "agent".
-func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
+// TestEmbedRegistry_Plan_BaseId returns base file for id "agent".
+func TestEmbedRegistry_Plan_BaseId(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestEmbedRegistry_GetTemplate_BaseId(t *testing.T) {
 	assert.NotContains(t, tpl.Messages[0].Content[0].Text, "Agent prod")
 }
 
-func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
+func TestEmbedRegistry_Plan_EnvSpecific(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
@@ -68,8 +68,8 @@ func TestEmbedRegistry_GetTemplate_EnvSpecific(t *testing.T) {
 	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Agent prod", "env variant should be preferred")
 }
 
-// TestEmbedRegistry_GetTemplate_NotFound ensures missing id returns ErrTemplateNotFound.
-func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
+// TestEmbedRegistry_Plan_NotFound ensures missing id returns ErrTemplateNotFound.
+func TestEmbedRegistry_Plan_NotFoundId(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestEmbedRegistry_GetTemplate_NotFoundId(t *testing.T) {
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
-func TestEmbedRegistry_GetTemplate_NotFound(t *testing.T) {
+func TestEmbedRegistry_Plan_NotFound(t *testing.T) {
 	t.Parallel()
 	reg, err := New(promptsFS, "testdata/prompts", WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestEmbedRegistry_Stat(t *testing.T) {
 
 func TestEmbedRegistry_Stat_EnvFallback(t *testing.T) {
 	t.Parallel()
-	// Only env variant exists; Stat should find it via same candidate lookup as GetTemplate.
+	// Only env variant exists; Stat should find it via same candidate lookup as Plan.
 	mapFS := fstest.MapFS{
 		"p/agent.prod.json": &fstest.MapFile{
 			Data: []byte(
@@ -244,7 +244,7 @@ func TestEmbedRegistry_WithVersion(t *testing.T) {
 	assert.Equal(t, "abc123", tpl.Metadata.Version)
 }
 
-func TestEmbedRegistry_GetTemplate_WithPartials(t *testing.T) {
+func TestEmbedRegistry_Plan_WithPartials(t *testing.T) {
 	t.Parallel()
 	// Use MapFS to simulate an embed with a manifest and partials; no real embed needed.
 	mapFS := fstest.MapFS{

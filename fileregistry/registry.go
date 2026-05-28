@@ -18,9 +18,10 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry = (*Registry)(nil)
-	_ prompty.Lister   = (*Registry)(nil)
-	_ prompty.Statter  = (*Registry)(nil)
+	_ prompty.Registry         = (*Registry)(nil)
+	_ prompty.Lister           = (*Registry)(nil)
+	_ prompty.Statter          = (*Registry)(nil)
+	_ prompty.ManifestResolver = (*Registry)(nil)
 )
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
@@ -96,6 +97,31 @@ func idToPaths(dir, id, env string) []string {
 		out = append(out, filepath.Join(dir, path))
 	}
 	return out
+}
+
+func (r *Registry) readManifestBytes(_ context.Context, id string) ([]byte, error) {
+	if err := prompty.ValidateID(id); err != nil {
+		return nil, err
+	}
+	for _, path := range idToPaths(r.dir, id, r.env) {
+		data, err := os.ReadFile(path) // #nosec G304 -- path is validated by idToPaths
+		if err == nil {
+			return data, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// ResolveManifest returns manifest metadata without compiling template AST.
+func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	data, err := r.readManifestBytes(ctx, id)
+	if err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
+	return manifest.ParseDescriptor(data, r.parser)
 }
 
 // loadTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.

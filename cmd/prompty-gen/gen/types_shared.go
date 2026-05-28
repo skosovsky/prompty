@@ -40,6 +40,10 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 			jen.Id("id").Id("PromptID"),
 			jen.Id("input").Any(),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "RenderPlan"), jen.Error())),
+		jen.Id("Descriptor").Params(
+			jen.Id("ctx").Qual("context", "Context"),
+			jen.Id("id").Id("PromptID"),
+		).Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "TemplateDescriptor"), jen.Error())),
 	}
 
 	var structFields []jen.Code
@@ -62,20 +66,28 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	f.Type().Id("PromptCatalog").Interface(interfaceMethods...)
 	f.Line()
 
-	f.Type().Id("promptCatalog").Struct(structFields...)
+	catalogFields := append(
+		[]jen.Code{jen.Id("registry").Qual("github.com/skosovsky/prompty", "Registry")},
+		structFields...,
+	)
+	f.Type().Id("promptCatalog").Struct(catalogFields...)
 	f.Line()
 
-	initDict := jen.Dict{}
+	initValues := []jen.Code{
+		jen.Id("registry").Op(":").Id("r"),
+	}
 	for _, spec := range sorted {
 		rootName := toPascal(spec.ID)
-		initDict[jen.Id(rootName)] = jen.Op("&").Id(rootName + "Prompt").Values(jen.Dict{
-			jen.Id("registry"): jen.Id("r"),
-		})
+		initValues = append(initValues,
+			jen.Id(rootName).Op(":").Op("&").Id(rootName+"Prompt").Values(
+				jen.Id("registry").Op(":").Id("r"),
+			),
+		)
 	}
 	f.Func().Id("NewPromptCatalog").Params(
 		jen.Id("r").Qual("github.com/skosovsky/prompty", "Registry"),
 	).Id("PromptCatalog").Block(
-		jen.Return(jen.Op("&").Id("promptCatalog").Values(initDict)),
+		jen.Return(jen.Op("&").Id("promptCatalog").Values(initValues...)),
 	)
 	f.Line()
 
@@ -88,7 +100,15 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	)
 	f.Line()
 
-	for _, spec := range sorted {
+	addCatalogDescriptorMethod(f)
+	addCatalogTypedRenderMethods(f, sorted)
+	addAllPromptIDsFunc(f, sorted)
+
+	return f, nil
+}
+
+func addCatalogTypedRenderMethods(f *jen.File, specs []*PromptSpec) {
+	for _, spec := range specs {
 		rootName := toPascal(spec.ID)
 		f.Func().Params(jen.Id("c").Op("*").Id("promptCatalog")).Id("Render"+rootName).Params(
 			jen.Id("ctx").Qual("context", "Context"),
@@ -98,14 +118,42 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 		)
 		f.Line()
 	}
+}
 
-	litVals := make([]jen.Code, len(sorted))
-	for i, spec := range sorted {
+func addAllPromptIDsFunc(f *jen.File, specs []*PromptSpec) {
+	litVals := make([]jen.Code, len(specs))
+	for i, spec := range specs {
 		litVals[i] = jen.Id(idToConstName(spec.ID))
 	}
 	f.Func().Id("AllPromptIDs").Params().Index().Id("PromptID").Block(
 		jen.Return(jen.Index().Id("PromptID").Values(litVals...)),
 	)
+}
 
-	return f, nil
+func addCatalogDescriptorMethod(f *jen.File) {
+	f.Func().Params(jen.Id("c").Op("*").Id("promptCatalog")).Id("Descriptor").Params(
+		jen.Id("ctx").Qual("context", "Context"),
+		jen.Id("id").Id("PromptID"),
+	).Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "TemplateDescriptor"), jen.Error())).Block(
+		jen.If(
+			jen.List(jen.Id("resolver"), jen.Id("ok")).Op(":=").Id("c").Dot("registry").Assert(
+				jen.Qual("github.com/skosovsky/prompty", "ManifestResolver"),
+			),
+			jen.Id("ok"),
+		).Block(
+			jen.Return(jen.Id("resolver").Dot("ResolveManifest").Call(
+				jen.Id("ctx"),
+				jen.Id("string").Call(jen.Id("id")),
+			)),
+		),
+		jen.Return(
+			jen.List(
+				jen.Qual("github.com/skosovsky/prompty", "TemplateDescriptor").Values(),
+				jen.Qual("fmt", "Errorf").Call(
+					jen.Lit("prompty: registry does not implement ManifestResolver"),
+				),
+			),
+		),
+	)
+	f.Line()
 }

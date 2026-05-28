@@ -2,6 +2,7 @@ package embedregistry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -14,19 +15,21 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry = (*Registry)(nil)
-	_ prompty.Lister   = (*Registry)(nil)
-	_ prompty.Statter  = (*Registry)(nil)
+	_ prompty.Registry         = (*Registry)(nil)
+	_ prompty.Lister           = (*Registry)(nil)
+	_ prompty.Statter          = (*Registry)(nil)
+	_ prompty.ManifestResolver = (*Registry)(nil)
 )
 
 // Registry loads all manifests from an [fs.FS] at construction (eager). No mutex. Holds parsed templates by id.
-// WithEnvironment(env): GetTemplate tries id.env first, then id (e.g. internal/router.prod before internal/router).
+// WithEnvironment(env): Plan tries id.env first, then id (e.g. internal/router.prod before internal/router).
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
+	fsys            fs.FS
 	cache           map[string]*prompty.ChatPromptTemplate
 	ids             []string // ordered list of ids for List()
 	root            string
-	env             string // e.g. "prod"; GetTemplate tries id.env first
+	env             string // e.g. "prod"; Plan tries id.env first
 	partialsPattern string // e.g. "partials/*.tmpl"; relative to root
 	parser          manifest.Unmarshaler
 	version         string // optional build/git version from WithVersion
@@ -63,7 +66,11 @@ func underPartialsDir(relPath, partialsPattern string) bool {
 // Cache keys are full id (agent, agent.prod); List returns base IDs only (agent).
 // Parser is required (use WithParser).
 func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
-	r := &Registry{cache: make(map[string]*prompty.ChatPromptTemplate), root: root}
+	r := &Registry{
+		fsys:  fsys,
+		cache: make(map[string]*prompty.ChatPromptTemplate),
+		root:  root,
+	}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -130,7 +137,7 @@ func WithPartials(pattern string) Option {
 	return func(r *Registry) { r.partialsPattern = pattern }
 }
 
-// WithEnvironment sets env for fallback: GetTemplate tries id.env first, then id.
+// WithEnvironment sets env for fallback: Plan tries id.env first, then id.
 func WithEnvironment(env string) Option {
 	return func(r *Registry) { r.env = env }
 }
@@ -174,6 +181,35 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+func (r *Registry) readManifestBytes(_ context.Context, id string) ([]byte, error) {
+	if err := prompty.ValidateID(id); err != nil {
+		return nil, err
+	}
+	exts := []string{".yaml", ".yml", ".json"}
+	for _, cid := range candidateIDs(id, r.env) {
+		for _, ext := range exts {
+			path := filepath.Join(r.root, filepath.FromSlash(cid+ext))
+			data, err := fs.ReadFile(r.fsys, path)
+			if err == nil {
+				return data, nil
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// ResolveManifest returns manifest metadata without compiling template AST.
+func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	data, err := r.readManifestBytes(ctx, id)
+	if err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
+	return manifest.ParseDescriptor(data, r.parser)
+}
+
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
 	tpl, err := r.loadTemplate(ctx, id)
@@ -191,7 +227,7 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 	return append([]string(nil), r.ids...), nil
 }
 
-// Stat returns metadata for id without parsing. Uses same env fallback as GetTemplate (id.env -> id).
+// Stat returns metadata for id without parsing. Uses same env fallback as Plan (id.env -> id).
 // Version from WithVersion; UpdatedAt is zero for embed.
 func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, error) {
 	if err := prompty.ValidateID(id); err != nil {

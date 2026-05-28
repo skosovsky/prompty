@@ -30,7 +30,7 @@ func BenchmarkGetPayloadFields(b *testing.B) {
 	payload := &P{A: "x", B: "y", C: "z"}
 	b.ResetTimer()
 	for range b.N {
-		_, _, _ = getPayloadFields(payload)
+		_, _, _, _ = extractStructPayload(payload)
 	}
 }
 

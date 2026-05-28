@@ -24,6 +24,26 @@ func ExtractSchema(v any) map[string]any {
 	return schema
 }
 
+// schemaToDefinition converts runtime schema input into SchemaDefinition.
+func schemaToDefinition(schema any) (*SchemaDefinition, error) {
+	if schema == nil {
+		return nil, errors.New("response format schema is required")
+	}
+	switch typed := schema.(type) {
+	case *SchemaDefinition:
+		return cloneSchemaDefinition(typed), nil
+	case SchemaDefinition:
+		out := typed
+		return &out, nil
+	default:
+		extracted := ExtractSchema(schema)
+		if extracted == nil {
+			return nil, errors.New("response format: unsupported schema type")
+		}
+		return &SchemaDefinition{Schema: cloneMapAny(extracted)}, nil
+	}
+}
+
 func extractSchema(v any) (map[string]any, error) {
 	t, err := normalizedSchemaTypeFromValue(v)
 	if err != nil {

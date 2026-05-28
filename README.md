@@ -56,11 +56,11 @@ func main() {
 
 ## Main abstractions
 
-- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, typedInput) (*RenderPlan, error)`.
+- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, typedInput) (*RenderPlan, error)`. Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
 - **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
 - **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
-Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables/ReplaceLayer** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
+Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables / ReplaceLayer / AppendToLayer / WithResponseFormat** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
 
 ## Features
 
@@ -80,7 +80,7 @@ Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables/ReplaceLayer
 | `github.com/skosovsky/prompty/embedregistry`  | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials                                                                       |
 | `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); explicit cache via `WithCache`; `Close()` for resource cleanup                                                                           |
 
-All three registries also implement optional `prompty.Lister` (`List(ctx)`) and `prompty.Statter` (`Stat(ctx, id)`). When you have a variable of type `prompty.Registry` and need to list IDs or get template metadata, use a type assertion: `if l, ok := reg.(prompty.Lister); ok { ids, err := l.List(ctx); ... }`.
+All three registries also implement optional `prompty.Lister` (`List(ctx)`), `prompty.Statter` (`Stat(ctx, id)`), and `prompty.ManifestResolver` (`ResolveManifest(ctx, id)` — metadata only, no template AST). When you have a variable of type `prompty.Registry` and need list/stat/descriptor APIs, use a type assertion.
 
 Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.json`, `{name}.yaml`. Name must not contain `':'`.
 
@@ -131,7 +131,7 @@ flowchart LR
     API[LLM API]
 
     Registry -->|Plan(ctx,id,input)| Plan
-    Plan -->|WithLateVariables / ReplaceLayer| Execute
+    Plan -->|WithLateVariables / ReplaceLayer / AppendToLayer| Execute
     Execute --> Exec
     Exec -->|Translate| Adapter
     Adapter -->|request| API
@@ -205,7 +205,17 @@ Clean-break rules in v2:
 - no `Registry.GetTemplate(...)` in production code
 - no `ChatPromptTemplate.Format(...)` / `FormatStruct(...)`
 - manifests must use `model_options` + contract-style `inputs`
+- message layers use `layer_id` (not `source_id`)
 - template context is explicit: `.Input.*` and `.LateVars.*`
+- provider message normalization runs in adapters, not in `RenderPlan.Execute()`
+
+### task30 additions
+
+- **Layers:** tag messages with `layer_id` / `layer_kind`; compose with `ReplaceLayer` or append with `AppendToLayer`.
+- **Provenance:** rendered messages carry `LayerRef` and `ManifestID`.
+- **Metadata:** `ResolveManifest` / `PromptCatalog.Descriptor` for lightweight manifest introspection.
+- **Runtime schema:** `RenderPlan.WithResponseFormat(schema any)` overrides response format before execute.
+- **Struct binding:** alias resolution cached per type; struct fields bind via `prompt` / `json` / snake_case tags.
 
 ## Resilience, timeouts, and structured output
 

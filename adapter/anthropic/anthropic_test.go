@@ -46,6 +46,7 @@ func TestTranslate_TextOnly(t *testing.T) {
 			},
 		},
 	}
+	before := exec.Clone()
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
@@ -53,6 +54,23 @@ func TestTranslate_TextOnly(t *testing.T) {
 	assert.NotNil(t, params.Messages[0].Content[0].OfText)
 	assert.Equal(t, "Hello", params.Messages[0].Content[0].OfText.Text)
 	assert.Equal(t, defaultMaxTokens, params.MaxTokens)
+	assert.Equal(t, before.Messages, exec.Messages)
+}
+
+func TestTranslate_DoesNotMutatePromptExecution(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "A"}}},
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "B"}}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+	}
+	before := exec.Clone()
+	_, err := a.Translate(exec)
+	require.NoError(t, err)
+	assert.Equal(t, before.Messages, exec.Messages)
 }
 
 func TestTranslate_SystemMessage(t *testing.T) {

@@ -22,10 +22,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("fileregistry.New: %v", err)
 	}
+	type supportInput struct {
+		UserName string `prompt:"user_name"`
+		Query    string `prompt:"query"`
+	}
+
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "support_agent", map[string]any{
-		"user_name": "Alice",
-		"query":     "What is 2+2?",
+	plan, err := reg.Plan(ctx, "support_agent", &supportInput{
+		UserName: "Alice",
+		Query:    "What is 2+2?",
 	})
 	if err != nil {
 		log.Fatalf("Plan: %v", err)

@@ -69,6 +69,9 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "RenderSupportAgent") {
 		t.Error("expected typed RenderSupportAgent method in catalog")
 	}
+	if !strings.Contains(out, "Descriptor(ctx context.Context, id PromptID)") {
+		t.Error("expected Descriptor method in PromptCatalog")
+	}
 	if !strings.Contains(out, "RenderGreeter") {
 		t.Error("expected typed RenderGreeter method in catalog")
 	}

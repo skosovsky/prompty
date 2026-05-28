@@ -15,6 +15,22 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestPrepareTranslateExecution_DoesNotMutateInput(t *testing.T) {
+	t.Parallel()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "A"}}},
+			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "B"}}},
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+	}
+	before := exec.Clone()
+	working := PrepareTranslateExecution(exec)
+	require.NotNil(t, working)
+	assert.Len(t, working.Messages, 2, "normalized working copy merges system messages")
+	assert.Equal(t, before.Messages, exec.Messages, "input PromptExecution must stay unchanged")
+}
+
 func TestTextFromParts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

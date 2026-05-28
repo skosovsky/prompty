@@ -48,7 +48,7 @@ func WithTokenCounter(tc TokenCounter) ChatTemplateOption {
 }
 
 // WithRequiredVars sets explicit required input field names (e.g. from manifest input_schema.required).
-// Merged with input fields inferred from template content in FormatStruct.
+// Merged with input fields inferred from template content in RenderPlan.Execute.
 func WithRequiredVars(vars []string) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.RequiredVars = vars
@@ -62,7 +62,7 @@ func WithResponseFormat(schema *SchemaDefinition) ChatTemplateOption {
 	}
 }
 
-// WithInputSchema sets the JSON Schema for template input (used by prompty-gen, FormatStruct required/partial).
+// WithInputSchema sets the JSON Schema for template input (used by prompty-gen and manifest inputs contract).
 func WithInputSchema(schema *SchemaDefinition) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.InputSchema = schema

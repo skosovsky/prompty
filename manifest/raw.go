@@ -19,14 +19,17 @@ type RawContentPart struct {
 }
 
 // RawMessage is the raw representation of a single message.
+//
+//nolint:golines // struct fields share aligned json/yaml tag layout
 type RawMessage struct {
-	Role         string                `json:"role"`
-	LayerKind    prompty.LayerKind     `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
-	SourceID     string                `json:"source_id,omitempty"     yaml:"source_id,omitempty"`
-	Content      []RawContentPart      `json:"content"`
-	Optional     bool                  `json:"optional"`
-	CacheControl *prompty.CacheControl `json:"cache_control,omitempty"`
-	Metadata     map[string]any        `json:"metadata,omitempty"`
+	Role           string                `json:"role"`
+	LayerKind      prompty.LayerKind     `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
+	LayerID        string                `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
+	LegacySourceID string                `json:"source_id,omitempty" yaml:"source_id,omitempty"`   //nolint:tagalign // legacy reject field
+	Content        []RawContentPart      `json:"content"`
+	Optional       bool                  `json:"optional"`
+	CacheControl   *prompty.CacheControl `json:"cache_control,omitempty"`
+	Metadata       map[string]any        `json:"metadata,omitempty"`
 }
 
 // RawManifest is the raw representation of a manifest, sufficient for buildTemplate.

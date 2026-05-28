@@ -89,6 +89,12 @@ type ToolResultPart struct {
 
 func (ToolResultPart) isContentPart() {}
 
+// LayerRef tracks provenance for a rendered message or content part.
+type LayerRef struct {
+	LayerID    string `json:"layer_id,omitempty"    yaml:"layer_id,omitempty"`
+	ManifestID string `json:"manifest_id,omitempty" yaml:"manifest_id,omitempty"`
+}
+
 // ChatMessage is a single message with role and content parts (supports multimodal).
 // CacheControl hints providers to cache this message (e.g. ephemeral prompt caching).
 // Metadata is message-scoped and should not be used for execution-level model controls.
@@ -97,8 +103,10 @@ type ChatMessage struct {
 	Content      []ContentPart
 	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 	Metadata     map[string]any // Provider-specific message-scoped extras
-	SourceID     string         `json:"source_id,omitempty"     yaml:"source_id,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
-	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"` //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerID      string         `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`    //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerRef     LayerRef       `json:"layer_ref,omitzero"      yaml:"layer_ref,omitempty"`   //nolint:tagalign // Provenance for composition/debugging.
+	ManifestID   string         `json:"manifest_id,omitempty"   yaml:"manifest_id,omitempty"` //nolint:tagalign // Originating manifest id when known.
 }
 
 // ToolDefinition is the universal tool schema.
@@ -231,8 +239,10 @@ func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 		Content:      content,
 		CacheControl: mergeMessageCacheControl(a.CacheControl, b.CacheControl),
 		Metadata:     cloneMapAny(a.Metadata),
-		SourceID:     a.SourceID,
+		LayerID:      a.LayerID,
 		LayerKind:    a.LayerKind,
+		LayerRef:     a.LayerRef,
+		ManifestID:   a.ManifestID,
 	}
 }
 
@@ -371,17 +381,19 @@ func TextContent(text string) []TemplatePart {
 }
 
 // MessageTemplate is the raw template for one message before rendering.
-// After FormatStruct it becomes a ChatMessage with substituted values.
+// After RenderPlan.Execute it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
 // CacheControl applies message-level cache hint; parts may override with their own cache_control.
+//
+//nolint:golines // struct fields share aligned json/yaml tag layout
 type MessageTemplate struct {
 	Role         Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
 	Content      []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
 	Optional     bool           // true → skip if all referenced variables are zero-value
 	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
-	SourceID     string         `json:"source_id,omitempty"     yaml:"source_id,omitempty"`
-	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
+	LayerID      string         `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
+	LayerKind    LayerKind      `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.
@@ -389,6 +401,23 @@ type TemplateInfo struct {
 	ID        string
 	Version   string
 	UpdatedAt time.Time
+}
+
+// TemplateDescriptor is manifest metadata without template compilation or input binding.
+type TemplateDescriptor struct {
+	Metadata          PromptMetadata
+	ModelOptions      *ModelOptions
+	Tools             []ToolDefinition
+	RequiredTools     []string
+	RequiredInputVars []string
+	InputSchema       *SchemaDefinition
+	ResponseFormat    *SchemaDefinition
+	LayerIDs          []string
+}
+
+// ManifestResolver resolves manifest metadata without rendering.
+type ManifestResolver interface {
+	ResolveManifest(ctx context.Context, id string) (TemplateDescriptor, error)
 }
 
 // Registry returns a chat prompt template by id.

@@ -133,7 +133,7 @@ resp, err := invoker.Execute(ctx, exec)
 
 1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed `RenderXxx`.
 2. Runtime рендер: `catalog.RenderXxx(...)` -> `*prompty.RenderPlan`.
-3. Композиция (опционально): `WithLateVariables`, `ReplaceLayer`.
+3. Композиция (опционально): `WithLateVariables`, `ReplaceLayer`, `AppendToLayer`, `WithResponseFormat`.
 4. Выполнение плана: `plan.Execute(ctx)` -> `*prompty.PromptExecution`.
 5. Вызов модели: `invoker.Execute(ctx, exec)`.
 
@@ -147,7 +147,13 @@ for _, id := range AllPromptIDs() {
 
 ### Композиция нескольких планов перед Execute
 
-Скомпонуйте слои через `ReplaceLayer`, затем выполните единый план:
+Метаданные без рендера (если registry реализует `prompty.ManifestResolver`):
+
+```go
+desc, err := catalog.Descriptor(ctx, prompts.SupportAgent)
+```
+
+Скомпонуйте слои через `ReplaceLayer` или дополните хвост через `AppendToLayer`, затем выполните единый план:
 
 ```go
 basePlan, _ := catalog.RenderSalesPersona(ctx, SalesPersonaInput{Tone: "formal"})

@@ -11,9 +11,10 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry = (*Registry)(nil)
-	_ prompty.Lister   = (*Registry)(nil)
-	_ prompty.Statter  = (*Registry)(nil)
+	_ prompty.Registry         = (*Registry)(nil)
+	_ prompty.Lister           = (*Registry)(nil)
+	_ prompty.Statter          = (*Registry)(nil)
+	_ prompty.ManifestResolver = (*Registry)(nil)
 )
 
 // Registry loads templates via Fetcher without internal cache/state.
@@ -66,6 +67,23 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 		}
 	}
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// ResolveManifest fetches manifest bytes and returns metadata without compiling template AST.
+func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	if err := ValidateID(id); err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
+	for _, cid := range fetchCandidateIDs(id, r.env) {
+		data, err := r.fetcher.Fetch(ctx, cid)
+		if err == nil {
+			return manifest.ParseDescriptor(data, r.parser)
+		}
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
+			return prompty.TemplateDescriptor{}, err
+		}
+	}
+	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
 // Plan returns a deferred render plan for the selected prompt id.

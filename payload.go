@@ -2,8 +2,6 @@ package prompty
 
 import (
 	"reflect"
-	"strings"
-	"sync"
 	"text/template/parse"
 )
 
@@ -17,94 +15,6 @@ func isNilNode(node parse.Node) bool {
 		v = v.Elem()
 	}
 	return v.Kind() == reflect.Pointer && v.IsNil()
-}
-
-type payloadField struct {
-	index     int
-	tag       string
-	isHistory bool
-}
-
-type payloadSchema struct {
-	fields []payloadField
-}
-
-var payloadCache sync.Map // reflect.Type -> *payloadSchema
-
-// chatMessageSliceType is cached reflect type for payload parser ([]ChatMessage history field).
-var chatMessageSliceType = reflect.TypeFor[[]ChatMessage]()
-
-func getPayloadFields(payload any) (map[string]any, []ChatMessage, error) {
-	if payload == nil {
-		return nil, nil, ErrInvalidPayload
-	}
-	typ := reflect.TypeOf(payload)
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	if typ.Kind() != reflect.Struct {
-		return nil, nil, ErrInvalidPayload
-	}
-	v := reflect.ValueOf(payload)
-	for v.Kind() == reflect.Pointer {
-		v = v.Elem()
-	}
-	if !v.IsValid() {
-		return nil, nil, ErrInvalidPayload
-	}
-	var schema *payloadSchema
-	if cached, ok := payloadCache.Load(typ); ok {
-		if s, typeOK := cached.(*payloadSchema); typeOK {
-			schema = s
-		}
-	}
-	if schema == nil {
-		schema = &payloadSchema{}
-		for i := range typ.NumField() {
-			f := typ.Field(i)
-			tag := f.Tag.Get("prompt")
-			if tag == "" || tag == "-" {
-				// Fallback to json tag: use first part only (e.g. "field_name,omitempty" -> "field_name").
-				jsonTag := f.Tag.Get("json")
-				if jsonTag == "" || jsonTag == "-" {
-					continue
-				}
-				tag = strings.TrimSpace(strings.Split(jsonTag, ",")[0])
-				if tag == "" {
-					continue
-				}
-			}
-			if f.Type == chatMessageSliceType {
-				schema.fields = append(schema.fields, payloadField{index: i, tag: tag, isHistory: true})
-			} else {
-				schema.fields = append(schema.fields, payloadField{index: i, tag: tag, isHistory: false})
-			}
-		}
-		if len(schema.fields) == 0 {
-			return nil, nil, ErrInvalidPayload
-		}
-		payloadCache.Store(typ, schema)
-	}
-	vars := make(map[string]any)
-	var history []ChatMessage
-	for _, fi := range schema.fields {
-		val := v.Field(fi.index)
-		if fi.isHistory {
-			if val.CanInterface() {
-				if cm, ok := val.Interface().([]ChatMessage); ok {
-					history = cm
-				}
-			}
-			continue
-		}
-		if val.CanInterface() {
-			vars[fi.tag] = val.Interface()
-		}
-	}
-	if _, ok := vars["Tools"]; ok {
-		return nil, nil, ErrReservedVariable
-	}
-	return vars, history, nil
 }
 
 func walkParseNodes(node parse.Node, visit func(parse.Node)) {
@@ -196,46 +106,6 @@ func extractRequiredVarsFromParsed(parsed []parsedMessage) []string {
 				}
 			}
 		}
-	}
-	return out
-}
-
-func normalizeTemplateInput(input any) any {
-	if input == nil {
-		return nil
-	}
-	value := reflect.ValueOf(input)
-	for value.Kind() == reflect.Pointer {
-		if value.IsNil() {
-			return nil
-		}
-		value = value.Elem()
-	}
-	if value.Kind() != reflect.Struct {
-		return input
-	}
-
-	typ := value.Type()
-	out := make(map[string]any, value.NumField())
-	for i := range value.NumField() {
-		field := typ.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-		key := field.Tag.Get("prompt")
-		if key == "" {
-			jsonTag := field.Tag.Get("json")
-			if jsonTag != "" {
-				key = strings.Split(jsonTag, ",")[0]
-			}
-		}
-		if key == "" {
-			key = strings.ToLower(field.Name)
-		}
-		if key == "-" || key == "" {
-			continue
-		}
-		out[key] = normalizeTemplateInput(value.Field(i).Interface())
 	}
 	return out
 }

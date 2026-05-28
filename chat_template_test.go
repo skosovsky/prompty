@@ -126,7 +126,7 @@ func TestNewChatPromptTemplate_ParseError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTemplateParse)
 }
 
-func TestFormatStruct_SimpleVars(t *testing.T) {
+func TestRenderPlan_SimpleVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
@@ -143,7 +143,7 @@ func TestFormatStruct_SimpleVars(t *testing.T) {
 	assert.Equal(t, "Hello, Alice!", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
-func TestFormatStruct_MediaPart(t *testing.T) {
+func TestRenderPlan_MediaPart(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{
@@ -183,7 +183,7 @@ func TestFormatStruct_MediaPart(t *testing.T) {
 	assert.Equal(t, "https://example.com/report.pdf", media.URL)
 }
 
-func TestFormatStruct_MediaPart_InferTypeFromMIME(t *testing.T) {
+func TestRenderPlan_MediaPart_InferTypeFromMIME(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{
@@ -217,7 +217,7 @@ func TestFormatStruct_MediaPart_InferTypeFromMIME(t *testing.T) {
 	assert.Equal(t, "https://example.com/report.pdf", media.URL)
 }
 
-func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing.T) {
+func TestRenderPlan_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{
@@ -240,7 +240,7 @@ func TestFormatStruct_MediaPart_MissingTypeAndUnknownMIMEReturnsError(t *testing
 	assert.Contains(t, err.Error(), "media_type is required")
 }
 
-func TestFormatStruct_PartialVariables(t *testing.T) {
+func TestRenderPlan_PartialVariables(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("{{ .Input.bot_name }}: {{ .Input.msg }}")},
@@ -257,7 +257,7 @@ func TestFormatStruct_PartialVariables(t *testing.T) {
 	assert.Contains(t, text, "overridden")
 }
 
-func TestFormatStruct_MissingRequired(t *testing.T) {
+func TestRenderPlan_MissingRequired(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "user", Content: TextContent("{{ .Input.user_name }}")},
@@ -325,8 +325,8 @@ func TestValidateVariables_MediaPart_MissingTypeAndUnknownMIME(t *testing.T) {
 	assert.Contains(t, err.Error(), "media_type is required")
 }
 
-// TestFormatStruct_ManifestRequiredVars ensures manifest-derived RequiredVars (e.g. input_schema.required) are enforced.
-func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
+// TestRenderPlan_ManifestRequiredVars ensures manifest-derived RequiredVars (e.g. input_schema.required) are enforced.
+func TestRenderPlan_ManifestRequiredVars(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: RoleSystem, Content: TextContent("Hi")}},
@@ -341,7 +341,7 @@ func TestFormatStruct_ManifestRequiredVars(t *testing.T) {
 	require.ErrorIs(t, err, ErrMissingVariable)
 }
 
-func TestFormatStruct_ReservedToolsKey(t *testing.T) {
+func TestRenderPlan_ReservedToolsKey(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
@@ -355,9 +355,9 @@ func TestFormatStruct_ReservedToolsKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrReservedVariable)
 }
 
-// TestFormatStruct_ResponseFormatClone verifies that mutating exec.ResponseFormat does not affect the template.
-// FormatStruct must return an execution that is an independent snapshot (thread-safety, no shared pointers).
-func TestFormatStruct_ResponseFormatClone(t *testing.T) {
+// TestRenderPlan_ResponseFormatClone verifies that mutating exec.ResponseFormat does not affect the template.
+// RenderPlan.Execute must return an execution that is an independent snapshot (thread-safety, no shared pointers).
+func TestRenderPlan_ResponseFormatClone(t *testing.T) {
 	t.Parallel()
 	schema := map[string]any{"type": "object", "remove_me": true}
 	tpl, err := NewChatPromptTemplate(
@@ -368,7 +368,7 @@ func TestFormatStruct_ResponseFormatClone(t *testing.T) {
 	)
 	require.NoError(t, err)
 	type emptyPayload struct {
-		X string `prompt:"x"` // unused by template; needed for getPayloadFields
+		X string `prompt:"x"` // unused by template; needed for struct binding validation
 	}
 	exec, err := executeTemplatePlan(tpl, &emptyPayload{})
 	require.NoError(t, err)
@@ -519,7 +519,7 @@ func TestCloneTemplate_DoesNotMutateOriginalNestedState(t *testing.T) {
 	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
 }
 
-func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
+func TestRenderPlan_PointerToPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
@@ -535,22 +535,22 @@ func TestFormatStruct_PointerToPointerPayload(t *testing.T) {
 	assert.Equal(t, "Hello, Alice!", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
-func TestFormatStruct_InvalidPayload(t *testing.T) {
+func TestRenderPlan_InvalidPayload(t *testing.T) {
 	t.Parallel()
 	type NoTags struct {
-		X string
+		x string // unexported: no bindable fields
 	}
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 	)
 	require.NoError(t, err)
-	_, err = executeTemplatePlan(tpl, &NoTags{X: "y"})
+	_, err = executeTemplatePlan(tpl, &NoTags{x: "y"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
-// TestFormatStruct_JsonTagFallback ensures payload uses json tag when prompt tag is missing (strings.Split(tag, ",")[0]).
-func TestFormatStruct_JsonTagFallback(t *testing.T) {
+// TestRenderPlan_JsonTagFallback ensures payload uses json tag when prompt tag is missing (strings.Split(tag, ",")[0]).
+func TestRenderPlan_JsonTagFallback(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("Hello, {{ .Input.user_name }}!")},
@@ -565,7 +565,7 @@ func TestFormatStruct_JsonTagFallback(t *testing.T) {
 	assert.Equal(t, "Hello, Bob!", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
-func TestFormatStruct_NilPayload(t *testing.T) {
+func TestRenderPlan_NilPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
@@ -576,7 +576,7 @@ func TestFormatStruct_NilPayload(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
-func TestFormatStruct_NilPointerPayload(t *testing.T) {
+func TestRenderPlan_NilPointerPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi {{ .Input.x }}")}},
@@ -591,7 +591,7 @@ func TestFormatStruct_NilPointerPayload(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPayload)
 }
 
-func TestFormatStruct_NonStructPayload(t *testing.T) {
+func TestRenderPlan_NonStructPayload(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
@@ -626,7 +626,7 @@ func TestValidateVariables_MissingVar(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTemplateRender)
 }
 
-func TestFormatStruct_OptionalMessage(t *testing.T) {
+func TestRenderPlan_OptionalMessage(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("System")},
@@ -642,7 +642,7 @@ func TestFormatStruct_OptionalMessage(t *testing.T) {
 	assert.Equal(t, "System", exec.Messages[0].Content[0].(TextPart).Text)
 }
 
-func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
+func TestRenderPlan_ChatHistory_Splice(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("You are a helper.")},
@@ -667,8 +667,8 @@ func TestFormatStruct_ChatHistory_Splice(t *testing.T) {
 	assert.Equal(t, "last", exec.Messages[3].Content[0].(TextPart).Text)
 }
 
-// TestFormatStruct_ChatHistory_SpliceAfterDeveloper ensures history is inserted after all system/developer anchors.
-func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
+// TestRenderPlan_ChatHistory_SpliceAfterDeveloper ensures history is inserted after all system/developer anchors.
+func TestRenderPlan_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("System.")},
@@ -685,16 +685,16 @@ func TestFormatStruct_ChatHistory_SpliceAfterDeveloper(t *testing.T) {
 	}
 	exec, err := executeTemplatePlan(tpl, &Payload{Query: "last", History: history})
 	require.NoError(t, err)
-	// v2 normalization collapses consecutive system/developer anchors before history splice.
-	require.Len(t, exec.Messages, 3)
+	require.Len(t, exec.Messages, 4)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
-	assert.Equal(t, RoleUser, exec.Messages[1].Role)
-	assert.Equal(t, "hist_user", exec.Messages[1].Content[0].(TextPart).Text)
+	assert.Equal(t, RoleDeveloper, exec.Messages[1].Role)
 	assert.Equal(t, RoleUser, exec.Messages[2].Role)
-	assert.Equal(t, "last", exec.Messages[2].Content[0].(TextPart).Text)
+	assert.Equal(t, "hist_user", exec.Messages[2].Content[0].(TextPart).Text)
+	assert.Equal(t, RoleUser, exec.Messages[3].Role)
+	assert.Equal(t, "last", exec.Messages[3].Content[0].(TextPart).Text)
 }
 
-func TestFormatStruct_ToolsInjection(t *testing.T) {
+func TestRenderPlan_ToolsInjection(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("Tools: {{ render_tools_as_json .Tools }}")},
@@ -722,7 +722,7 @@ func (failingTokenCounter) CountMessage(ChatMessage) (int, error) {
 	return 0, errors.New("token counter failure")
 }
 
-func TestFormatStruct_ErrTemplateRender(t *testing.T) {
+func TestRenderPlan_ErrTemplateRender(t *testing.T) {
 	t.Parallel()
 	// Template parses but Execute fails because truncate_tokens uses a TokenCounter that returns error.
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
@@ -794,7 +794,7 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	assert.Contains(t, text, "You are a doctor.")
 }
 
-func TestFormatStruct_ConcurrentUse(t *testing.T) {
+func TestRenderPlan_ConcurrentUse(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("{{ .Input.x }}")},

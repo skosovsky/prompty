@@ -121,7 +121,7 @@ func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
 			Optional:     msg.Optional,
 			CacheControl: cloneCacheControl(msg.CacheControl),
 			Metadata:     cloneMapAny(msg.Metadata),
-			SourceID:     msg.SourceID,
+			LayerID:      msg.LayerID,
 			LayerKind:    msg.LayerKind,
 		}
 	}
@@ -151,8 +151,10 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 			Content:      cloneContentParts(msg.Content),
 			CacheControl: cloneCacheControl(msg.CacheControl),
 			Metadata:     cloneMapAny(msg.Metadata),
-			SourceID:     msg.SourceID,
+			LayerID:      msg.LayerID,
 			LayerKind:    msg.LayerKind,
+			LayerRef:     msg.LayerRef,
+			ManifestID:   msg.ManifestID,
 		}
 	}
 	return out

@@ -39,7 +39,7 @@ type ChatPromptTemplate struct {
 	Metadata         PromptMetadata
 	ResponseFormat   *SchemaDefinition // JSON Schema for structured output (passed to PromptExecution)
 	InputSchema      *SchemaDefinition // JSON Schema for template input (prompty-gen, required/partial derivation)
-	RequiredVars     []string          // explicit required vars from manifest; merged with template-derived in FormatStruct
+	RequiredVars     []string          // explicit required vars from manifest; merged with template-derived in RenderPlan.Execute
 	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter
 	parsedTemplates  []parsedMessage
@@ -66,7 +66,7 @@ type parsedMessage struct {
 	cacheControl *CacheControl
 	metadata     map[string]any // provider-specific; copied to ChatMessage on render
 	vars         []string       // pre-computed from all parts for optional-skip check
-	sourceID     string
+	layerID      string
 	layerKind    LayerKind
 }
 
@@ -221,7 +221,7 @@ func NewChatPromptTemplate(
 			cacheControl: cloneCacheControl(m.CacheControl),
 			metadata:     meta,
 			vars:         allVars,
-			sourceID:     m.SourceID,
+			layerID:      m.LayerID,
 			layerKind:    m.LayerKind,
 		})
 	}
@@ -348,8 +348,13 @@ func (c *ChatPromptTemplate) renderTemplates(
 			Content:      contentParts,
 			CacheControl: cloneCacheControl(pm.cacheControl),
 			Metadata:     maps.Clone(pm.metadata),
-			SourceID:     pm.sourceID,
+			LayerID:      pm.layerID,
 			LayerKind:    pm.layerKind,
+			LayerRef: LayerRef{
+				LayerID:    pm.layerID,
+				ManifestID: c.Metadata.ID,
+			},
+			ManifestID: c.Metadata.ID,
 		})
 	}
 	out = spliceHistory(out, cloneMessages(history))
@@ -372,21 +377,21 @@ func (c *ChatPromptTemplate) formatContext(data renderContext) (*PromptExecution
 	if inputVars == nil {
 		inputVars = make(map[string]any)
 	}
-	normalizedInput := normalizeTemplateInput(data.Input)
-	if inputMap, ok := normalizedInput.(map[string]any); ok {
-		maps.Copy(inputVars, inputMap)
+	switch input := data.Input.(type) {
+	case map[string]any:
+		maps.Copy(inputVars, input)
 		merged["Input"] = inputVars
-	} else if normalizedInput == nil {
+	case nil:
 		merged["Input"] = inputVars
-	} else {
-		merged["Input"] = normalizedInput
+	default:
+		merged["Input"] = input
 	}
 	merged["LateVars"] = cloneMapAny(data.LateVars)
 	merged["Tools"] = c.Tools
 	return c.renderTemplates(merged, nil)
 }
 
-// ValidateVariables runs a dry-run execute with the given data (same merge as FormatStruct: PartialVariables + data + Tools).
+// ValidateVariables runs a dry-run execute with the given data (same merge as RenderPlan.Execute input: PartialVariables + data + Tools).
 // Returns an error with role/message index context if any template references a missing or invalid input field.
 func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
 	input := maps.Clone(c.PartialVariables)

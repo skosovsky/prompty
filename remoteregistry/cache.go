@@ -33,9 +33,10 @@ type CachedRegistry struct {
 }
 
 var (
-	_ prompty.Registry = (*CachedRegistry)(nil)
-	_ prompty.Lister   = (*CachedRegistry)(nil)
-	_ prompty.Statter  = (*CachedRegistry)(nil)
+	_ prompty.Registry         = (*CachedRegistry)(nil)
+	_ prompty.Lister           = (*CachedRegistry)(nil)
+	_ prompty.Statter          = (*CachedRegistry)(nil)
+	_ prompty.ManifestResolver = (*CachedRegistry)(nil)
 )
 
 // WithCache wraps base registry with cache + in-flight request dedupe.
@@ -105,6 +106,21 @@ func (r *CachedRegistry) loadTemplate(
 
 	go r.runInflightFetch(id, inFlight)
 	return r.waitForInflight(ctx, id, inFlight)
+}
+
+// ResolveManifest delegates metadata resolution to the base registry when supported.
+func (r *CachedRegistry) ResolveManifest(
+	ctx context.Context,
+	id string,
+) (prompty.TemplateDescriptor, error) {
+	if resolver, ok := r.base.(prompty.ManifestResolver); ok {
+		return resolver.ResolveManifest(ctx, id)
+	}
+	tpl, err := r.loadTemplate(ctx, id)
+	if err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
+	return prompty.DescriptorFromTemplate(tpl), nil
 }
 
 // Plan returns a deferred render plan using cached template data.

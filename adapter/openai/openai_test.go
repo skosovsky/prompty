@@ -46,11 +46,13 @@ func TestTranslate_TextOnly(t *testing.T) {
 			},
 		},
 	}
+	before := exec.Clone()
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.Len(t, params.Messages, 1)
 	assert.NotNil(t, params.Messages[0].OfUser)
 	assert.Equal(t, "Hello", params.Messages[0].OfUser.Content.OfString.Value)
+	assert.Equal(t, before.Messages, exec.Messages)
 }
 
 func TestTranslate_SystemMessage(t *testing.T) {

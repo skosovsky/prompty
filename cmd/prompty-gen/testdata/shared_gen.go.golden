@@ -15,15 +15,17 @@ var validate = validator.New()
 
 type PromptCatalog interface {
 	RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error)
+	Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error)
 	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
 }
 
 type promptCatalog struct {
+	registry     prompty.Registry
 	SupportAgent *SupportAgentPrompt
 }
 
 func NewPromptCatalog(r prompty.Registry) PromptCatalog {
-	return &promptCatalog{SupportAgent: &SupportAgentPrompt{registry: r}}
+	return &promptCatalog{registry: r, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
 func (c *promptCatalog) RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error) {
@@ -33,6 +35,13 @@ func (c *promptCatalog) RenderByID(ctx context.Context, id PromptID, input any) 
 	default:
 		return nil, fmt.Errorf("unknown prompt id: %q", id)
 	}
+}
+
+func (c *promptCatalog) Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error) {
+	if resolver, ok := c.registry.(prompty.ManifestResolver); ok {
+		return resolver.ResolveManifest(ctx, string(id))
+	}
+	return prompty.TemplateDescriptor{}, fmt.Errorf("prompty: registry does not implement ManifestResolver")
 }
 
 func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {

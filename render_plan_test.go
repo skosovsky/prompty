@@ -32,7 +32,7 @@ func TestRenderPlan_ReplaceLayer(t *testing.T) {
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{
 			Role:      RoleSystem,
-			SourceID:  "s1",
+			LayerID:   "s1",
 			LayerKind: LayerKind("policy"),
 			Content:   TextContent("base"),
 		},
@@ -68,16 +68,38 @@ func TestRenderPlan_Execute_CollapsesConsecutiveSystemMessages(t *testing.T) {
 
 	exec, err := NewRenderPlan(tpl, nil).Execute(context.Background())
 	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2)
+	require.Len(t, exec.Messages, 3)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
-	assert.Equal(t, "A\n\nB", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "A", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, RoleDeveloper, exec.Messages[1].Role)
+	assert.Equal(t, "B", TextFromParts(exec.Messages[1].Content))
+}
+
+func TestRenderPlan_Execute_SetsProvenance(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{
+			Role:      RoleSystem,
+			LayerID:   "policy",
+			LayerKind: LayerKind("policy"),
+			Content:   TextContent("rules"),
+		},
+	}, WithMetadata(PromptMetadata{ID: "base-manifest"}))
+	require.NoError(t, err)
+
+	exec, err := NewRenderPlan(tpl, nil).Execute(context.Background())
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 1)
+	assert.Equal(t, LayerRef{LayerID: "policy", ManifestID: "base-manifest"}, exec.Messages[0].LayerRef)
+	assert.Equal(t, "base-manifest", exec.Messages[0].ManifestID)
+	assert.Equal(t, "base-manifest", exec.Metadata.ID)
 }
 
 func TestRenderPlan_ReplaceLayer_ReplacesContiguousSegmentOnce(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, SourceID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p1")},
-		{Role: RoleSystem, SourceID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p2")},
+		{Role: RoleSystem, LayerID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p1")},
+		{Role: RoleSystem, LayerID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p2")},
 		{Role: RoleUser, Content: TextContent("u")},
 	})
 	require.NoError(t, err)

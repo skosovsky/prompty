@@ -60,6 +60,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	working := adapter.PrepareTranslateExecution(exec)
 	config := &genai.GenerateContentConfig{}
 	// Model is set on the genai request, not inside Config.
 	if exec.ModelOptions != nil {
@@ -86,7 +87,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	wantGoogleSearch := applyGeminiProviderSettings(config, modelProviderSettings(exec.ModelOptions))
 	var systemParts []string
 	var contents []*genai.Content
-	for _, msg := range exec.Messages {
+	for _, msg := range working.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
 			systemParts = append(systemParts, prompty.TextFromParts(msg.Content))

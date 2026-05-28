@@ -47,6 +47,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	working := adapter.PrepareTranslateExecution(exec)
 	if exec.ResponseFormat != nil {
 		return nil, adapter.ErrStructuredOutputNotSupported
 	}
@@ -56,7 +57,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 	}
 	req := &api.ChatRequest{
 		Model:    model,
-		Messages: make([]api.Message, 0, len(exec.Messages)),
+		Messages: make([]api.Message, 0, len(working.Messages)),
 	}
 	if exec.ModelOptions != nil {
 		providerSettings := exec.ModelOptions.ProviderSettings
@@ -80,7 +81,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			applyOllamaProviderSettings(req.Options, providerSettings)
 		}
 	}
-	for _, msg := range exec.Messages {
+	for _, msg := range working.Messages {
 		m, err := a.translateMessage(msg)
 		if err != nil {
 			return nil, err

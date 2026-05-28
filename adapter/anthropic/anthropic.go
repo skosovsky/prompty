@@ -53,6 +53,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	working := adapter.PrepareTranslateExecution(exec)
 	if exec.ResponseFormat != nil && len(exec.Tools) > 0 {
 		return nil, fmt.Errorf(
 			"anthropic adapter: cannot use both Tools and ResponseFormat simultaneously: %w",
@@ -83,7 +84,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	}
 	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
-	for _, msg := range exec.Messages {
+	for _, msg := range working.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
 			blocks, err := a.systemMessageBlocks(msg.Content, msg.CacheControl)
