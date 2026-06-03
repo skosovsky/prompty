@@ -19,7 +19,7 @@ import (
 //     name: ...
 //     description: ...
 //     schema: { type: object, properties: ... }
-func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) {
+func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nolint:gocognit
 	if raw == nil {
 		//nolint:nilnil // nil inputs block is valid and represented as nil schema.
 		return nil, nil
@@ -83,7 +83,11 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) {
 	if len(required) > 0 {
 		schema["required"] = required
 	}
-	return &prompty.SchemaDefinition{Schema: schema}, nil
+	schemaDoc, err := prompty.MapToJSONDocument(schema)
+	if err != nil {
+		return nil, err
+	}
+	return &prompty.SchemaDefinition{Schema: schemaDoc}, nil
 }
 
 func normalizeMapAny(in map[string]any) map[string]any {

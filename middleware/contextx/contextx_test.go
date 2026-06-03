@@ -474,8 +474,8 @@ func TestWithTokenBudget_DownstreamMutationDoesNotLeakToOriginal(t *testing.T) {
 
 	base := &invokerFunc{
 		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			exec.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
-			exec.Messages[0].Metadata["trace"].(map[string]any)["id"] = "mutated"
+			prompty.MustJSONDocumentAsMap(exec.Metadata.Extras)["trace"].(map[string]any)["env"] = "prod"
+			prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["trace"].(map[string]any)["id"] = "mutated"
 			exec.Messages[0].Content[0].(*prompty.TextPart).Text = "mutated"
 			return &prompty.Response{}, nil
 		},
@@ -490,19 +490,23 @@ func TestWithTokenBudget_DownstreamMutationDoesNotLeakToOriginal(t *testing.T) {
 				Content: []prompty.ContentPart{
 					&prompty.TextPart{Text: "sys"},
 				},
-				Metadata: map[string]any{"trace": map[string]any{"id": "original"}},
+				Metadata: prompty.MustJSONDocumentFromMap(map[string]any{"trace": map[string]any{"id": "original"}}),
 			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
 		},
 		Metadata: prompty.PromptMetadata{
-			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+			Extras: prompty.MustJSONDocumentFromMap(map[string]any{"trace": map[string]any{"env": "dev"}}),
 		},
 	}
 
 	_, err := inv.Execute(context.Background(), exec)
 	require.NoError(t, err)
-	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
-	assert.Equal(t, "original", exec.Messages[0].Metadata["trace"].(map[string]any)["id"])
+	assert.Equal(t, "dev", prompty.MustJSONDocumentAsMap(exec.Metadata.Extras)["trace"].(map[string]any)["env"])
+	assert.Equal(
+		t,
+		"original",
+		prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["trace"].(map[string]any)["id"],
+	)
 	assert.Equal(t, "sys", exec.Messages[0].Content[0].(*prompty.TextPart).Text)
 }
 

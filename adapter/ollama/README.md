@@ -19,6 +19,6 @@ go get github.com/skosovsky/prompty/adapter/ollama
 - **Messages:** system, user, assistant. **Tools:** native Ollama tool definitions and tool call/result format.
 - **Media:** Ollama chat request supports only `images`; this adapter accepts only `image/*` user media. For image URLs call `exec.ResolvedMedia(ctx, fetcher)` before `Translate`; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Tool results remain text-only in this adapter.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
-- **Helpers:** `prompty.TextFromParts`.
+- **Helpers:** `prompty.StrictTextFromParts`, `prompty.JoinAdapterTextParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama) for the full API.

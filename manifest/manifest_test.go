@@ -158,8 +158,8 @@ func TestParse_MetadataTagsAndExtras(t *testing.T) {
 	require.NotNil(t, tpl)
 	assert.Equal(t, []string{"a", "b"}, tpl.Metadata.Tags)
 	require.NotNil(t, tpl.Metadata.Extras)
-	assert.Equal(t, "medical", tpl.Metadata.Extras["domain"])
-	assert.Equal(t, "2", tpl.Metadata.Extras["version"])
+	assert.Equal(t, "medical", prompty.MustJSONDocumentAsMap(tpl.Metadata.Extras)["domain"])
+	assert.Equal(t, "2", prompty.MustJSONDocumentAsMap(tpl.Metadata.Extras)["version"])
 }
 
 func TestParse_MetadataEnvironmentTyped(t *testing.T) {
@@ -173,9 +173,10 @@ func TestParse_MetadataEnvironmentTyped(t *testing.T) {
 	assert.Equal(t, "prod", tpl.Metadata.Environment)
 	assert.Equal(t, []string{"a"}, tpl.Metadata.Tags)
 	require.NotNil(t, tpl.Metadata.Extras)
-	assert.Equal(t, "val", tpl.Metadata.Extras["custom"])
-	assert.NotContains(t, tpl.Metadata.Extras, "environment")
-	assert.NotContains(t, tpl.Metadata.Extras, "tags")
+	assert.Equal(t, "val", prompty.MustJSONDocumentAsMap(tpl.Metadata.Extras)["custom"])
+	extras := prompty.MustJSONDocumentAsMap(tpl.Metadata.Extras)
+	assert.NotContains(t, extras, "environment")
+	assert.NotContains(t, extras, "tags")
 }
 
 func TestParse_ModelOptions_JSON(t *testing.T) {
@@ -206,8 +207,13 @@ func TestParse_ModelOptions_JSON(t *testing.T) {
 	assert.InDelta(t, 0.8, *tpl.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, []string{"END"}, tpl.ModelOptions.Stop)
 	require.NotNil(t, tpl.ModelOptions.ProviderSettings)
-	assert.InDelta(t, 0.5, tpl.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
-	assert.Equal(t, true, tpl.ModelOptions.ProviderSettings["custom_flag"])
+	assert.InDelta(
+		t,
+		0.5,
+		prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings)["frequency_penalty"].(float64),
+		1e-9,
+	)
+	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings)["custom_flag"])
 }
 
 func TestParse_ModelOptions_JSON_RejectsTopLevelVendorKeys(t *testing.T) {
@@ -340,7 +346,7 @@ func TestParse_ResponseFormat(t *testing.T) {
 	require.NotNil(t, tpl.ResponseFormat)
 	assert.Equal(t, "my_schema", tpl.ResponseFormat.Name)
 	require.NotNil(t, tpl.ResponseFormat.Schema)
-	assert.Equal(t, "object", tpl.ResponseFormat.Schema["type"])
+	assert.Equal(t, "object", prompty.MustJSONDocumentAsMap(tpl.ResponseFormat.Schema)["type"])
 	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
@@ -359,7 +365,7 @@ func TestParse_MetadataPassThrough_ArbitraryKeys(t *testing.T) {
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
 	require.NotNil(t, tpl.Messages[0].Metadata)
-	assert.Equal(t, "u-123", tpl.Messages[0].Metadata["custom_user_id"])
+	assert.Equal(t, "u-123", prompty.MustJSONDocumentAsMap(tpl.Messages[0].Metadata)["custom_user_id"])
 	assert.Nil(t, tpl.Messages[1].Metadata)
 }
 
@@ -381,7 +387,7 @@ func TestParse_MetadataPassThrough(t *testing.T) {
 	assert.Equal(
 		t,
 		true,
-		exec.Messages[0].Metadata["gemini_search_grounding"],
+		prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["gemini_search_grounding"],
 		"metadata from manifest must reach PromptExecution",
 	)
 }
@@ -401,7 +407,7 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 	require.NotNil(t, tpl.Messages[0].Content[0].CacheControl)
 	assert.Equal(t, "ephemeral", tpl.Messages[0].Content[0].CacheControl.Type)
 	require.NotNil(t, tpl.Messages[0].Metadata)
-	assert.Equal(t, true, tpl.Messages[0].Metadata["gemini_search_grounding"])
+	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(tpl.Messages[0].Metadata)["gemini_search_grounding"])
 	exec, err := executeTemplatePlan(tpl, &struct {
 		X string `json:"x"`
 	}{})
@@ -415,7 +421,7 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 	require.NotNil(t, text.CacheControl)
 	assert.Equal(t, "ephemeral", text.CacheControl.Type)
 	require.NotNil(t, exec.Messages[0].Metadata)
-	assert.Equal(t, true, exec.Messages[0].Metadata["gemini_search_grounding"])
+	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["gemini_search_grounding"])
 }
 
 func TestParse_FuncMapHelpersManifestPath(t *testing.T) {
@@ -461,11 +467,11 @@ func TestParse_InputsContractStyle_DefaultsAndRequired(t *testing.T) {
 	require.NotNil(t, tpl.InputSchema)
 	require.NotNil(t, tpl.InputSchema.Schema)
 
-	properties, _ := tpl.InputSchema.Schema["properties"].(map[string]any)
+	properties, _ := prompty.MustJSONDocumentAsMap(tpl.InputSchema.Schema)["properties"].(map[string]any)
 	require.Contains(t, properties, "user_name")
 	require.Contains(t, properties, "tone")
 
-	required, _ := cast.ToStringSlice(tpl.InputSchema.Schema["required"])
+	required, _ := cast.ToStringSlice(prompty.MustJSONDocumentAsMap(tpl.InputSchema.Schema)["required"])
 	assert.ElementsMatch(t, []string{"user_name"}, required)
 	assert.Equal(t, "friendly", tpl.PartialVariables["tone"])
 }

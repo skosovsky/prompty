@@ -2,7 +2,9 @@ package prompty
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"reflect"
 	"slices"
@@ -34,9 +36,29 @@ func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 	}
 }
 
-// NewRenderPlan builds a deferred render plan from template and typed input.
-func NewRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
-	return newRenderPlan(tpl, typedInput)
+// NewRenderPlan builds a deferred render plan with no template input (.Input is empty).
+func NewRenderPlan(tpl *ChatPromptTemplate) *RenderPlan {
+	return newRenderPlan(tpl, nil)
+}
+
+// NewRenderPlanFromStruct builds a render plan from a struct payload (template .Input fields).
+func NewRenderPlanFromStruct[T any](tpl *ChatPromptTemplate, input T) *RenderPlan {
+	return newRenderPlan(tpl, input)
+}
+
+// NewRenderPlanFromRegistryInput builds a render plan from JSON registry input (fail-closed decode).
+func NewRenderPlanFromRegistryInput(tpl *ChatPromptTemplate, input RegistryPlanInput) (*RenderPlan, error) {
+	if tpl == nil {
+		return nil, errors.New("render plan: template is nil")
+	}
+	if len(input) == 0 {
+		return newRenderPlan(tpl, nil), nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return nil, fmt.Errorf("render plan: decode registry input: %w", err)
+	}
+	return newRenderPlan(tpl, payload), nil
 }
 
 // Template returns a cloned underlying template for adapter registries.
@@ -47,10 +69,14 @@ func (p *RenderPlan) Template() *ChatPromptTemplate {
 	return CloneTemplate(p.template)
 }
 
-// WithLateVariables returns a copy of the plan with merged late variables.
-func (p *RenderPlan) WithLateVariables(vars map[string]any) *RenderPlan {
+// WithLateVariablesJSON returns a copy of the plan with merged late variables from a JSON object.
+func (p *RenderPlan) WithLateVariablesJSON(doc JSONDocument) (*RenderPlan, error) {
 	if p == nil {
-		return nil
+		return nil, ErrNilRenderPlan
+	}
+	vars, err := JSONDocumentAsMap(doc)
+	if err != nil {
+		return nil, fmt.Errorf("late variables: %w", err)
 	}
 	out := &RenderPlan{
 		template:       CloneTemplate(p.template),
@@ -61,7 +87,7 @@ func (p *RenderPlan) WithLateVariables(vars map[string]any) *RenderPlan {
 		responseFormat: cloneSchemaDefinition(p.responseFormat),
 	}
 	maps.Copy(out.lateVars, vars)
-	return out
+	return out, nil
 }
 
 // ReplaceLayer returns a copy of the plan with source layer replacement registered.
@@ -113,15 +139,15 @@ func (p *RenderPlan) AppendToLayer(layerID string, layerPlan *RenderPlan) (*Rend
 	return out, nil
 }
 
-// WithResponseFormat overrides response schema at runtime using a Go type or SchemaDefinition.
-func (p *RenderPlan) WithResponseFormat(schema any) (*RenderPlan, error) {
+// WithResponseFormatDefinition overrides response schema at runtime.
+func (p *RenderPlan) WithResponseFormatDefinition(def *SchemaDefinition) (*RenderPlan, error) {
 	if p == nil {
 		return nil, ErrNilRenderPlan
 	}
-	rf, err := schemaToDefinition(schema)
-	if err != nil {
-		return nil, err
+	if def == nil {
+		return nil, errors.New("response format schema is required")
 	}
+	rf := cloneSchemaDefinition(def)
 	out := &RenderPlan{
 		template:       CloneTemplate(p.template),
 		typedInput:     p.typedInput,
@@ -131,6 +157,20 @@ func (p *RenderPlan) WithResponseFormat(schema any) (*RenderPlan, error) {
 		responseFormat: rf,
 	}
 	return out, nil
+}
+
+// WithResponseFormatFromStruct overrides response schema using reflection/schema provider on T.
+func WithResponseFormatFromStruct[T any](p *RenderPlan) (*RenderPlan, error) {
+	var zero T
+	schemaMap, err := extractSchema(zero)
+	if err != nil {
+		return nil, fmt.Errorf("response format: %w", err)
+	}
+	doc, err := MapToJSONDocument(schemaMap)
+	if err != nil {
+		return nil, fmt.Errorf("response format: %w", err)
+	}
+	return p.WithResponseFormatDefinition(&SchemaDefinition{Schema: doc})
 }
 
 // Execute materializes plan into PromptExecution using `.Input` and `.LateVars` template context.

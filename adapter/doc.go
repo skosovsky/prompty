@@ -11,7 +11,7 @@
 //	adp := openaiadapter.New(openaiadapter.WithClient(openaisdk.NewClient(...)))
 //	client := adapter.NewClient(adp)
 //	resp, err := client.Execute(ctx, exec)
-//	fmt.Println(resp.Text())
+//	text, err := resp.StrictText()
 //
 // # Implementing a custom adapter
 //
@@ -33,7 +33,7 @@
 // Optional: implement StreamerAdapter[Req] with ExecuteStream(ctx, req) for native streaming.
 // If not implemented, ExecuteStream falls back to a polyfill (one chunk from Execute).
 //
-// Helper function: prompty.TextFromParts (extract text from []ContentPart).
+// Helpers: prompty.StrictTextFromParts, prompty.JoinAdapterTextParts.
 //
 // MediaPart: when both Data and URL are set, Data takes precedence for providers that
 // support base64 (OpenAI, Gemini). For providers that do not accept URL (Anthropic, Ollama),

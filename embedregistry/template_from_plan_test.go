@@ -9,7 +9,7 @@ import (
 func templateFromPlan(
 	ctx context.Context,
 	reg interface {
-		Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error)
+		Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error)
 	},
 	id string,
 ) (*prompty.ChatPromptTemplate, error) {

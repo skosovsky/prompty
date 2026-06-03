@@ -81,15 +81,16 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type PromptCatalog` (интерфейс), `func NewPromptCatalog(r prompty.Registry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type PromptCatalog` (интерфейс), `func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, методы `Render`, `RequiredTools()`, `ID()`.
 
-Render выполняет: validate input → `registry.Plan(ctx, id, input)` и возвращает `*prompty.RenderPlan`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
+Render выполняет: validate input → `RegistryPlanInputFrom[<Name>Input](input)` → `registry.Plan(ctx, id, planInput)` и возвращает `*prompty.RenderPlan`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
 
 ## Mapping JSON Schema → Go
 
 - `object` с `properties` → именованный struct.
-- `object` без `properties` / `additionalProperties` → `map[string]any`.
+- `object` без `properties` требует `additionalProperties: { type: T }` (примитив или array) → `map[string]T`.
+- `object` без `properties` и без typed `additionalProperties`, свойства без `type`, `oneOf`/`anyOf` union → ошибка codegen (strict, fail-closed).
 - `additionalProperties: { type: string }` → `map[string]string`.
 - Optional → `*T` для скаляров и object-with-properties; `T` (nil-check) для array/object-without-properties.
 - Массивы структур: validate-тег `dive` для вложенной валидации.
@@ -118,9 +119,14 @@ if err != nil {
 	return err
 }
 
-exec, err := plan.WithLateVariables(map[string]any{
+lateVars, _ := prompty.MapToJSONDocument(map[string]any{
 	"allowed_tools": []string{"get_order_status"},
-}).Execute(ctx)
+})
+plan, err = plan.WithLateVariablesJSON(lateVars)
+if err != nil {
+	return err
+}
+exec, err := plan.Execute(ctx)
 if err != nil {
 	return err
 }
@@ -133,7 +139,7 @@ resp, err := invoker.Execute(ctx, exec)
 
 1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed `RenderXxx`.
 2. Runtime рендер: `catalog.RenderXxx(...)` -> `*prompty.RenderPlan`.
-3. Композиция (опционально): `WithLateVariables`, `ReplaceLayer`, `AppendToLayer`, `WithResponseFormat`.
+3. Композиция (опционально): `WithLateVariablesJSON`, `ReplaceLayer`, `AppendToLayer`, `WithResponseFormatDefinition`.
 4. Выполнение плана: `plan.Execute(ctx)` -> `*prompty.PromptExecution`.
 5. Вызов модели: `invoker.Execute(ctx, exec)`.
 
@@ -147,7 +153,7 @@ for _, id := range AllPromptIDs() {
 
 ### Композиция нескольких планов перед Execute
 
-Метаданные без рендера (если registry реализует `prompty.ManifestResolver`):
+Метаданные без рендера (если registry реализует `prompty.PromptDescriber`):
 
 ```go
 desc, err := catalog.Descriptor(ctx, prompts.SupportAgent)

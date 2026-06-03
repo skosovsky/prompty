@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 )
 
@@ -48,10 +49,17 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 				return
 			}
 			if chunk == nil {
-				continue
+				cancel()
+				yield(zero, errors.New("stream structured output: nil chunk"))
+				return
 			}
-
-			for _, text := range textPartsFromContent(chunk.Content) {
+			texts, textErr := strictTextPartsFromContent(chunk.Content)
+			if textErr != nil {
+				cancel()
+				yield(zero, textErr)
+				return
+			}
+			for _, text := range texts {
 				items, parseErr := parser.feed(text)
 				if parseErr != nil {
 					cancel()
@@ -74,7 +82,10 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 	}
 }
 
-func textPartsFromContent(parts []ContentPart) []string {
+func strictTextPartsFromContent(parts []ContentPart) ([]string, error) {
+	if len(parts) == 0 {
+		return nil, ErrEmptyTextResponse
+	}
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		switch x := part.(type) {
@@ -83,25 +94,32 @@ func textPartsFromContent(parts []ContentPart) []string {
 				out = append(out, x.Text)
 			}
 		case *TextPart:
-			if x != nil && x.Text != "" {
+			if x == nil {
+				return nil, ErrEmptyTextResponse
+			}
+			if x.Text != "" {
 				out = append(out, x.Text)
 			}
+		default:
+			return nil, &NonTextResponseError{PartKinds: []string{contentPartKind(part)}}
 		}
 	}
-	return out
+	if len(out) == 0 {
+		return nil, ErrEmptyTextResponse
+	}
+	return out, nil
 }
 
 type structuredStreamParser[T any] struct {
-	mode          streamJSONMode
-	started       bool
-	completed     bool
-	skippingFence bool
-	capturing     bool
-	depth         int
-	inString      bool
-	escape        bool
-	current       bytes.Buffer
-	preview       bytes.Buffer
+	mode      streamJSONMode
+	started   bool
+	completed bool
+	capturing bool
+	depth     int
+	inString  bool
+	escape    bool
+	current   bytes.Buffer
+	preview   bytes.Buffer
 }
 
 func newStructuredStreamParser[T any]() *structuredStreamParser[T] {
@@ -114,15 +132,18 @@ func (p *structuredStreamParser[T]) feed(text string) ([]T, error) {
 		ch := text[i]
 
 		if p.completed {
-			if p.consumeFenceOrWhitespace(ch) {
+			if isJSONWhitespace(ch) {
 				continue
 			}
 			return nil, p.errorf("unexpected trailing data after structured output")
 		}
 
 		if !p.started {
-			if p.consumeFenceOrWhitespace(ch) {
+			if isJSONWhitespace(ch) {
 				continue
+			}
+			if ch == '`' {
+				return nil, p.errorf("markdown code fences are not supported (JSON-only)")
 			}
 			switch ch {
 			case '{':
@@ -171,18 +192,9 @@ func (p *structuredStreamParser[T]) finish() error {
 	return nil
 }
 
-func (p *structuredStreamParser[T]) consumeFenceOrWhitespace(ch byte) bool {
-	if p.skippingFence {
-		if ch == '\n' {
-			p.skippingFence = false
-		}
-		return true
-	}
+func isJSONWhitespace(ch byte) bool {
 	switch ch {
 	case ' ', '\n', '\r', '\t':
-		return true
-	case '`':
-		p.skippingFence = true
 		return true
 	default:
 		return false
@@ -294,7 +306,15 @@ func (p *structuredStreamParser[T]) decodeCurrent() (T, error) {
 	var item T
 
 	raw := p.current.String()
-	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&item); err != nil {
+		return item, p.errorf("failed to decode streamed JSON object: %v", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return item, p.errorf("trailing JSON after streamed object")
+		}
 		return item, p.errorf("failed to decode streamed JSON object: %v", err)
 	}
 	if isNilStructuredValue(item) {

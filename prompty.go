@@ -2,10 +2,35 @@ package prompty
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
 )
+
+// RegistryPlanInput is the JSON boundary for registry planning (prompty-gen DTO payloads).
+type RegistryPlanInput = json.RawMessage
+
+// RegistryPlanInputFromJSON wraps validated JSON bytes for Registry.Plan.
+func RegistryPlanInputFromJSON(data []byte) (RegistryPlanInput, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	if !json.Valid(data) {
+		return nil, errors.New("registry plan input: invalid JSON")
+	}
+	return RegistryPlanInput(data), nil
+}
+
+// RegistryPlanInputFrom JSON-encodes a typed value for Registry.Plan.
+func RegistryPlanInputFrom[T any](v T) (RegistryPlanInput, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("registry plan input: %w", err)
+	}
+	return RegistryPlanInput(data), nil
+}
 
 // Role is the message role in a chat (system, developer, user, assistant, tool).
 type Role string
@@ -101,50 +126,51 @@ type LayerRef struct {
 type ChatMessage struct {
 	Role         Role
 	Content      []ContentPart
-	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
-	Metadata     map[string]any // Provider-specific message-scoped extras
-	LayerID      string         `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`    //nolint:tagalign // Keep golines-compatible formatting for this struct block.
-	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
-	LayerRef     LayerRef       `json:"layer_ref,omitzero"      yaml:"layer_ref,omitempty"`   //nolint:tagalign // Provenance for composition/debugging.
-	ManifestID   string         `json:"manifest_id,omitempty"   yaml:"manifest_id,omitempty"` //nolint:tagalign // Originating manifest id when known.
+	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Metadata     JSONDocument  // Provider-specific message-scoped extras (JSON object)
+	LayerID      string        `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`    //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerKind    LayerKind     `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
+	LayerRef     LayerRef      `json:"layer_ref,omitzero"      yaml:"layer_ref,omitempty"`   //nolint:tagalign // Provenance for composition/debugging.
+	ManifestID   string        `json:"manifest_id,omitempty"   yaml:"manifest_id,omitempty"` //nolint:tagalign // Originating manifest id when known.
 }
 
 // ToolDefinition is the universal tool schema.
 // JSON tags are required for template functions (e.g. render_tools_as_json) that marshal tools.
 type ToolDefinition struct {
-	Name        string         `json:"name"                 yaml:"name"`
-	Description string         `json:"description"          yaml:"description"`
-	Parameters  map[string]any `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
+	Name        string       `json:"name"                 yaml:"name"`
+	Description string       `json:"description"          yaml:"description"`
+	Parameters  JSONDocument `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
 }
 
 // SchemaDefinition describes a structured output (JSON Schema) for response format.
 type SchemaDefinition struct {
-	Name        string         `json:"name,omitempty"        yaml:"name,omitempty"`
-	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Schema      map[string]any `json:"schema"                yaml:"schema"` // JSON Schema
+	Name        string       `json:"name,omitempty"        yaml:"name,omitempty"`
+	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
+	Schema      JSONDocument `json:"schema"                yaml:"schema"` // JSON Schema
 }
 
 // PromptMetadata holds observability metadata (v2.0 DTO).
 // Known fields: ID, Version, Description, Tags, Environment.
 // Extras holds arbitrary keys from manifest metadata block for tracing/custom middleware.
 type PromptMetadata struct {
-	ID          string         `json:"id"`
-	Version     string         `json:"version,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Tags        []string       `json:"tags,omitempty"`
-	Environment string         `json:"environment,omitempty"`
-	Extras      map[string]any `json:"extras,omitempty"`
+	ID           string       `json:"id"`
+	Version      string       `json:"version,omitempty"`
+	Description  string       `json:"description,omitempty"`
+	Tags         []string     `json:"tags,omitempty"`
+	Capabilities []string     `json:"capabilities,omitempty"`
+	Environment  string       `json:"environment,omitempty"`
+	Extras       JSONDocument `json:"extras,omitempty"`
 }
 
 // ModelOptions holds typed, cross-provider model settings for one template/execution.
 // ProviderSettings preserves provider-specific manifest keys without requiring generic SDK mapping.
 type ModelOptions struct {
-	Model            string         `json:"model,omitempty"             yaml:"model,omitempty"`
-	Temperature      *float64       `json:"temperature,omitempty"       yaml:"temperature,omitempty"`
-	MaxTokens        *int64         `json:"max_tokens,omitempty"        yaml:"max_tokens,omitempty"`
-	TopP             *float64       `json:"top_p,omitempty"             yaml:"top_p,omitempty"`
-	Stop             []string       `json:"stop,omitempty"              yaml:"stop,omitempty"`
-	ProviderSettings map[string]any `json:"provider_settings,omitempty" yaml:"provider_settings,omitempty"`
+	Model            string       `json:"model,omitempty"             yaml:"model,omitempty"`
+	Temperature      *float64     `json:"temperature,omitempty"       yaml:"temperature,omitempty"`
+	MaxTokens        *int64       `json:"max_tokens,omitempty"        yaml:"max_tokens,omitempty"`
+	TopP             *float64     `json:"top_p,omitempty"             yaml:"top_p,omitempty"`
+	Stop             []string     `json:"stop,omitempty"              yaml:"stop,omitempty"`
+	ProviderSettings JSONDocument `json:"provider_settings,omitempty" yaml:"provider_settings,omitempty"`
 }
 
 // PromptExecution is the result of formatting a template; immutable after creation.
@@ -238,7 +264,7 @@ func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 		Role:         a.Role,
 		Content:      content,
 		CacheControl: mergeMessageCacheControl(a.CacheControl, b.CacheControl),
-		Metadata:     cloneMapAny(a.Metadata),
+		Metadata:     CloneJSONDocument(a.Metadata),
 		LayerID:      a.LayerID,
 		LayerKind:    a.LayerKind,
 		LayerRef:     a.LayerRef,
@@ -384,16 +410,14 @@ func TextContent(text string) []TemplatePart {
 // After RenderPlan.Execute it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
 // CacheControl applies message-level cache hint; parts may override with their own cache_control.
-//
-//nolint:golines // struct fields share aligned json/yaml tag layout
 type MessageTemplate struct {
 	Role         Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
 	Content      []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
 	Optional     bool           // true → skip if all referenced variables are zero-value
 	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
-	Metadata     map[string]any `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
-	LayerID      string         `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
-	LayerKind    LayerKind      `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
+	Metadata     JSONDocument   `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
+	LayerID      string         `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`
+	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.
@@ -413,6 +437,8 @@ type TemplateDescriptor struct {
 	InputSchema       *SchemaDefinition
 	ResponseFormat    *SchemaDefinition
 	LayerIDs          []string
+	Capabilities      []string
+	Tags              []string
 }
 
 // ManifestResolver resolves manifest metadata without rendering.
@@ -420,10 +446,32 @@ type ManifestResolver interface {
 	ResolveManifest(ctx context.Context, id string) (TemplateDescriptor, error)
 }
 
+// PromptDescriber exposes declarative prompt introspection for host routing.
+type PromptDescriber interface {
+	DescribePrompt(ctx context.Context, id string) (TemplateDescriptor, error)
+}
+
+// ManifestBytesReader supplies raw manifest bytes for digest computation.
+type ManifestBytesReader interface {
+	ReadManifestBytes(ctx context.Context, id string) ([]byte, error)
+}
+
+// DigestRegistry is required by RenderPlan.CompileFromRegistry (plan + raw manifest bytes).
+type DigestRegistry interface {
+	Registry
+	ManifestBytesReader
+}
+
+// DescribingRegistry is required by prompty-gen NewPromptCatalog (plan + DescribePrompt).
+type DescribingRegistry interface {
+	Registry
+	PromptDescriber
+}
+
 // Registry returns a chat prompt template by id.
 // id is a single identifier (e.g. "doctor", "doctor.prod"); environments are expressed via file layout.
 type Registry interface {
-	Plan(ctx context.Context, id string, typedInput any) (*RenderPlan, error)
+	Plan(ctx context.Context, id string, input RegistryPlanInput) (*RenderPlan, error)
 }
 
 // Lister is optional. When implemented by a registry, List returns available template ids.

@@ -16,7 +16,6 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
-	"github.com/skosovsky/prompty/internal/cast"
 )
 
 // Adapter implements adapter.ProviderAdapter for the OpenAI Chat Completions API.
@@ -224,7 +223,14 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 			params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: exec.ModelOptions.Stop}
 		}
 
-		reasoningEffortSet := applyOpenAIProviderSettings(params, exec.ModelOptions.ProviderSettings)
+		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		reasoningEffortSet, err := applyOpenAIProviderSettings(params, providerSettings)
+		if err != nil {
+			return nil, err
+		}
 		if exec.ModelOptions.MaxTokens != nil {
 			if reasoningEffortSet || reasoningModel {
 				params.MaxCompletionTokens = openai.Int(*exec.ModelOptions.MaxTokens)
@@ -246,10 +252,14 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 	if len(exec.Tools) > 0 {
 		params.Tools = make([]openai.ChatCompletionToolUnionParam, 0, len(exec.Tools))
 		for _, t := range exec.Tools {
+			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
+			if toolParamsErr != nil {
+				return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+			}
 			params.Tools = append(params.Tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 				Name:        t.Name,
 				Description: openai.String(t.Description),
-				Parameters:  shared.FunctionParameters(t.Parameters),
+				Parameters:  shared.FunctionParameters(toolParams),
 			}))
 		}
 		if exec.ForcedTool != "" {
@@ -263,7 +273,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		if name == "" {
 			name = "response_schema"
 		}
-		schema := normalizeSchemaForStrict(exec.ResponseFormat.Schema)
+		schemaMap, schemaErr := prompty.SchemaMap(exec.ResponseFormat)
+		if schemaErr != nil {
+			return nil, fmt.Errorf("response_format schema: %w", schemaErr)
+		}
+		schema := normalizeSchemaForStrict(schemaMap)
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
@@ -288,7 +302,10 @@ func (a *Adapter) Execute(ctx context.Context, req *openai.ChatCompletionNewPara
 func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
 	case prompty.RoleSystem, prompty.RoleDeveloper:
-		text := prompty.TextFromParts(msg.Content)
+		text, err := prompty.StrictTextFromParts(msg.Content)
+		if err != nil {
+			return nil, err
+		}
 		return []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(text)}, nil
 	case prompty.RoleUser:
 		union, err := a.userMessage(msg.Content)
@@ -328,7 +345,11 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 		}
 	}
 	if !hasImage {
-		return openai.UserMessage(prompty.TextFromParts(parts)), nil
+		text, err := prompty.JoinAdapterTextParts(parts)
+		if err != nil {
+			return openai.ChatCompletionMessageParamUnion{}, err
+		}
+		return openai.UserMessage(text), nil
 	}
 	return openai.UserMessage(contentParts), nil
 }
@@ -408,7 +429,11 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 		case prompty.TextPart:
 			b.WriteString(x.Text)
 		case prompty.ToolCallPart:
-			if x.Args != "" && !json.Valid([]byte(x.Args)) {
+			args, argsErr := prompty.ToolCallArgsForTranslate(x)
+			if argsErr != nil {
+				return openai.ChatCompletionMessageParamUnion{}, argsErr
+			}
+			if args != "" && !json.Valid([]byte(args)) {
 				return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf(
 					"%w: invalid tool call args JSON",
 					adapter.ErrMalformedArgs,
@@ -419,7 +444,7 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 					ID: x.ID,
 					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
 						Name:      x.Name,
-						Arguments: x.Args,
+						Arguments: args,
 					},
 					Type: "function",
 				},
@@ -444,16 +469,29 @@ func (a *Adapter) assistantMessage(parts []prompty.ContentPart) (openai.ChatComp
 func (a *Adapter) toolResultMessages(parts []prompty.ContentPart) ([]openai.ChatCompletionMessageParamUnion, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(parts))
 	for _, p := range parts {
-		if tr, ok := p.(prompty.ToolResultPart); ok {
-			// SDK tool message content: string or array of text parts; fail-fast on MediaPart (SDK OfArrayOfContentParts type is text-only).
-			for _, cp := range tr.Content {
-				if _, ok := cp.(prompty.MediaPart); ok {
-					return nil, adapter.ErrUnsupportedContentType
-				}
+		var tr prompty.ToolResultPart
+		switch x := p.(type) {
+		case prompty.ToolResultPart:
+			tr = x
+		case *prompty.ToolResultPart:
+			if x == nil {
+				return nil, adapter.ErrUnsupportedContentType
 			}
-			text := prompty.TextFromParts(tr.Content)
-			messages = append(messages, openai.ToolMessage(text, tr.ToolCallID))
+			tr = *x
+		default:
+			return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
 		}
+		// SDK tool message content: string or array of text parts; fail-fast on MediaPart (SDK OfArrayOfContentParts type is text-only).
+		for _, cp := range tr.Content {
+			if _, ok := cp.(prompty.MediaPart); ok {
+				return nil, adapter.ErrUnsupportedContentType
+			}
+		}
+		text, err := prompty.StrictTextFromParts(tr.Content)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, openai.ToolMessage(text, tr.ToolCallID))
 	}
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
@@ -475,13 +513,31 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 		out = append(out, prompty.TextPart{Text: msg.Content})
 	}
 	for _, tc := range msg.ToolCalls {
-		if tc.Type == "function" {
-			out = append(out, prompty.ToolCallPart{
-				ID:   tc.ID,
-				Name: tc.Function.Name,
-				Args: tc.Function.Arguments,
-			})
+		if tc.Type != "function" {
+			if tc.Type == "" {
+				return nil, fmt.Errorf("%w: tool_call missing type", adapter.ErrMalformedArgs)
+			}
+			return nil, fmt.Errorf(
+				"%w: unknown tool_call type %q",
+				adapter.ErrUnsupportedContentType,
+				tc.Type,
+			)
 		}
+		if tc.Function.Name == "" {
+			return nil, fmt.Errorf("%w: tool call missing function name", adapter.ErrMalformedArgs)
+		}
+		if tc.Function.Arguments == "" {
+			return nil, fmt.Errorf(
+				"%w: empty tool call args for %q",
+				adapter.ErrMalformedArgs,
+				tc.Function.Name,
+			)
+		}
+		out = append(out, prompty.ToolCallPart{
+			ID:   tc.ID,
+			Name: tc.Function.Name,
+			Args: tc.Function.Arguments,
+		})
 	}
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
@@ -557,47 +613,6 @@ func usageFromOpenAI(usage openai.CompletionUsage) prompty.Usage {
 		PromptTokensCached:        int(usage.PromptTokensDetails.CachedTokens),
 		CompletionTokensReasoning: int(usage.CompletionTokensDetails.ReasoningTokens),
 	}
-}
-
-func applyOpenAIProviderSettings(params *openai.ChatCompletionNewParams, settings map[string]any) bool {
-	if len(settings) == 0 {
-		return false
-	}
-	if raw, ok := settings["presence_penalty"]; ok {
-		if penalty, err := cast.ToFloat32(raw); err == nil {
-			params.PresencePenalty = openai.Float(float64(penalty))
-		}
-	}
-	if raw, ok := settings["frequency_penalty"]; ok {
-		if penalty, err := cast.ToFloat32(raw); err == nil {
-			params.FrequencyPenalty = openai.Float(float64(penalty))
-		}
-	}
-	if raw, ok := settings["seed"]; ok {
-		if seed, err := cast.ToInt32(raw); err == nil {
-			params.Seed = openai.Int(int64(seed))
-		}
-	}
-	if raw, ok := settings["logprobs"]; ok {
-		if logprobs, err := cast.ToBool(raw); err == nil {
-			params.Logprobs = openai.Bool(logprobs)
-		}
-	}
-	if raw, ok := settings["top_logprobs"]; ok {
-		if topLogprobs, err := cast.ToInt32(raw); err == nil {
-			params.TopLogprobs = openai.Int(int64(topLogprobs))
-		}
-	}
-	if raw, ok := settings["reasoning_effort"]; ok {
-		if effort, err := cast.ToString(raw); err == nil {
-			reasoningEffort, ok := parseReasoningEffort(effort)
-			if ok {
-				params.ReasoningEffort = reasoningEffort
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func parseReasoningEffort(v string) (shared.ReasoningEffort, bool) {

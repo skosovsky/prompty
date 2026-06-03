@@ -5,12 +5,16 @@ import (
 	"errors"
 )
 
+// ErrToolInvokerRequired indicates tool orchestration requires a typed ToolInvoker.
+var ErrToolInvokerRequired = errors.New("tool validation: validator must implement ToolInvoker")
+
 // ToolValidator validates a tool call without coupling prompty to a concrete tool registry.
 type ToolValidator interface {
 	ValidateToolCall(name string, argsJSON string) error
 }
 
-// ExecuteWithToolValidation performs one model call and validates tool call arguments.
+// ExecuteWithToolValidation performs one model call, validates tool args, and invokes handlers.
+// Clear-break: validator must implement ToolInvoker (use TypedToolRegistry or custom ToolInvoker).
 func ExecuteWithToolValidation(
 	ctx context.Context,
 	invoker Invoker,
@@ -23,64 +27,48 @@ func ExecuteWithToolValidation(
 	if exec == nil {
 		return nil, errors.New("tool validation: execution is nil")
 	}
+	if validator == nil {
+		return nil, errors.New("tool validation: tool invoker is nil")
+	}
+	toolInvoker, ok := validator.(ToolInvoker)
+	if !ok {
+		return nil, ErrToolInvokerRequired
+	}
+	return ExecuteWithTypedTools(ctx, invoker, exec, toolInvoker)
+}
 
-	workExec := clonePromptExecution(exec)
-	resp, err := invoker.Execute(ctx, workExec)
+func toolCallsFromContent(parts []ContentPart) ([]ToolCallPart, error) {
+	var err error
+	parts, err = GlueToolCallArgChunks(parts)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return nil, errors.New("tool validation: nil response")
-	}
-
-	assistantMsg := newAssistantMessageWithContent(resp.Content)
-	toolCalls := toolCallsFromContent(resp.Content)
-	if len(toolCalls) == 0 {
-		return workExec.AddMessage(assistantMsg), nil
-	}
-	if validator == nil {
-		return workExec, errors.New("tool validation: validator is nil")
-	}
-
-	callErrs := make([]error, len(toolCalls))
-	invalidErrs := make([]error, 0, len(toolCalls))
-	for i, toolCall := range toolCalls {
-		callErrs[i] = validator.ValidateToolCall(toolCall.Name, toolCall.Args)
-		if callErrs[i] != nil {
-			invalidErrs = append(invalidErrs, callErrs[i])
-		}
-	}
-	if len(invalidErrs) == 0 {
-		return workExec.AddMessage(assistantMsg), nil
-	}
-
-	return workExec, &ToolCallError{
-		RawAssistantMessage: &assistantMsg,
-		ToolResults:         toolValidationResults(toolCalls, callErrs),
-		Err:                 errors.Join(invalidErrs...),
-	}
-}
-
-func toolCallsFromContent(parts []ContentPart) []ToolCallPart {
 	out := make([]ToolCallPart, 0)
 	for _, part := range parts {
 		switch x := part.(type) {
 		case ToolCallPart:
-			if x.Args == "" {
-				x.Args = x.ArgsChunk
+			args, err := resolvedToolCallArgs(x)
+			if err != nil {
+				return nil, err
 			}
+			x.Args = args
+			x.ArgsChunk = ""
 			out = append(out, x)
 		case *ToolCallPart:
-			if x != nil {
-				cp := *x
-				if cp.Args == "" {
-					cp.Args = cp.ArgsChunk
-				}
-				out = append(out, cp)
+			if x == nil {
+				continue
 			}
+			cp := *x
+			args, err := resolvedToolCallArgs(cp)
+			if err != nil {
+				return nil, err
+			}
+			cp.Args = args
+			cp.ArgsChunk = ""
+			out = append(out, cp)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func toolValidationResults(toolCalls []ToolCallPart, callErrs []error) []ContentPart {

@@ -218,7 +218,7 @@ func TestNewExecution_DefensiveCopy(t *testing.T) {
 			Content: []ContentPart{
 				MediaPart{MediaType: "image", URL: "https://example.com/img.png", Data: []byte("abc")},
 			},
-			Metadata: map[string]any{"nested": map[string]any{"env": "dev"}},
+			Metadata: mustJSONDocument(map[string]any{"nested": map[string]any{"env": "dev"}}),
 		},
 	}
 	exec := NewExecution(messages)
@@ -227,11 +227,11 @@ func TestNewExecution_DefensiveCopy(t *testing.T) {
 	require.NotNil(t, exec.RequiredTools)
 	assert.Empty(t, exec.RequiredTools)
 
-	messages[0].Metadata["nested"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(messages[0].Metadata)["nested"].(map[string]any)["env"] = "prod"
 	part := messages[0].Content[0].(MediaPart)
 	part.Data[0] = 'X'
 	messages[0].Content[0] = part
 
-	assert.Equal(t, "dev", exec.Messages[0].Metadata["nested"].(map[string]any)["env"])
+	assert.Equal(t, "dev", mustJSONDocumentMap(exec.Messages[0].Metadata)["nested"].(map[string]any)["env"])
 	assert.Equal(t, byte('a'), exec.Messages[0].Content[0].(MediaPart).Data[0])
 }

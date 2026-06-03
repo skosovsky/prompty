@@ -80,7 +80,13 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		if len(exec.ModelOptions.Stop) > 0 {
 			params.StopSequences = exec.ModelOptions.Stop
 		}
-		applyAnthropicProviderSettings(params, exec.ModelOptions.ProviderSettings)
+		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		if err := applyAnthropicProviderSettings(params, providerSettings); err != nil {
+			return nil, err
+		}
 	}
 	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
@@ -120,7 +126,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	params.Messages = messages
 	// ResponseFormat: add mandatory output_format tool with schema; force tool_choice.
 	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
-		schema := schemaToToolInput(exec.ResponseFormat.Schema)
+		schemaMap, schemaErr := prompty.SchemaMap(exec.ResponseFormat)
+		if schemaErr != nil {
+			return nil, fmt.Errorf("response_format schema: %w", schemaErr)
+		}
+		schema := schemaToToolInput(schemaMap)
 		desc := exec.ResponseFormat.Description
 		if desc == "" {
 			desc = "Output must strictly follow this JSON schema"
@@ -135,7 +145,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 			params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
 		}
 		for _, t := range exec.Tools {
-			schema := toolSchemaFromParameters(t.Parameters)
+			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
+			if toolParamsErr != nil {
+				return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+			}
+			schema := toolSchemaFromParameters(toolParams)
 			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
 			if t.Description != "" {
 				tool.OfTool.Description = anthropic.String(t.Description)
@@ -332,14 +346,14 @@ func (a *Adapter) assistantMessage(
 			}
 			blocks = append(blocks, block)
 		case prompty.ToolCallPart:
-			if x.Args != "" && !json.Valid([]byte(x.Args)) {
+			args, argsErr := prompty.ToolCallArgsForTranslate(x)
+			if argsErr != nil {
+				return anthropic.MessageParam{}, argsErr
+			}
+			if args != "" && !json.Valid([]byte(args)) {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
 			}
-			var input json.RawMessage
-			if x.Args != "" {
-				input = json.RawMessage(x.Args)
-			}
-			block := anthropic.NewToolUseBlock(x.ID, input, x.Name)
+			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
 			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
 			if err != nil {
 				return anthropic.MessageParam{}, err
@@ -349,14 +363,14 @@ func (a *Adapter) assistantMessage(
 			if x == nil {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
-			if x.Args != "" && !json.Valid([]byte(x.Args)) {
+			args, argsErr := prompty.ToolCallArgsForTranslate(*x)
+			if argsErr != nil {
+				return anthropic.MessageParam{}, argsErr
+			}
+			if args != "" && !json.Valid([]byte(args)) {
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
 			}
-			var input json.RawMessage
-			if x.Args != "" {
-				input = json.RawMessage(x.Args)
-			}
-			block := anthropic.NewToolUseBlock(x.ID, input, x.Name)
+			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
 			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
 			if err != nil {
 				return anthropic.MessageParam{}, err
@@ -385,7 +399,11 @@ func (a *Adapter) toolResultMessage(
 			}
 			tr = *x
 		default:
-			continue
+			return anthropic.MessageParam{}, fmt.Errorf(
+				"%w: unexpected %T in tool message",
+				adapter.ErrUnsupportedContentType,
+				p,
+			)
 		}
 		{
 			toolResultCache := resolveCacheControl(messageCache, tr.CacheControl)
@@ -651,15 +669,29 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 			}
 		case "tool_use":
 			args := string(block.Input)
-			if args == "" {
-				args = "{}"
-			}
 			// Structured output: output_format tool returns JSON as text for consumer to parse
 			if block.Name == outputFormatToolName {
 				out = append(out, prompty.TextPart{Text: args})
 			} else {
+				if args == "" {
+					return nil, fmt.Errorf(
+						"%w: empty tool_use args for %q",
+						adapter.ErrMalformedArgs,
+						block.Name,
+					)
+				}
 				out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
 			}
+		default:
+			blockType := block.Type
+			if blockType == "" {
+				blockType = "<empty>"
+			}
+			return nil, fmt.Errorf(
+				"%w: unknown content block type %q",
+				adapter.ErrUnsupportedContentType,
+				blockType,
+			)
 		}
 	}
 	if len(out) == 0 {
@@ -677,8 +709,7 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 // ContentBlockStartEventContentBlockUnion; exact field names depend on anthropic-sdk-go version.
 // Until the adapter is updated to match the SDK struct, callers can type-assert to *ContentBlockDeltaEvent
 // or *ContentBlockStartEvent and extract delta/block manually, or use this stub.
-func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
-	_ = rawChunk
+func (*Adapter) ParseStreamChunk(_ any) ([]prompty.ContentPart, error) {
 	return nil, adapter.ErrStreamNotImplemented
 }
 
@@ -695,18 +726,33 @@ func usageFromAnthropic(usage anthropic.Usage) prompty.Usage {
 	}
 }
 
-func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings map[string]any) {
+func anthropicProviderSettingKeys() []string {
+	return []string{"top_k", "stop_sequences"}
+}
+
+func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings map[string]any) error {
 	if len(settings) == 0 {
-		return
+		return nil
+	}
+	if err := adapter.RejectUnknownProviderSettingKeys(settings, anthropicProviderSettingKeys()); err != nil {
+		return err
 	}
 	if raw, ok := settings["top_k"]; ok {
-		if topK, err := cast.ToInt32(raw); err == nil {
-			params.TopK = anthropic.Int(int64(topK))
+		topK, err := cast.ToInt32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("top_k", err)
 		}
+		if err := adapter.ValidateInt32Min("top_k", topK, 1); err != nil {
+			return err
+		}
+		params.TopK = anthropic.Int(int64(topK))
 	}
 	if raw, ok := settings["stop_sequences"]; ok {
-		if stops, err := cast.ToStringSlice(raw); err == nil {
-			params.StopSequences = stops
+		stops, err := cast.ToStringSlice(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("stop_sequences", err)
 		}
+		params.StopSequences = stops
 	}
+	return nil
 }

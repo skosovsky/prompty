@@ -35,15 +35,15 @@ type dualSchemaReflectResult struct {
 
 type nilPointerSchemaProvider struct{}
 
-func (*nilPointerSchemaProvider) JSONSchema() map[string]any {
-	return map[string]any{
+func (*nilPointerSchemaProvider) JSONSchema() JSONDocument {
+	return MustJSONDocumentFromMap(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"name": map[string]any{"type": "string"},
 		},
 		"required":             []string{"name"},
 		"additionalProperties": false,
-	}
+	})
 }
 
 func TestDualSchemaEngine_Consistency(t *testing.T) {

@@ -7,7 +7,7 @@ func BenchmarkRenderPlanExecute(b *testing.B) {
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("You are {{ .Input.bot_name }}.")},
 		{Role: RoleUser, Content: TextContent("{{ .Input.query }}")},
-	}, WithPartialVariables(map[string]any{"bot_name": "Helper"}))
+	}, MustWithPartialVariablesJSON(MustJSONDocumentFromMap(map[string]any{"bot_name": "Helper"})))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -36,7 +36,11 @@ func BenchmarkGetPayloadFields(b *testing.B) {
 
 func BenchmarkRenderToolsAsXML(b *testing.B) {
 	tools := []ToolDefinition{
-		{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+		{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  mustJSONDocument(map[string]any{"type": "object"}),
+		},
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	b.ResetTimer()
@@ -47,7 +51,11 @@ func BenchmarkRenderToolsAsXML(b *testing.B) {
 
 func BenchmarkRenderToolsAsJSON(b *testing.B) {
 	tools := []ToolDefinition{
-		{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+		{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  mustJSONDocument(map[string]any{"type": "object"}),
+		},
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	b.ResetTimer()

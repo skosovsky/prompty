@@ -19,24 +19,24 @@ func TestBuildStructTemplateInput_SnakeCaseFieldWithoutTags(t *testing.T) {
 	type Payload struct {
 		UserName string
 	}
-	exec, err := NewRenderPlan(tpl, &Payload{UserName: "Ada"}).Execute(context.Background())
+	exec, err := NewRenderPlanFromStruct(tpl, &Payload{UserName: "Ada"}).Execute(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "Ada", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "Ada", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func TestBuildStructTemplateInput_MergesPartialsWhenNeeded(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("{{ .Input.bot_name }}: {{ .Input.msg }}")},
-	}, WithPartialVariables(map[string]any{"bot_name": "Bot", "msg": "default"}))
+	}, MustWithPartialVariablesJSON(MustJSONDocumentFromMap(map[string]any{"bot_name": "Bot", "msg": "default"})))
 	require.NoError(t, err)
 
 	type Payload struct {
 		Msg string `prompt:"msg"`
 	}
-	exec, err := NewRenderPlan(tpl, &Payload{Msg: "override"}).Execute(context.Background())
+	exec, err := NewRenderPlanFromStruct(tpl, &Payload{Msg: "override"}).Execute(context.Background())
 	require.NoError(t, err)
-	text := TextFromParts(exec.Messages[0].Content)
+	text := mustTextFromParts(t, exec.Messages[0].Content)
 	assert.Contains(t, text, "Bot")
 	assert.Contains(t, text, "override")
 }
@@ -61,9 +61,9 @@ func TestFieldAliases_PromptOverridesJsonAndSnakeCase(t *testing.T) {
 		{Role: RoleUser, Content: TextContent("{{ .Input.display_name }} / {{ .Input.json_name }}")},
 	})
 	require.NoError(t, err)
-	exec, err := NewRenderPlan(tpl, &Payload{UserName: "Ada"}).Execute(context.Background())
+	exec, err := NewRenderPlanFromStruct(tpl, &Payload{UserName: "Ada"}).Execute(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "Ada / Ada", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "Ada / Ada", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func TestRenderPlan_RejectNonStructNonMapInput(t *testing.T) {
@@ -72,7 +72,7 @@ func TestRenderPlan_RejectNonStructNonMapInput(t *testing.T) {
 		{Role: RoleUser, Content: TextContent("hi")},
 	})
 	require.NoError(t, err)
-	_, err = NewRenderPlan(tpl, "not-a-struct").Execute(context.Background())
+	_, err = NewRenderPlanFromStruct(tpl, "not-a-struct").Execute(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }

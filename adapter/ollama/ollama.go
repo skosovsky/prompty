@@ -60,7 +60,10 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 		Messages: make([]api.Message, 0, len(working.Messages)),
 	}
 	if exec.ModelOptions != nil {
-		providerSettings := exec.ModelOptions.ProviderSettings
+		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
 		if exec.ModelOptions.Temperature != nil || exec.ModelOptions.MaxTokens != nil ||
 			exec.ModelOptions.TopP != nil ||
 			len(exec.ModelOptions.Stop) > 0 ||
@@ -78,7 +81,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			if len(exec.ModelOptions.Stop) > 0 {
 				req.Options["stop"] = exec.ModelOptions.Stop
 			}
-			applyOllamaProviderSettings(req.Options, providerSettings)
+			if err := applyOllamaProviderSettings(req.Options, providerSettings); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, msg := range working.Messages {
@@ -138,7 +143,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 				)
 			}
 		}
-		text := prompty.TextFromParts(msg.Content)
+		text, err := prompty.StrictTextFromParts(msg.Content)
+		if err != nil {
+			return nil, err
+		}
 		return []api.Message{{Role: "system", Content: text}}, nil
 	case prompty.RoleUser:
 		var images []api.ImageData
@@ -164,7 +172,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 			}
 			images = append(images, api.ImageData(data))
 		}
-		text := prompty.TextFromParts(msg.Content)
+		text, err := prompty.JoinAdapterTextParts(msg.Content)
+		if err != nil {
+			return nil, err
+		}
 		return []api.Message{{Role: "user", Content: text, Images: images}}, nil
 	case prompty.RoleAssistant:
 		for _, p := range msg.Content {
@@ -179,11 +190,13 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 		var tcIndex int
 		for _, p := range msg.Content {
 			if tc, ok := p.(prompty.ToolCallPart); ok {
+				argsJSON, argsErr := prompty.ToolCallArgsForTranslate(tc)
+				if argsErr != nil {
+					return nil, argsErr
+				}
 				var args api.ToolCallFunctionArguments
-				if tc.Args != "" {
-					if err := json.Unmarshal([]byte(tc.Args), &args); err != nil {
-						return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
-					}
+				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+					return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
 				}
 				toolCalls = append(toolCalls, api.ToolCall{
 					ID: tc.ID,
@@ -196,13 +209,16 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 				tcIndex++
 			}
 		}
-		text := prompty.TextFromParts(msg.Content)
+		text, err := prompty.JoinAdapterTextParts(msg.Content)
+		if err != nil {
+			return nil, err
+		}
 		return []api.Message{{Role: "assistant", Content: text, ToolCalls: toolCalls}}, nil
 	case prompty.RoleTool:
 		messages := make([]api.Message, 0, len(msg.Content))
 		for _, p := range msg.Content {
 			switch x := p.(type) {
-			case prompty.MediaPart:
+			case prompty.MediaPart, *prompty.MediaPart:
 				return nil, fmt.Errorf(
 					"%w: Ollama does not support images in tool messages",
 					adapter.ErrUnsupportedContentType,
@@ -216,12 +232,38 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 						)
 					}
 				}
-				text := prompty.TextFromParts(x.Content)
+				text, err := prompty.StrictTextFromParts(x.Content)
+				if err != nil {
+					return nil, err
+				}
 				messages = append(messages, api.Message{
 					Role:       "tool",
 					Content:    text,
 					ToolCallID: x.ToolCallID,
 				})
+			case *prompty.ToolResultPart:
+				if x == nil {
+					return nil, adapter.ErrUnsupportedContentType
+				}
+				for _, cp := range x.Content {
+					if _, ok := cp.(prompty.MediaPart); ok {
+						return nil, fmt.Errorf(
+							"%w: Ollama does not support images in tool result content",
+							adapter.ErrUnsupportedContentType,
+						)
+					}
+				}
+				text, err := prompty.StrictTextFromParts(x.Content)
+				if err != nil {
+					return nil, err
+				}
+				messages = append(messages, api.Message{
+					Role:       "tool",
+					Content:    text,
+					ToolCallID: x.ToolCallID,
+				})
+			default:
+				return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
 			}
 		}
 		if len(messages) > 0 {
@@ -246,12 +288,8 @@ func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
 		Type:       "object",
 		Properties: api.NewToolPropertiesMap(),
 	}
-	if t.Parameters != nil {
-		b, err := json.Marshal(t.Parameters)
-		if err != nil {
-			return api.Tool{}, fmt.Errorf("%w: failed to marshal tool parameters: %w", adapter.ErrMalformedArgs, err)
-		}
-		if err = json.Unmarshal(b, &params); err != nil {
+	if len(t.Parameters) > 0 {
+		if err := json.Unmarshal(t.Parameters, &params); err != nil {
 			return api.Tool{}, fmt.Errorf("%w: failed to unmarshal tool parameters: %w", adapter.ErrMalformedArgs, err)
 		}
 		if params.Properties == nil {
@@ -280,17 +318,18 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 	}
 	for _, tc := range msg.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
-		var args string
-		if len(argsMap) > 0 {
-			b, err := json.Marshal(argsMap)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
-			}
-			args = string(b)
-		} else {
-			args = "{}"
+		if len(argsMap) == 0 {
+			return nil, fmt.Errorf(
+				"%w: empty tool call args for %q",
+				adapter.ErrMalformedArgs,
+				tc.Function.Name,
+			)
 		}
-		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: args})
+		b, err := json.Marshal(argsMap)
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
+		}
+		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: string(b)})
 	}
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
@@ -315,7 +354,7 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 		if len(argsMap) > 0 {
 			b, err := json.Marshal(argsMap)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
 			}
 			argsChunk = string(b)
 		}
@@ -326,28 +365,53 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 
 var _ adapter.ProviderAdapter[*api.ChatRequest, *api.ChatResponse] = (*Adapter)(nil)
 
-func applyOllamaProviderSettings(options map[string]any, settings map[string]any) {
+func ollamaProviderSettingKeys() []string {
+	return []string{"top_k", "seed", "num_ctx", "repeat_penalty"}
+}
+
+func applyOllamaProviderSettings(options map[string]any, settings map[string]any) error {
 	if options == nil || len(settings) == 0 {
-		return
+		return nil
+	}
+	if err := adapter.RejectUnknownProviderSettingKeys(settings, ollamaProviderSettingKeys()); err != nil {
+		return err
 	}
 	if raw, ok := settings["top_k"]; ok {
-		if topK, err := cast.ToInt32(raw); err == nil {
-			options["top_k"] = int(topK)
+		topK, err := cast.ToInt32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("top_k", err)
 		}
+		if err := adapter.ValidateInt32Min("top_k", topK, 1); err != nil {
+			return err
+		}
+		options["top_k"] = int(topK)
 	}
 	if raw, ok := settings["seed"]; ok {
-		if seed, err := cast.ToInt32(raw); err == nil {
-			options["seed"] = int(seed)
+		seed, err := cast.ToInt32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("seed", err)
 		}
+		options["seed"] = int(seed)
 	}
 	if raw, ok := settings["num_ctx"]; ok {
-		if numCtx, err := cast.ToInt32(raw); err == nil {
-			options["num_ctx"] = int(numCtx)
+		numCtx, err := cast.ToInt32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("num_ctx", err)
 		}
+		if err := adapter.ValidateInt32Min("num_ctx", numCtx, 1); err != nil {
+			return err
+		}
+		options["num_ctx"] = int(numCtx)
 	}
 	if raw, ok := settings["repeat_penalty"]; ok {
-		if repeatPenalty, err := cast.ToFloat32(raw); err == nil {
-			options["repeat_penalty"] = float64(repeatPenalty)
+		repeatPenalty, err := cast.ToFloat32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("repeat_penalty", err)
 		}
+		if err := adapter.ValidateFloat32Range("repeat_penalty", repeatPenalty, 0, 2); err != nil {
+			return err
+		}
+		options["repeat_penalty"] = float64(repeatPenalty)
 	}
+	return nil
 }

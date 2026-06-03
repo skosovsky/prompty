@@ -12,7 +12,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	)
 }
 
 func TestPrepareTranslateExecution_DoesNotMutateInput(t *testing.T) {
@@ -31,38 +33,29 @@ func TestPrepareTranslateExecution_DoesNotMutateInput(t *testing.T) {
 	assert.Equal(t, before.Messages, exec.Messages, "input PromptExecution must stay unchanged")
 }
 
-func TestTextFromParts(t *testing.T) {
+func TestStrictTextFromParts(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		parts []prompty.ContentPart
-		want  string
-	}{
-		{"empty slice", []prompty.ContentPart{}, ""},
-		{"nil slice", nil, ""},
-		{"single text", []prompty.ContentPart{prompty.TextPart{Text: "hello"}}, "hello"},
-		{"multiple text", []prompty.ContentPart{
-			prompty.TextPart{Text: "a"},
-			prompty.TextPart{Text: "b"},
-			prompty.TextPart{Text: "c"},
-		}, "abc"},
-		{"mixed parts", []prompty.ContentPart{
-			prompty.TextPart{Text: "x"},
-			prompty.MediaPart{MediaType: "image", URL: "https://x"},
-			prompty.TextPart{Text: "y"},
-			prompty.ToolCallPart{ID: "1", Name: "f", Args: "{}"},
-		}, "xy"},
-		{"no text", []prompty.ContentPart{
-			prompty.MediaPart{MediaType: "image", URL: "https://x"},
-		}, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := prompty.TextFromParts(tt.parts)
-			assert.Equal(t, tt.want, got)
-		})
-	}
+	got, err := prompty.StrictTextFromParts([]prompty.ContentPart{prompty.TextPart{Text: "hello"}})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", got)
+
+	_, err = prompty.StrictTextFromParts([]prompty.ContentPart{
+		prompty.TextPart{Text: "x"},
+		prompty.ToolCallPart{ID: "1", Name: "f", Args: "{}"},
+	})
+	require.Error(t, err)
+}
+
+func TestJoinAdapterTextParts(t *testing.T) {
+	t.Parallel()
+	got, err := prompty.JoinAdapterTextParts([]prompty.ContentPart{
+		prompty.TextPart{Text: "x"},
+		prompty.MediaPart{MediaType: "image", URL: "https://x"},
+		prompty.TextPart{Text: "y"},
+		prompty.ToolCallPart{ID: "1", Name: "f", Args: "{}"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "xy", got)
 }
 
 func TestNewClient_Execute(t *testing.T) {
@@ -91,7 +84,9 @@ func TestNewClient_Execute(t *testing.T) {
 	resp, err := client.Execute(context.Background(), exec)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	assert.Equal(t, "resp-req", resp.Text())
+	text, err := resp.StrictText()
+	require.NoError(t, err)
+	assert.Equal(t, "resp-req", text)
 }
 
 func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
@@ -125,7 +120,9 @@ func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
 	}
 	require.Len(t, chunks, 1)
 	assert.True(t, chunks[0].IsFinished)
-	assert.Equal(t, "chunk", prompty.TextFromParts(chunks[0].Content))
+	chunkText, err := prompty.StrictTextFromParts(chunks[0].Content)
+	require.NoError(t, err)
+	assert.Equal(t, "chunk", chunkText)
 }
 
 type mockAdapter[Req, Resp any] struct {

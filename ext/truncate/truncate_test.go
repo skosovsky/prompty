@@ -25,7 +25,11 @@ func (c *truncateCounter) CountMessage(msg prompty.ChatMessage) (int, error) {
 	if c.countMessage != nil {
 		return c.countMessage(msg)
 	}
-	return c.Count(prompty.TextFromParts(msg.Content))
+	text, err := prompty.StrictTextFromParts(msg.Content)
+	if err != nil {
+		return 0, err
+	}
+	return c.Count(text)
 }
 
 func TestDropOldest_UnderBudgetNoChanges(t *testing.T) {
@@ -67,7 +71,9 @@ func TestDropOldest_RemovesOldUserTurns(t *testing.T) {
 	require.Len(t, trimmed, 2)
 	assert.Equal(t, prompty.RoleSystem, trimmed[0].Role)
 	assert.Equal(t, prompty.RoleUser, trimmed[1].Role)
-	assert.Equal(t, "latest", prompty.TextFromParts(trimmed[1].Content))
+	text, err := prompty.StrictTextFromParts(trimmed[1].Content)
+	require.NoError(t, err)
+	assert.Equal(t, "latest", text)
 }
 
 func TestDropOldest_ProtectsDeveloperOutsidePrefix(t *testing.T) {
@@ -98,5 +104,7 @@ func TestDropOldest_ProtectsDeveloperOutsidePrefix(t *testing.T) {
 	assert.Equal(t, prompty.RoleSystem, trimmed[0].Role)
 	assert.Equal(t, prompty.RoleDeveloper, trimmed[1].Role)
 	assert.Equal(t, prompty.RoleUser, trimmed[2].Role)
-	assert.Equal(t, "latest", prompty.TextFromParts(trimmed[2].Content))
+	text, err := prompty.StrictTextFromParts(trimmed[2].Content)
+	require.NoError(t, err)
+	assert.Equal(t, "latest", text)
 }

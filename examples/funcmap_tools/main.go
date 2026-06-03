@@ -12,6 +12,7 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 	openaiadapter "github.com/skosovsky/prompty/adapter/openai"
 	"github.com/skosovsky/prompty/fileregistry"
@@ -24,9 +25,13 @@ func main() {
 		log.Fatalf("fileregistry.New: %v", err)
 	}
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "tools_demo", map[string]any{
-		"query": "What is the weather in Paris? (hint: use a tool)",
-	})
+	planInput, err := prompty.RegistryPlanInputFrom(struct {
+		Query string `json:"query"`
+	}{Query: "What is the weather in Paris? (hint: use a tool)"})
+	if err != nil {
+		log.Fatalf("RegistryPlanInputFrom: %v", err)
+	}
+	plan, err := reg.Plan(ctx, "tools_demo", planInput)
 	if err != nil {
 		log.Fatalf("Plan: %v", err)
 	}
@@ -46,5 +51,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Execute: %v", err)
 	}
-	fmt.Println(resp.Text())
+	text, err := resp.StrictText()
+	if err != nil {
+		log.Fatalf("StrictText: %v", err)
+	}
+	fmt.Println(text)
 }

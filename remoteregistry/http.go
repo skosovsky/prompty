@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// HTTPFetcher fetches YAML manifests over HTTP. URL resolution: {baseURL}/{name}.{env}.yaml (or .yml),
-// then fallback to {baseURL}/{name}.yaml (or .yml). 404 tries next candidate; other non-2xx returns ErrHTTPStatus.
+// HTTPFetcher fetches manifests over HTTP. Fetch(id) tries {baseURL}/{id}.yaml and {baseURL}/{id}.yml.
+// Registry WithEnvironment passes env-qualified ids only (no base-id fallback). 404 tries next extension.
 var _ Fetcher = (*HTTPFetcher)(nil)
 
 // maxBodySize limits HTTP response body size (1 MB); YAML manifests are small.

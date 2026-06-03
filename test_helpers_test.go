@@ -2,7 +2,11 @@ package prompty
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type scriptedInvoker struct {
@@ -39,6 +43,33 @@ type toolValidatorFunc func(name string, argsJSON string) error
 
 func (f toolValidatorFunc) ValidateToolCall(name string, argsJSON string) error {
 	return f(name, argsJSON)
+}
+
+// stubToolInvoker supports tests that need validate/invoke without a full TypedToolRegistry.
+type stubToolInvoker struct {
+	validate func(name, argsJSON string) error
+	invoke   func(name, argsJSON string) (json.RawMessage, error)
+}
+
+func (s stubToolInvoker) ValidateToolCall(name, argsJSON string) error {
+	if s.validate != nil {
+		return s.validate(name, argsJSON)
+	}
+	return nil
+}
+
+func (s stubToolInvoker) InvokeTool(name, argsJSON string) (json.RawMessage, error) {
+	if s.invoke != nil {
+		return s.invoke(name, argsJSON)
+	}
+	return json.RawMessage(`""`), nil
+}
+
+func mustTextFromParts(t *testing.T, parts []ContentPart) string {
+	t.Helper()
+	text, err := StrictTextFromParts(parts)
+	require.NoError(t, err)
+	return text
 }
 
 func collectSeq[T any](seq iter.Seq2[T, error]) ([]T, error) {

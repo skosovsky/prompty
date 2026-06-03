@@ -80,20 +80,26 @@ type rawMessage struct {
 	Metadata     map[string]any        `yaml:"metadata,omitempty"`
 }
 
+type rawTool struct {
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Parameters  map[string]any `yaml:"parameters"`
+}
+
 type fileManifest struct {
-	ID              string                   `yaml:"id"`
-	Version         string                   `yaml:"version"`
-	Description     string                   `yaml:"description"`
-	LayerKind       prompty.LayerKind        `yaml:"layer_kind,omitempty"`
-	RequiredTools   []string                 `yaml:"required_tools"`
-	ModelOptionsRaw map[string]any           `yaml:"model_options"`
-	Metadata        map[string]any           `yaml:"metadata"`
-	InputSchema     map[string]any           `yaml:"inputs"`
-	Tools           []prompty.ToolDefinition `yaml:"tools"`
-	ResponseFormat  map[string]any           `yaml:"response_format"`
-	Messages        []rawMessage             `yaml:"messages"`
-	LegacyModelRaw  map[string]any           `yaml:"model_config"`
-	LegacyInputsRaw map[string]any           `yaml:"input_schema"`
+	ID              string            `yaml:"id"`
+	Version         string            `yaml:"version"`
+	Description     string            `yaml:"description"`
+	LayerKind       prompty.LayerKind `yaml:"layer_kind,omitempty"`
+	RequiredTools   []string          `yaml:"required_tools"`
+	ModelOptionsRaw map[string]any    `yaml:"model_options"`
+	Metadata        map[string]any    `yaml:"metadata"`
+	InputSchema     map[string]any    `yaml:"inputs"`
+	Tools           []rawTool         `yaml:"tools"`
+	ResponseFormat  map[string]any    `yaml:"response_format"`
+	Messages        []rawMessage      `yaml:"messages"`
+	LegacyModelRaw  map[string]any    `yaml:"model_config"`
+	LegacyInputsRaw map[string]any    `yaml:"input_schema"`
 }
 
 // Parser implements manifest.Unmarshaler for YAML manifests.
@@ -153,9 +159,17 @@ func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
 	if hasSchema && inner != nil {
 		name, _ := normalized["name"].(string)
 		desc, _ := normalized["description"].(string)
-		return &prompty.SchemaDefinition{Name: name, Description: desc, Schema: inner}
+		innerDoc, err := prompty.MapToJSONDocument(inner)
+		if err != nil {
+			return nil
+		}
+		return &prompty.SchemaDefinition{Name: name, Description: desc, Schema: innerDoc}
 	}
-	return &prompty.SchemaDefinition{Schema: normalized}
+	normDoc, err := prompty.MapToJSONDocument(normalized)
+	if err != nil {
+		return nil
+	}
+	return &prompty.SchemaDefinition{Schema: normDoc}
 }
 
 // Unmarshal parses YAML into manifest.RawManifest.
@@ -177,9 +191,6 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	// Direct normalization (no casts needed; fileManifest fields are already map[string]any)
 	fm.ModelOptionsRaw = normalizeMap(fm.ModelOptionsRaw)
 	fm.Metadata = normalizeMap(fm.Metadata)
-	for i := range fm.Tools {
-		fm.Tools[i].Parameters = normalizeMap(fm.Tools[i].Parameters)
-	}
 	for i := range fm.Messages {
 		fm.Messages[i].Metadata = normalizeMap(fm.Messages[i].Metadata)
 	}
@@ -203,7 +214,18 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	}
 	raw.InputSchema = inputs
 	raw.ResponseFormat = rawToSchemaDefinition(fm.ResponseFormat)
-	raw.Tools = fm.Tools
+	raw.Tools = make([]prompty.ToolDefinition, len(fm.Tools))
+	for i, tool := range fm.Tools {
+		paramsDoc, docErr := prompty.MapToJSONDocument(normalizeMap(tool.Parameters))
+		if docErr != nil {
+			return fmt.Errorf("%w: tools[%d].parameters: %w", prompty.ErrInvalidManifest, i, docErr)
+		}
+		raw.Tools[i] = prompty.ToolDefinition{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  paramsDoc,
+		}
+	}
 	raw.LayerKind = fm.LayerKind
 	raw.LegacyModelConfig = fm.LegacyModelRaw
 	if fm.LegacyInputsRaw != nil {

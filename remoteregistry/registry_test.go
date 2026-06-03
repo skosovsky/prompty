@@ -51,8 +51,12 @@ func (m *mockFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
-func (m *mockRegistryWithExtras) Plan(_ context.Context, _ string, typedInput any) (*prompty.RenderPlan, error) {
-	return prompty.NewRenderPlan(prompty.CloneTemplate(m.tpl), typedInput), nil
+func (m *mockRegistryWithExtras) Plan(
+	_ context.Context,
+	_ string,
+	input prompty.RegistryPlanInput,
+) (*prompty.RenderPlan, error) {
+	return prompty.NewRenderPlanFromRegistryInput(prompty.CloneTemplate(m.tpl), input)
 }
 
 func (m *mockRegistryWithExtras) List(_ context.Context) ([]string, error) {
@@ -126,7 +130,7 @@ func TestRegistry_GetTemplate_EnvFallbackBaseAndStaging(t *testing.T) {
 	)
 }
 
-func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {
+func TestRegistry_GetTemplate_EnvVariantRequired_NoBaseFallback(t *testing.T) {
 	t.Parallel()
 	baseJSON := `{"id":"p","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"BaseOnly"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"p": []byte(baseJSON)}}
@@ -134,11 +138,9 @@ func TestRegistry_GetTemplate_EnvFallbackToBase(t *testing.T) {
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := templateFromPlan(ctx, reg, "p")
-	require.NoError(t, err)
-	require.NotNil(t, tpl)
-	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "BaseOnly", tpl.Messages[0].Content[0].Text, "should fallback to base when env variant missing")
+	_, err = templateFromPlan(ctx, reg, "p")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
 func TestRegistry_GetTemplate_FetchError(t *testing.T) {
@@ -583,4 +585,22 @@ func TestCachedRegistry_Close_DelegatesToBase(t *testing.T) {
 	err := reg.Close()
 	require.NoError(t, err)
 	assert.True(t, base.closeCalled)
+}
+
+func TestCachedRegistry_ResolveManifest_RequiresManifestResolver(t *testing.T) {
+	t.Parallel()
+	base := &mockRegistryWithExtras{tpl: &prompty.ChatPromptTemplate{}}
+	reg := WithCache(base, time.Minute)
+	_, err := reg.ResolveManifest(context.Background(), "agent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ManifestResolver")
+}
+
+func TestCachedRegistry_DescribePrompt_RequiresPromptDescriber(t *testing.T) {
+	t.Parallel()
+	base := &mockRegistryWithExtras{tpl: &prompty.ChatPromptTemplate{}}
+	reg := WithCache(base, time.Minute)
+	_, err := reg.DescribePrompt(context.Background(), "agent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PromptDescriber")
 }

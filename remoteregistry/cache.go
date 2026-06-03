@@ -2,6 +2,7 @@ package remoteregistry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -108,6 +109,24 @@ func (r *CachedRegistry) loadTemplate(
 	return r.waitForInflight(ctx, id, inFlight)
 }
 
+// ReadManifestBytes delegates to the base registry when supported.
+func (r *CachedRegistry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if reader, ok := r.base.(prompty.ManifestBytesReader); ok {
+		return reader.ReadManifestBytes(ctx, id)
+	}
+	return nil, prompty.ErrManifestBytesUnavailable
+}
+
+// DescribePrompt delegates introspection to the base registry when it implements PromptDescriber.
+func (r *CachedRegistry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	if d, ok := r.base.(prompty.PromptDescriber); ok {
+		return d.DescribePrompt(ctx, id)
+	}
+	return prompty.TemplateDescriptor{}, errors.New(
+		"remoteregistry: base registry does not implement PromptDescriber",
+	)
+}
+
 // ResolveManifest delegates metadata resolution to the base registry when supported.
 func (r *CachedRegistry) ResolveManifest(
 	ctx context.Context,
@@ -116,20 +135,22 @@ func (r *CachedRegistry) ResolveManifest(
 	if resolver, ok := r.base.(prompty.ManifestResolver); ok {
 		return resolver.ResolveManifest(ctx, id)
 	}
-	tpl, err := r.loadTemplate(ctx, id)
-	if err != nil {
-		return prompty.TemplateDescriptor{}, err
-	}
-	return prompty.DescriptorFromTemplate(tpl), nil
+	return prompty.TemplateDescriptor{}, errors.New(
+		"remoteregistry: base registry does not implement ManifestResolver",
+	)
 }
 
 // Plan returns a deferred render plan using cached template data.
-func (r *CachedRegistry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+func (r *CachedRegistry) Plan(
+	ctx context.Context,
+	id string,
+	input prompty.RegistryPlanInput,
+) (*prompty.RenderPlan, error) {
 	tpl, err := r.loadTemplate(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlan(tpl, typedInput), nil
+	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
 }
 
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {

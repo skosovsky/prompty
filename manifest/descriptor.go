@@ -8,7 +8,7 @@ import (
 )
 
 // BuildDescriptorFromRaw builds metadata-only descriptor without compiling templates.
-func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error) {
+func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error) { //nolint:gocognit
 	if raw.LegacyModelConfig != nil || raw.LegacyInputSchema != nil {
 		return prompty.TemplateDescriptor{}, fmt.Errorf(
 			"%w: use model_options/inputs instead of model_config/input_schema",
@@ -26,8 +26,9 @@ func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error
 			)
 		}
 	}
+	meta := metadataToPromptMetadata(raw)
 	desc := prompty.TemplateDescriptor{
-		Metadata:          metadataToPromptMetadata(raw),
+		Metadata:          meta,
 		ModelOptions:      raw.ModelOptions,
 		Tools:             raw.Tools,
 		RequiredTools:     normalizeRequiredTools(raw.RequiredTools),
@@ -35,11 +36,17 @@ func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error
 		InputSchema:       raw.InputSchema,
 		ResponseFormat:    raw.ResponseFormat,
 		LayerIDs:          nil,
+		Tags:              append([]string(nil), meta.Tags...),
+		Capabilities:      append([]string(nil), meta.Capabilities...),
 	}
-	if raw.InputSchema != nil && raw.InputSchema.Schema != nil {
-		if req, ok := raw.InputSchema.Schema["required"]; ok {
-			if ss, err := cast.ToStringSlice(req); err == nil {
-				desc.RequiredInputVars = ss
+	//nolint:nestif // required-input extraction is intentionally sequential.
+	if raw.InputSchema != nil && len(raw.InputSchema.Schema) > 0 {
+		schemaMap, err := prompty.JSONDocumentAsMap(raw.InputSchema.Schema)
+		if err == nil && schemaMap != nil {
+			if req, ok := schemaMap["required"]; ok {
+				if ss, err := cast.ToStringSlice(req); err == nil {
+					desc.RequiredInputVars = ss
+				}
 			}
 		}
 	}

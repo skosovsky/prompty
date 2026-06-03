@@ -28,6 +28,6 @@ messages:
 - **Messages:** system, user, assistant; tools and tool use. **Media:** `image/*` maps to image blocks (base64 or URL), `application/pdf` maps to PDF document blocks (base64 or URL), and `text/plain` maps to plain-text document blocks (base64 only). `MediaPart.MIMEType` is required for media translation; unsupported or missing MIME types return `adapter.ErrUnsupportedContentType`.
 - **Tool results:** multimodal `ToolResultPart.Content` supports text and media blocks.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
-- **Helpers:** `prompty.TextFromParts`.
+- **Helpers:** `prompty.StrictTextFromParts`, `prompty.JoinAdapterTextParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/anthropic) for the full API.

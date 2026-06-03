@@ -14,7 +14,7 @@ var (
 	ErrMissingVariable       = errors.New("prompty: required template variable not provided")
 	ErrTemplateRender        = errors.New("prompty: template rendering failed")
 	ErrTemplateParse         = errors.New("prompty: template parsing failed")
-	ErrInvalidPayload        = errors.New("prompty: render plan input must be struct, map[string]any, or nil")
+	ErrInvalidPayload        = errors.New("prompty: render plan input must be a struct or nil")
 	ErrTemplateNotFound      = errors.New("prompty: template not found in registry")
 	ErrInvalidManifest       = errors.New("prompty: manifest file is malformed")
 	ErrLegacyManifestVersion = errors.New("prompty: legacy manifest version is not supported")
@@ -31,6 +31,10 @@ var (
 	ErrConflictingDirectives = errors.New(
 		"prompty: conflicting directives (e.g. Tools and ResponseFormat cannot be used together)",
 	)
+	// ErrManifestBytesUnavailable indicates the registry cannot supply raw manifest bytes.
+	ErrManifestBytesUnavailable = errors.New("prompty: manifest bytes unavailable from registry")
+	// ErrManifestBytesRequired indicates compile requires raw manifest bytes (strict default).
+	ErrManifestBytesRequired = errors.New("prompty: manifest bytes required for compiled prompt digest")
 )
 
 // VariableError wraps a sentinel error with variable and template context.

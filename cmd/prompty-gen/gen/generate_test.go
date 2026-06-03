@@ -78,8 +78,14 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "func NewPromptCatalog(") {
 		t.Error("expected NewPromptCatalog")
 	}
-	if !strings.Contains(out, "func (c *promptCatalog) RenderByID(") {
-		t.Error("expected RenderByID implementation")
+	if strings.Contains(out, "RenderByID") {
+		t.Error("legacy RenderByID must not be generated")
+	}
+	if strings.Contains(out, "renderFromAny") {
+		t.Error("legacy renderFromAny must not be generated")
+	}
+	if !strings.Contains(out, "DescribingRegistry") {
+		t.Error("expected NewPromptCatalog to accept DescribingRegistry")
 	}
 	if !strings.Contains(out, "func AllPromptIDs()") {
 		t.Error("expected AllPromptIDs")
@@ -98,14 +104,14 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "support_agent",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"bot_name":   map[string]any{"type": "string"},
 					"user_query": map[string]any{"type": "string"},
 				},
 				"required": []any{"user_query"},
-			},
+			}),
 		},
 	}
 
@@ -150,8 +156,8 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "build render plan") {
 		t.Error("expected render-plan build error wrapping")
 	}
-	if !strings.Contains(out, "func (p *SupportAgentPrompt) renderFromAny(") {
-		t.Error("expected renderFromAny helper for RenderByID")
+	if strings.Contains(out, "renderFromAny") {
+		t.Error("legacy renderFromAny must not be generated")
 	}
 	if strings.Contains(out, "Format(ctx,") {
 		t.Error("DoD: generated code must not use the removed Format(ctx, ...) signature")
@@ -168,13 +174,13 @@ func TestGenerateManifestTypes_NoResponseFormat(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "simple",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"q": map[string]any{"type": "string"},
 				},
 				"required": []any{"q"},
-			},
+			}),
 		},
 		// No ResponseFormat
 	}
@@ -199,22 +205,22 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "greeter",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name": map[string]any{"type": "string"},
 				},
 				"required": []any{"name"},
-			},
+			}),
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"message": map[string]any{"type": "string"},
 				},
 				"required": []any{"message"},
-			},
+			}),
 		},
 	}
 
@@ -244,13 +250,13 @@ func TestGenerateManifestTypes_NestedObjectInOutput(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "router",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
-			},
+			}),
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"entities": map[string]any{
@@ -260,7 +266,7 @@ func TestGenerateManifestTypes_NestedObjectInOutput(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -284,7 +290,7 @@ func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "router",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"payload": map[string]any{
@@ -294,7 +300,7 @@ func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -321,13 +327,13 @@ func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "router",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
-			},
+			}),
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"users": map[string]any{
@@ -340,7 +346,7 @@ func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -390,10 +396,10 @@ func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
 		ID:            "doctor_agent",
 		RequiredTools: []string{"doctor_search_knowledge_base", "get_current_time"},
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -419,7 +425,7 @@ func TestGenerateManifestTypes_Dive(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "orders",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"items": map[string]any{
@@ -434,7 +440,7 @@ func TestGenerateManifestTypes_Dive(t *testing.T) {
 					},
 				},
 				"required": []any{"items"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -453,7 +459,7 @@ func TestGenerateManifestTypes_AdditionalProperties(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "meta",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"extra": map[string]any{
@@ -461,7 +467,7 @@ func TestGenerateManifestTypes_AdditionalProperties(t *testing.T) {
 						"additionalProperties": map[string]any{"type": "string"},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -476,30 +482,47 @@ func TestGenerateManifestTypes_AdditionalProperties(t *testing.T) {
 	}
 }
 
-func TestGenerateManifestTypes_OptionalAny(t *testing.T) {
+func TestGenerateManifestTypes_OpenObjectWithoutTypedAdditionalPropertiesFails(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "bag",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"meta": map[string]any{
+						"type": "object",
+					},
+				},
+			}),
+		},
+	}
+	_, err := GenerateManifestTypes(spec, "prompts")
+	if err == nil {
+		t.Fatal("expected error for object without properties and typed additionalProperties")
+	}
+	if !strings.Contains(err.Error(), "requires typed additionalProperties") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestGenerateManifestTypes_UntypedPropertyFails(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "flex",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"payload": map[string]any{}, // no type -> any
+					"payload": map[string]any{}, // no type -> strict codegen error
 				},
-			},
+			}),
 		},
 	}
-	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
+	_, err := GenerateManifestTypes(spec, "prompts")
+	if err == nil {
+		t.Fatal("expected error for property without type keyword")
 	}
-	var buf strings.Builder
-	_ = f.Render(&buf)
-	out := buf.String()
-	if !strings.Contains(out, "any") {
-		t.Error("expected any type for untyped optional property")
-	}
-	if strings.Contains(out, "*any") {
-		t.Error("optional any must not use *any (redundant)")
+	if !strings.Contains(err.Error(), "missing or unsupported type keyword") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -507,7 +530,7 @@ func TestGenerateManifestTypes_Oneof(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "status",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"state": map[string]any{
@@ -516,7 +539,7 @@ func TestGenerateManifestTypes_Oneof(t *testing.T) {
 					},
 				},
 				"required": []any{"state"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -537,13 +560,13 @@ func TestGenerateManifestTypes_RequiredBoolWithFalse(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "flags",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"enabled": map[string]any{"type": "boolean"},
 				},
 				"required": []any{"enabled"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -568,7 +591,7 @@ func TestGenerateManifestTypes_MinItemsMaxItems(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "list",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"ids": map[string]any{
@@ -578,7 +601,7 @@ func TestGenerateManifestTypes_MinItemsMaxItems(t *testing.T) {
 						"items":    map[string]any{"type": "string"},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -597,9 +620,9 @@ func TestGenerateManifestTypes_RootObjectWithoutProperties(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "empty_input",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -618,7 +641,7 @@ func TestGenerateManifestTypes_ArrayOfArray(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "matrix",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"rows": map[string]any{
@@ -634,7 +657,7 @@ func TestGenerateManifestTypes_ArrayOfArray(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -653,12 +676,12 @@ func TestGenerateManifestTypes_SpecialCharsInKeys(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "special",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"user@name": map[string]any{"type": "string"}, // @ -> _
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -678,12 +701,12 @@ func TestGenerateManifestTypes_IdWithDigitPrefix(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "2fa_prompt",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"code": map[string]any{"type": "string"},
 				},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -702,7 +725,7 @@ func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing
 	spec := &PromptSpec{
 		ID: "sales",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"title": map[string]any{"type": "string"},
@@ -711,7 +734,7 @@ func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing
 					},
 				},
 				"required": []any{"title"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -732,7 +755,7 @@ func TestGenerateManifestTypes_OptionalArrayNoDefaultElseNil(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "tagged",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name": map[string]any{"type": "string"},
@@ -742,7 +765,7 @@ func TestGenerateManifestTypes_OptionalArrayNoDefaultElseNil(t *testing.T) {
 					},
 				},
 				"required": []any{"name"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -763,7 +786,7 @@ func TestGenerateManifestTypes_Default(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "greeter",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name": map[string]any{"type": "string"},
@@ -773,7 +796,7 @@ func TestGenerateManifestTypes_Default(t *testing.T) {
 					},
 				},
 				"required": []any{"name"},
-			},
+			}),
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
@@ -801,7 +824,7 @@ func TestGenerateManifestTypes_Default_UnsupportedTypeFailsFast(t *testing.T) {
 	spec := &PromptSpec{
 		ID: "with_array_default",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"tags": map[string]any{
@@ -810,7 +833,7 @@ func TestGenerateManifestTypes_Default_UnsupportedTypeFailsFast(t *testing.T) {
 						"default": []any{"a", "b"},
 					},
 				},
-			},
+			}),
 		},
 	}
 
@@ -827,7 +850,7 @@ func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.
 	spec := &PromptSpec{
 		ID: "bad_default_literal",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"enabled": map[string]any{
@@ -835,7 +858,7 @@ func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.
 						"default": "yes",
 					},
 				},
-			},
+			}),
 		},
 	}
 
@@ -848,68 +871,19 @@ func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.
 	}
 }
 
-// --- Golden test ---
-
-func TestGenerate_Golden(t *testing.T) {
-	if goldenFlag() == "" {
-		t.Skip("skip golden test unless -golden is set")
-	}
-
-	spec := &PromptSpec{
-		ID: "support_agent",
-		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"user_query": map[string]any{"type": "string"},
-					"bot_name": map[string]any{
-						"type":    "string",
-						"default": "SupportBot",
-					},
-				},
-				"required": []any{"user_query"},
-			},
-		},
-	}
-
-	// Shared
-	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
-	if err != nil {
-		t.Fatalf("GenerateSharedTypes: %v", err)
-	}
-	sharedPath := filepath.Join(goldenFlag(), "shared_gen.go.golden")
-	writeGolden(t, shared, sharedPath)
-
-	// Manifest
-	manifest, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
-	manifestPath := filepath.Join(goldenFlag(), "support_agent_gen.go.golden")
-	writeGolden(t, manifest, manifestPath)
-
-	// Consts
-	consts, err := GenerateConstsPackage("prompts", []string{"support_agent"})
-	if err != nil {
-		t.Fatalf("GenerateConstsPackage: %v", err)
-	}
-	constsPath := filepath.Join(goldenFlag(), "consts_gen.go.golden")
-	writeGolden(t, consts, constsPath)
-}
-
 // TestGenerate_GoldenCompare compares generated output to golden files (regression test).
-// Run with -golden=<dir> to overwrite golden files.
+// Run with -golden=<dir> to overwrite golden files in that directory.
 func TestGenerate_GoldenCompare(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	goldenDir := filepath.Join(filepath.Dir(file), "..", "testdata")
-	if goldenFlag() != "" {
-		t.Skip("skip compare when -golden is set (use TestGenerate_Golden to overwrite)")
+	if updateDir := goldenFlag(); updateDir != "" {
+		goldenDir = updateDir
 	}
 
 	spec := &PromptSpec{
 		ID: "support_agent",
 		InputSchema: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"user_query": map[string]any{"type": "string"},
@@ -919,13 +893,16 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 					},
 				},
 				"required": []any{"user_query"},
-			},
+			}),
 		},
 	}
 
 	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
 	if err != nil {
 		t.Fatalf("GenerateSharedTypes: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, shared, filepath.Join(goldenDir, "shared_gen.go.golden"))
 	}
 	compareGolden(t, goldenDir, "shared_gen.go.golden", func() (string, error) {
 		var b strings.Builder
@@ -939,6 +916,9 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateManifestTypes: %v", err)
 	}
+	if goldenFlag() != "" {
+		writeGolden(t, manifestFile, filepath.Join(goldenDir, "support_agent_gen.go.golden"))
+	}
 	compareGolden(t, goldenDir, "support_agent_gen.go.golden", func() (string, error) {
 		var b strings.Builder
 		if renderErr := manifestFile.Render(&b); renderErr != nil {
@@ -947,13 +927,16 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		return b.String(), nil
 	})
 
+	consts, err := GenerateConstsPackage("prompts", []string{"support_agent"})
+	if err != nil {
+		t.Fatalf("GenerateConstsPackage: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, consts, filepath.Join(goldenDir, "consts_gen.go.golden"))
+	}
 	compareGolden(t, goldenDir, "consts_gen.go.golden", func() (string, error) {
-		f, err := GenerateConstsPackage("prompts", []string{"support_agent"})
-		if err != nil {
-			return "", err
-		}
 		var b strings.Builder
-		if renderErr := f.Render(&b); renderErr != nil {
+		if renderErr := consts.Render(&b); renderErr != nil {
 			return "", renderErr
 		}
 		return b.String(), nil
@@ -965,7 +948,7 @@ func compareGolden(t *testing.T, dir, name string, gen func() (string, error)) {
 	path := filepath.Join(dir, name)
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("golden file %s not found (run with -golden=%s): %v", name, dir, err)
+		t.Fatalf("golden file %s not found in %s: %v", name, dir, err)
 	}
 	got, err := gen()
 	if err != nil {

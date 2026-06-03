@@ -230,10 +230,10 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":          3,
 				"stop_sequences": []any{"STOP", "END"},
-			},
+			}),
 		},
 	}
 	params, err := a.Translate(exec)
@@ -243,7 +243,7 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 	assert.Equal(t, []string{"STOP", "END"}, params.StopSequences)
 }
 
-func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+func TestTranslate_ProviderSettingsMapping_RejectsInvalidValues(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -251,16 +251,34 @@ func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":          "bad",
 				"stop_sequences": []any{"STOP"},
-			},
+			}),
 		},
 	}
-	params, err := a.Translate(exec)
-	require.NoError(t, err)
-	assert.False(t, params.TopK.Valid())
-	assert.Equal(t, []string{"STOP"}, params.StopSequences)
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
+}
+
+func TestTranslate_ProviderSettingsMapping_RejectsUnknownKey(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
+				"top_k":           5,
+				"extra_anthropic": true,
+			}),
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
 }
 
 func TestTranslate_NilExecution(t *testing.T) {
@@ -285,13 +303,13 @@ func TestTranslate_WithTools(t *testing.T) {
 			{
 				Name:        "get_weather",
 				Description: "Get weather for a location",
-				Parameters: map[string]any{
+				Parameters: prompty.MustJSONDocumentFromMap(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"location": map[string]any{"type": "string"},
 					},
 					"required": []any{"location"},
-				},
+				}),
 			},
 		},
 	}
@@ -317,7 +335,7 @@ func TestTranslate_WithForcedToolChoice(t *testing.T) {
 			},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "get_weather", Parameters: map[string]any{"type": "object"}},
+			{Name: "get_weather", Parameters: prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"})},
 		},
 		ForcedTool: "get_weather",
 	}
@@ -665,6 +683,21 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 	assert.Equal(t, "get_weather", params.Messages[0].Content[1].OfToolUse.Name)
 }
 
+func TestTranslate_AssistantToolCall_RejectsArgsChunkWithoutGlue(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
+				prompty.ToolCallPart{ID: "call_1", Name: "get_weather", ArgsChunk: `{"location":"NYC"}`},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrIncompleteToolCallArgs)
+}
+
 func TestTranslate_UnsupportedRole(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -796,6 +829,48 @@ func TestParseResponse_EmptyContent(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrEmptyResponse)
 }
 
+func TestParseResponse_EmptyToolUseArgsFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	msg := &anthropic.Message{
+		Content: []anthropic.ContentBlockUnion{{
+			Type:  "tool_use",
+			ID:    "call_1",
+			Name:  "get_weather",
+			Input: json.RawMessage(""),
+		}},
+	}
+	_, err := a.ParseResponse(msg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
+}
+
+func TestParseResponse_EmptyBlockTypeFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	msg := &anthropic.Message{
+		Content: []anthropic.ContentBlockUnion{
+			{Type: ""},
+		},
+	}
+	_, err := a.ParseResponse(msg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
+func TestParseResponse_UnknownBlockTypeFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	msg := &anthropic.Message{
+		Content: []anthropic.ContentBlockUnion{
+			{Type: "thinking"},
+		},
+	}
+	_, err := a.ParseResponse(msg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
 func TestUsageFromAnthropic_MapsBreakdownFields(t *testing.T) {
 	t.Parallel()
 
@@ -838,13 +913,17 @@ func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "my_tool", Description: "A tool", Parameters: map[string]any{"type": "object"}},
+			{
+				Name:        "my_tool",
+				Description: "A tool",
+				Parameters:  prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
+			},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"x": map[string]any{"type": "string"}},
-			},
+			}),
 		},
 	}
 	_, err := a.Translate(exec)
@@ -862,11 +941,11 @@ func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
 			Name: "my_schema",
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"x": map[string]any{"type": "string"}},
 				"required":   []any{"x"},
-			},
+			}),
 		},
 	}
 	params, err := a.Translate(exec)
@@ -889,13 +968,13 @@ func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *te
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ResponseFormat: &prompty.SchemaDefinition{
-			Schema: map[string]any{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type":                 "object",
 				"properties":           map[string]any{"x": map[string]any{"type": "string"}},
 				"required":             []any{"x"},
 				"additionalProperties": false,
 				"description":          "Strict output schema",
-			},
+			}),
 		},
 	}
 	params, err := a.Translate(exec)

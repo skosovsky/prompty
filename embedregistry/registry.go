@@ -15,14 +15,16 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry         = (*Registry)(nil)
-	_ prompty.Lister           = (*Registry)(nil)
-	_ prompty.Statter          = (*Registry)(nil)
-	_ prompty.ManifestResolver = (*Registry)(nil)
+	_ prompty.Registry            = (*Registry)(nil)
+	_ prompty.Lister              = (*Registry)(nil)
+	_ prompty.Statter             = (*Registry)(nil)
+	_ prompty.ManifestResolver    = (*Registry)(nil)
+	_ prompty.ManifestBytesReader = (*Registry)(nil)
+	_ prompty.PromptDescriber     = (*Registry)(nil)
 )
 
 // Registry loads all manifests from an [fs.FS] at construction (eager). No mutex. Holds parsed templates by id.
-// WithEnvironment(env): Plan tries id.env first, then id (e.g. internal/router.prod before internal/router).
+// WithEnvironment(env): Plan resolves only id.env (e.g. internal/router.prod), not base id.
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	fsys            fs.FS
@@ -137,7 +139,7 @@ func WithPartials(pattern string) Option {
 	return func(r *Registry) { r.partialsPattern = pattern }
 }
 
-// WithEnvironment sets env for fallback: Plan tries id.env first, then id.
+// WithEnvironment sets env for strict resolution: only id.env manifests are loaded.
 func WithEnvironment(env string) Option {
 	return func(r *Registry) { r.env = env }
 }
@@ -152,15 +154,15 @@ func WithVersion(version string) Option {
 	return func(r *Registry) { r.version = version }
 }
 
-// candidateIDs returns ids to try in order: with env first, then base id.
+// candidateIDs returns the manifest id to resolve (env-qualified when configured).
 func candidateIDs(id, env string) []string {
 	if env != "" {
-		return []string{id + "." + env, id}
+		return []string{id + "." + env}
 	}
 	return []string{id}
 }
 
-// loadTemplate returns a template by id. O(1) map lookup. With env, tries id.env first. Enriches tpl.Metadata.Version from Stat if empty.
+// loadTemplate returns a template by id. O(1) map lookup. With env, only id.env is resolved. Enriches tpl.Metadata.Version from Stat if empty.
 func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
@@ -201,6 +203,11 @@ func (r *Registry) readManifestBytes(_ context.Context, id string) ([]byte, erro
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+// ReadManifestBytes returns raw manifest bytes for digest computation.
+func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	return r.readManifestBytes(ctx, id)
+}
+
 // ResolveManifest returns manifest metadata without compiling template AST.
 func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	data, err := r.readManifestBytes(ctx, id)
@@ -210,13 +217,18 @@ func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.Temp
 	return manifest.ParseDescriptor(data, r.parser)
 }
 
+// DescribePrompt returns manifest metadata for routing and introspection.
+func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	return r.ResolveManifest(ctx, id)
+}
+
 // Plan returns a deferred render plan for the selected prompt id.
-func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
 	tpl, err := r.loadTemplate(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlan(tpl, typedInput), nil
+	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
 }
 
 // List returns all template ids (order from walk).
@@ -227,7 +239,7 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 	return append([]string(nil), r.ids...), nil
 }
 
-// Stat returns metadata for id without parsing. Uses same env fallback as Plan (id.env -> id).
+// Stat returns metadata for id without parsing. Uses the same strict env-qualified id as Plan.
 // Version from WithVersion; UpdatedAt is zero for embed.
 func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, error) {
 	if err := prompty.ValidateID(id); err != nil {

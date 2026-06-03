@@ -55,11 +55,11 @@ response_format:
 	err := p.Unmarshal(yamlData, &raw)
 	require.NoError(t, err)
 
-	// inputs.Schema["properties"] must be map[string]any (not map[any]any)
+	// prompty.MustJSONDocumentAsMap(inputs.Schema)["properties"] must be map[string]any (not map[any]any)
 	require.NotNil(t, raw.InputSchema)
 	require.NotNil(t, raw.InputSchema.Schema)
-	props, ok := raw.InputSchema.Schema["properties"].(map[string]any)
-	require.True(t, ok, "inputs.Schema[properties] must be map[string]any")
+	props, ok := prompty.MustJSONDocumentAsMap(raw.InputSchema.Schema)["properties"].(map[string]any)
+	require.True(t, ok, "prompty.MustJSONDocumentAsMap(inputs.Schema)[properties] must be map[string]any")
 	require.NotNil(t, props)
 	assert.Contains(t, props, "query")
 	assert.Contains(t, props, "nested")
@@ -70,23 +70,25 @@ response_format:
 	require.True(t, ok, "nested.properties must be map[string]any")
 	assert.Contains(t, nestedProps, "foo")
 
-	// tools[0].Parameters["properties"] must be map[string]any
+	// prompty.MustJSONDocumentAsMap(tools[0].Parameters)["properties"] must be map[string]any
 	require.Len(t, raw.Tools, 1)
-	toolProps, ok := raw.Tools[0].Parameters["properties"].(map[string]any)
-	require.True(t, ok, "tools[0].Parameters[properties] must be map[string]any")
+	toolProps, ok := prompty.MustJSONDocumentAsMap(raw.Tools[0].Parameters)["properties"].(map[string]any)
+	require.True(t, ok, "prompty.MustJSONDocumentAsMap(tools[0].Parameters)[properties] must be map[string]any")
 	assert.Contains(t, toolProps, "arg")
 
-	// response_format.Schema["properties"] must be map[string]any
+	// prompty.MustJSONDocumentAsMap(response_format.Schema)["properties"] must be map[string]any
 	require.NotNil(t, raw.ResponseFormat)
 	require.NotNil(t, raw.ResponseFormat.Schema)
-	rfProps, ok := raw.ResponseFormat.Schema["properties"].(map[string]any)
-	require.True(t, ok, "response_format.Schema[properties] must be map[string]any")
+	rfProps, ok := prompty.MustJSONDocumentAsMap(raw.ResponseFormat.Schema)["properties"].(map[string]any)
+	require.True(t, ok, "prompty.MustJSONDocumentAsMap(response_format.Schema)[properties] must be map[string]any")
 	assert.Contains(t, rfProps, "result")
 
 	// message metadata must be map[string]any
 	require.Len(t, raw.Messages, 2)
 	require.NotNil(t, raw.Messages[0].Metadata)
-	assert.Equal(t, "val", raw.Messages[0].Metadata["custom_key"])
+	metaDoc, err := prompty.MapToJSONDocument(raw.Messages[0].Metadata)
+	require.NoError(t, err)
+	assert.Equal(t, "val", prompty.MustJSONDocumentAsMap(metaDoc)["custom_key"])
 }
 
 // TestUnmarshal_InputsFlatFormatRejected verifies that raw JSON-schema style inputs are rejected in v2.
@@ -177,8 +179,13 @@ messages:
 	assert.InDelta(t, 0.8, *raw.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, []string{"END"}, raw.ModelOptions.Stop)
 	require.NotNil(t, raw.ModelOptions.ProviderSettings)
-	assert.InDelta(t, 0.5, raw.ModelOptions.ProviderSettings["frequency_penalty"].(float64), 1e-9)
-	assert.Equal(t, true, raw.ModelOptions.ProviderSettings["custom_flag"])
+	assert.InDelta(
+		t,
+		0.5,
+		prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["frequency_penalty"].(float64),
+		1e-9,
+	)
+	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["custom_flag"])
 }
 
 func TestUnmarshal_ModelOptionsTyped_RejectsTopLevelVendorKeys(t *testing.T) {
@@ -239,14 +246,22 @@ messages:
 	assert.InDelta(t, 0.3, *tpl.ModelOptions.Temperature, 1e-9)
 	require.NotNil(t, tpl.ModelOptions.TopP)
 	assert.InDelta(t, 0.9, *tpl.ModelOptions.TopP, 1e-9)
-	assert.Equal(t, map[string]any{"custom_mode": "fast"}, tpl.ModelOptions.ProviderSettings)
+	assert.Equal(
+		t,
+		map[string]any{"custom_mode": "fast"},
+		prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings),
+	)
 
 	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.NotNil(t, exec.ModelOptions)
 	assert.Equal(t, "gemini-2.5-pro", exec.ModelOptions.Model)
-	assert.Equal(t, map[string]any{"custom_mode": "fast"}, exec.ModelOptions.ProviderSettings)
+	assert.Equal(
+		t,
+		map[string]any{"custom_mode": "fast"},
+		prompty.MustJSONDocumentAsMap(exec.ModelOptions.ProviderSettings),
+	)
 }
 
 func TestUnmarshal_ContentMediaPart(t *testing.T) {

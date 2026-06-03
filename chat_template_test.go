@@ -32,59 +32,61 @@ func TestNewChatPromptTemplate_DefensiveCopy_NestedState(t *testing.T) {
 		{
 			Role:     "system",
 			Content:  TextContent("Hi"),
-			Metadata: map[string]any{"nested": map[string]any{"env": "dev"}},
+			Metadata: mustJSONDocument(map[string]any{"nested": map[string]any{"env": "dev"}}),
 		},
 	}
 	tools := []ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Lookup data",
-			Parameters: map[string]any{
+			Parameters: mustJSONDocument(map[string]any{
 				"properties": map[string]any{
 					"city": map[string]any{"type": "string"},
 				},
-			},
+			}),
 		},
 	}
 	meta := PromptMetadata{
 		ID:     "tpl",
-		Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+		Extras: mustJSONDocument(map[string]any{"trace": map[string]any{"env": "dev"}}),
 	}
 	tpl, err := NewChatPromptTemplate(msgs, WithTools(tools), WithMetadata(meta))
 	require.NoError(t, err)
 
-	msgs[0].Metadata["nested"].(map[string]any)["env"] = "prod"
-	tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
-	meta.Extras["trace"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(msgs[0].Metadata)["nested"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(tools[0].Parameters)["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(meta.Extras)["trace"].(map[string]any)["env"] = "prod"
 
-	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
+	tplMeta := mustJSONDocumentMap(tpl.Messages[0].Metadata)
+	assert.Equal(t, "dev", tplMeta["nested"].(map[string]any)["env"])
+	tplParams := mustJSONDocumentMap(tpl.Tools[0].Parameters)
 	assert.Equal(
 		t,
 		"string",
-		tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"],
+		tplParams["properties"].(map[string]any)["city"].(map[string]any)["type"],
 	)
-	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
+	assert.Equal(t, "dev", mustJSONDocumentMap(tpl.Metadata.Extras)["trace"].(map[string]any)["env"])
 }
 
 func TestNewChatPromptTemplate_DefensiveCopy_Schemas(t *testing.T) {
 	t.Parallel()
 	responseSchema := &SchemaDefinition{
 		Name: "response",
-		Schema: map[string]any{
+		Schema: mustJSONDocument(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"answer": map[string]any{"type": "string"},
 			},
-		},
+		}),
 	}
 	inputSchema := &SchemaDefinition{
 		Name: "input",
-		Schema: map[string]any{
+		Schema: mustJSONDocument(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"question": map[string]any{"type": "string"},
 			},
-		},
+		}),
 	}
 
 	tpl, err := NewChatPromptTemplate(
@@ -95,23 +97,25 @@ func TestNewChatPromptTemplate_DefensiveCopy_Schemas(t *testing.T) {
 	require.NoError(t, err)
 
 	responseSchema.Name = "mutated-response"
-	responseSchema.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(responseSchema.Schema)["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
 	inputSchema.Name = "mutated-input"
-	inputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(inputSchema.Schema)["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
 
 	require.NotNil(t, tpl.ResponseFormat)
 	require.NotNil(t, tpl.InputSchema)
 	assert.Equal(t, "response", tpl.ResponseFormat.Name)
+	tplRespSchema := mustJSONDocumentMap(tpl.ResponseFormat.Schema)
 	assert.Equal(
 		t,
 		"string",
-		tpl.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+		tplRespSchema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
 	)
 	assert.Equal(t, "input", tpl.InputSchema.Name)
+	tplInputSchema := mustJSONDocumentMap(tpl.InputSchema.Schema)
 	assert.Equal(
 		t,
 		"string",
-		tpl.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"],
+		tplInputSchema["properties"].(map[string]any)["question"].(map[string]any)["type"],
 	)
 }
 
@@ -244,7 +248,7 @@ func TestRenderPlan_PartialVariables(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: "system", Content: TextContent("{{ .Input.bot_name }}: {{ .Input.msg }}")},
-	}, WithPartialVariables(map[string]any{"bot_name": "Bot", "msg": "default"}))
+	}, MustWithPartialVariablesJSON(MustJSONDocumentFromMap(map[string]any{"bot_name": "Bot", "msg": "default"})))
 	require.NoError(t, err)
 	type Payload struct {
 		Msg string `prompt:"msg"`
@@ -359,7 +363,7 @@ func TestRenderPlan_ReservedToolsKey(t *testing.T) {
 // RenderPlan.Execute must return an execution that is an independent snapshot (thread-safety, no shared pointers).
 func TestRenderPlan_ResponseFormatClone(t *testing.T) {
 	t.Parallel()
-	schema := map[string]any{"type": "object", "remove_me": true}
+	schema := mustJSONDocument(map[string]any{"type": "object", "remove_me": true})
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 		WithResponseFormat(
@@ -376,11 +380,11 @@ func TestRenderPlan_ResponseFormatClone(t *testing.T) {
 	require.NotNil(t, tpl.ResponseFormat)
 
 	origName := tpl.ResponseFormat.Name
-	_, origHasKey := tpl.ResponseFormat.Schema["remove_me"]
+	_, origHasKey := mustJSONDocumentMap(tpl.ResponseFormat.Schema)["remove_me"]
 
 	// Mutate execution's ResponseFormat (e.g. middleware normalizing schema).
 	exec.ResponseFormat.Name = "other"
-	delete(exec.ResponseFormat.Schema, "remove_me")
+	delete(mustJSONDocumentMap(exec.ResponseFormat.Schema), "remove_me")
 
 	// Template must be unchanged.
 	assert.Equal(
@@ -390,7 +394,7 @@ func TestRenderPlan_ResponseFormatClone(t *testing.T) {
 		"template ResponseFormat.Name must not be mutated",
 	)
 	assert.True(t, origHasKey, "template ResponseFormat.Schema must not be mutated")
-	_, stillHasKey := tpl.ResponseFormat.Schema["remove_me"]
+	_, stillHasKey := mustJSONDocumentMap(tpl.ResponseFormat.Schema)["remove_me"]
 	assert.True(t, stillHasKey, "template ResponseFormat.Schema must not share map with execution")
 }
 
@@ -398,7 +402,7 @@ func TestRenderPlan_ResponseFormatClone(t *testing.T) {
 // does not affect the original template. Registries rely on this so callers cannot mutate the cached template.
 func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 	t.Parallel()
-	schema := map[string]any{"type": "object", "key": "v"}
+	schema := mustJSONDocument(map[string]any{"type": "object", "key": "v"})
 	tpl, err := NewChatPromptTemplate(
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 		WithResponseFormat(&SchemaDefinition{Name: "orig", Description: "d", Schema: schema}),
@@ -409,12 +413,12 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 	require.NotNil(t, clone.ResponseFormat)
 
 	origName := tpl.ResponseFormat.Name
-	_, origHasKey := tpl.ResponseFormat.Schema["key"]
+	_, origHasKey := mustJSONDocumentMap(tpl.ResponseFormat.Schema)["key"]
 
 	// Mutate clone's ResponseFormat (and its Schema).
 	clone.ResponseFormat.Name = "mutated"
-	delete(clone.ResponseFormat.Schema, "key")
-	clone.ResponseFormat.Schema["new"] = "x"
+	delete(mustJSONDocumentMap(clone.ResponseFormat.Schema), "key")
+	mustJSONDocumentMap(clone.ResponseFormat.Schema)["new"] = "x"
 
 	// Original template must be unchanged.
 	assert.Equal(
@@ -424,9 +428,9 @@ func TestCloneTemplate_ResponseFormatDoesNotMutateOriginal(t *testing.T) {
 		"original ResponseFormat.Name must not be mutated",
 	)
 	assert.True(t, origHasKey, "original ResponseFormat.Schema must not be mutated")
-	_, stillHasKey := tpl.ResponseFormat.Schema["key"]
+	_, stillHasKey := mustJSONDocumentMap(tpl.ResponseFormat.Schema)["key"]
 	assert.True(t, stillHasKey)
-	_, hasNew := tpl.ResponseFormat.Schema["new"]
+	_, hasNew := mustJSONDocumentMap(tpl.ResponseFormat.Schema)["new"]
 	assert.False(t, hasNew, "original Schema must not share map with clone")
 }
 
@@ -436,21 +440,21 @@ func TestCloneTemplate_SchemaDefinitionsAreIndependent(t *testing.T) {
 		[]MessageTemplate{{Role: "system", Content: TextContent("Hi")}},
 		WithResponseFormat(&SchemaDefinition{
 			Name: "response",
-			Schema: map[string]any{
+			Schema: mustJSONDocument(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"answer": map[string]any{"type": "string"},
 				},
-			},
+			}),
 		}),
 		WithInputSchema(&SchemaDefinition{
 			Name: "input",
-			Schema: map[string]any{
+			Schema: mustJSONDocument(map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"question": map[string]any{"type": "string"},
 				},
-			},
+			}),
 		}),
 	)
 	require.NoError(t, err)
@@ -461,21 +465,23 @@ func TestCloneTemplate_SchemaDefinitionsAreIndependent(t *testing.T) {
 	require.NotNil(t, clone.InputSchema)
 
 	clone.ResponseFormat.Name = "mutated-response"
-	clone.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(clone.ResponseFormat.Schema)["properties"].(map[string]any)["answer"].(map[string]any)["type"] = "number"
 	clone.InputSchema.Name = "mutated-input"
-	clone.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(clone.InputSchema.Schema)["properties"].(map[string]any)["question"].(map[string]any)["type"] = "number"
 
 	assert.Equal(t, "response", tpl.ResponseFormat.Name)
+	tplResp := mustJSONDocumentMap(tpl.ResponseFormat.Schema)
 	assert.Equal(
 		t,
 		"string",
-		tpl.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+		tplResp["properties"].(map[string]any)["answer"].(map[string]any)["type"],
 	)
 	assert.Equal(t, "input", tpl.InputSchema.Name)
+	tplIn := mustJSONDocumentMap(tpl.InputSchema.Schema)
 	assert.Equal(
 		t,
 		"string",
-		tpl.InputSchema.Schema["properties"].(map[string]any)["question"].(map[string]any)["type"],
+		tplIn["properties"].(map[string]any)["question"].(map[string]any)["type"],
 	)
 }
 
@@ -485,20 +491,20 @@ func TestCloneTemplate_DoesNotMutateOriginalNestedState(t *testing.T) {
 		[]MessageTemplate{{
 			Role:     "system",
 			Content:  TextContent("Hi"),
-			Metadata: map[string]any{"nested": map[string]any{"env": "dev"}},
+			Metadata: mustJSONDocument(map[string]any{"nested": map[string]any{"env": "dev"}}),
 		}},
 		WithTools([]ToolDefinition{{
 			Name:        "lookup",
 			Description: "Lookup data",
-			Parameters: map[string]any{
+			Parameters: mustJSONDocument(map[string]any{
 				"properties": map[string]any{
 					"city": map[string]any{"type": "string"},
 				},
-			},
+			}),
 		}}),
 		WithMetadata(PromptMetadata{
 			ID:     "tpl",
-			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+			Extras: mustJSONDocument(map[string]any{"trace": map[string]any{"env": "dev"}}),
 		}),
 	)
 	require.NoError(t, err)
@@ -506,17 +512,19 @@ func TestCloneTemplate_DoesNotMutateOriginalNestedState(t *testing.T) {
 	clone := CloneTemplate(tpl)
 	require.NotNil(t, clone)
 
-	clone.Messages[0].Metadata["nested"].(map[string]any)["env"] = "prod"
-	clone.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
-	clone.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(clone.Messages[0].Metadata)["nested"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(clone.Tools[0].Parameters)["properties"].(map[string]any)["city"].(map[string]any)["type"] = "number"
+	mustJSONDocumentMap(clone.Metadata.Extras)["trace"].(map[string]any)["env"] = "prod"
 
-	assert.Equal(t, "dev", tpl.Messages[0].Metadata["nested"].(map[string]any)["env"])
+	tplMeta := mustJSONDocumentMap(tpl.Messages[0].Metadata)
+	assert.Equal(t, "dev", tplMeta["nested"].(map[string]any)["env"])
+	tplParams := mustJSONDocumentMap(tpl.Tools[0].Parameters)
 	assert.Equal(
 		t,
 		"string",
-		tpl.Tools[0].Parameters["properties"].(map[string]any)["city"].(map[string]any)["type"],
+		tplParams["properties"].(map[string]any)["city"].(map[string]any)["type"],
 	)
-	assert.Equal(t, "dev", tpl.Metadata.Extras["trace"].(map[string]any)["env"])
+	assert.Equal(t, "dev", mustJSONDocumentMap(tpl.Metadata.Extras)["trace"].(map[string]any)["env"])
 }
 
 func TestRenderPlan_PointerToPointerPayload(t *testing.T) {
@@ -1054,7 +1062,7 @@ func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {
 						Data:      []byte("one"),
 					},
 				},
-				Metadata: map[string]any{"scope": "first"},
+				Metadata: mustJSONDocument(map[string]any{"scope": "first"}),
 			},
 			{
 				Role: RoleDeveloper,
@@ -1066,34 +1074,34 @@ func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {
 						Data:      []byte("two"),
 					},
 				},
-				Metadata: map[string]any{"scope": "second"},
+				Metadata: mustJSONDocument(map[string]any{"scope": "second"}),
 			},
 			{
 				Role:     RoleUser,
 				Content:  []ContentPart{TextPart{Text: "User query"}},
-				Metadata: map[string]any{"origin": "user"},
+				Metadata: mustJSONDocument(map[string]any{"origin": "user"}),
 			},
 		},
 		Metadata: PromptMetadata{
-			Extras: map[string]any{"trace": map[string]any{"env": "dev"}},
+			Extras: mustJSONDocument(map[string]any{"trace": map[string]any{"env": "dev"}}),
 		},
 	}
 
 	out := exec.Normalize()
 	require.Len(t, out.Messages, 2)
 
-	out.Messages[0].Metadata["scope"] = "changed"
+	mustJSONDocumentMap(out.Messages[0].Metadata)["scope"] = "changed"
 	mergedMedia := out.Messages[0].Content[1].(MediaPart)
 	mergedMedia.Data[0] = 'X'
 	out.Messages[0].Content[1] = mergedMedia
 
-	out.Messages[1].Metadata["origin"] = "changed"
+	mustJSONDocumentMap(out.Messages[1].Metadata)["origin"] = "changed"
 	out.Messages[1].Content[0] = TextPart{Text: "Changed user query"}
-	out.Metadata.Extras["trace"].(map[string]any)["env"] = "prod"
+	mustJSONDocumentMap(out.Metadata.Extras)["trace"].(map[string]any)["env"] = "prod"
 
-	assert.Equal(t, "first", exec.Messages[0].Metadata["scope"])
+	assert.Equal(t, "first", mustJSONDocumentMap(exec.Messages[0].Metadata)["scope"])
 	assert.Equal(t, byte('o'), exec.Messages[0].Content[1].(MediaPart).Data[0])
-	assert.Equal(t, "user", exec.Messages[2].Metadata["origin"])
+	assert.Equal(t, "user", mustJSONDocumentMap(exec.Messages[2].Metadata)["origin"])
 	assert.Equal(t, "User query", exec.Messages[2].Content[0].(TextPart).Text)
-	assert.Equal(t, "dev", exec.Metadata.Extras["trace"].(map[string]any)["env"])
+	assert.Equal(t, "dev", mustJSONDocumentMap(exec.Metadata.Extras)["trace"].(map[string]any)["env"])
 }

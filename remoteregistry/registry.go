@@ -11,14 +11,16 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry         = (*Registry)(nil)
-	_ prompty.Lister           = (*Registry)(nil)
-	_ prompty.Statter          = (*Registry)(nil)
-	_ prompty.ManifestResolver = (*Registry)(nil)
+	_ prompty.Registry            = (*Registry)(nil)
+	_ prompty.Lister              = (*Registry)(nil)
+	_ prompty.Statter             = (*Registry)(nil)
+	_ prompty.ManifestResolver    = (*Registry)(nil)
+	_ prompty.ManifestBytesReader = (*Registry)(nil)
+	_ prompty.PromptDescriber     = (*Registry)(nil)
 )
 
 // Registry loads templates via Fetcher without internal cache/state.
-// WithEnvironment(env): fetch tries id.env first, then id.
+// WithEnvironment(env): fetch resolves only id.env (no base-id fallback).
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	fetcher Fetcher
@@ -42,16 +44,15 @@ func New(fetcher Fetcher, opts ...Option) (*Registry, error) {
 	return r, nil
 }
 
-// fetchCandidateIDs returns ids to try in order: with env first, then base id.
+// fetchCandidateIDs returns the manifest id to fetch (env-qualified when configured).
 func fetchCandidateIDs(id, env string) []string {
 	if env != "" {
-		return []string{id + "." + env, id}
+		return []string{id + "." + env}
 	}
 	return []string{id}
 }
 
-// loadTemplate returns a template by id.
-// With env, tries id.env first and then id.
+// loadTemplate returns a template by id (env-qualified when configured).
 func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
@@ -61,6 +62,23 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 		tpl, err := r.getTemplateByID(ctx, cid)
 		if err == nil {
 			return tpl, nil
+		}
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+}
+
+// ReadManifestBytes fetches raw manifest bytes for digest computation.
+func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ValidateID(id); err != nil {
+		return nil, err
+	}
+	for _, cid := range fetchCandidateIDs(id, r.env) {
+		data, err := r.fetcher.Fetch(ctx, cid)
+		if err == nil {
+			return data, nil
 		}
 		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
 			return nil, err
@@ -86,13 +104,18 @@ func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.Temp
 	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+// DescribePrompt returns manifest metadata for routing and introspection.
+func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	return r.ResolveManifest(ctx, id)
+}
+
 // Plan returns a deferred render plan for the selected prompt id.
-func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
 	tpl, err := r.loadTemplate(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlan(tpl, typedInput), nil
+	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
 }
 
 func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {

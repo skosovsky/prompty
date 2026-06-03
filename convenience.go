@@ -37,14 +37,7 @@ func GenerateText(ctx context.Context, invoker Invoker, prompt string, opts ...O
 		}
 	}
 
-	resp, err := invoker.Execute(ctx, exec)
-	if err != nil {
-		return "", err
-	}
-	if resp == nil {
-		return "", errors.New("generate text: nil response")
-	}
-	return resp.Text(), nil
+	return ExecuteAsText(ctx, invoker, exec)
 }
 
 // GenerateStructured builds a one-message PromptExecution and returns typed structured output in a single model call.

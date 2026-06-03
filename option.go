@@ -1,15 +1,31 @@
 package prompty
 
-import "io/fs"
+import (
+	"fmt"
+	"io/fs"
+)
 
 // ChatTemplateOption configures ChatPromptTemplate (functional options pattern).
 type ChatTemplateOption func(*ChatPromptTemplate)
 
-// WithPartialVariables sets default input values merged with payload (payload overrides).
-func WithPartialVariables(vars map[string]any) ChatTemplateOption {
+// WithPartialVariablesJSON sets default input values from a JSON object (payload overrides).
+func WithPartialVariablesJSON(doc JSONDocument) (ChatTemplateOption, error) {
+	vars, err := JSONDocumentAsMap(doc)
+	if err != nil {
+		return nil, fmt.Errorf("partial variables: %w", err)
+	}
 	return func(c *ChatPromptTemplate) {
 		c.PartialVariables = vars
+	}, nil
+}
+
+// MustWithPartialVariablesJSON is like WithPartialVariablesJSON but panics on decode error (tests).
+func MustWithPartialVariablesJSON(doc JSONDocument) ChatTemplateOption {
+	opt, err := WithPartialVariablesJSON(doc)
+	if err != nil {
+		panic(err)
 	}
+	return opt
 }
 
 // WithTools sets tool definitions available in templates as .Tools.

@@ -23,5 +23,7 @@ func DescriptorFromTemplate(tpl *ChatPromptTemplate) TemplateDescriptor {
 		InputSchema:       cloneSchemaDefinition(tpl.InputSchema),
 		ResponseFormat:    cloneSchemaDefinition(tpl.ResponseFormat),
 		LayerIDs:          layerIDs,
+		Tags:              append([]string(nil), tpl.Metadata.Tags...),
+		Capabilities:      append([]string(nil), tpl.Metadata.Capabilities...),
 	}
 }

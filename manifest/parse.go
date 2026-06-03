@@ -24,6 +24,11 @@ func metadataToPromptMetadata(raw *RawManifest) prompty.PromptMetadata {
 				meta.Tags = ss
 			}
 		}
+		if caps, ok := raw.Metadata["capabilities"]; ok {
+			if ss, err := cast.ToStringSlice(caps); err == nil {
+				meta.Capabilities = ss
+			}
+		}
 		if env, ok := raw.Metadata["environment"]; ok {
 			if s, ok := env.(string); ok {
 				meta.Environment = s
@@ -31,12 +36,16 @@ func metadataToPromptMetadata(raw *RawManifest) prompty.PromptMetadata {
 		}
 		extras := make(map[string]any)
 		for k, v := range raw.Metadata {
-			if k != "tags" && k != "environment" && v != nil {
+			if k != "tags" && k != "capabilities" && k != "environment" && v != nil {
 				extras[k] = v
 			}
 		}
 		if len(extras) > 0 {
-			meta.Extras = extras
+			extrasDoc, extrasErr := prompty.MapToJSONDocument(extras)
+			if extrasErr != nil {
+				return meta
+			}
+			meta.Extras = extrasDoc
 		}
 	}
 	return meta
@@ -125,7 +134,7 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 			Content:      content,
 			Optional:     rm.Optional,
 			CacheControl: copyCacheControl(rm.CacheControl),
-			Metadata:     maps.Clone(rm.Metadata),
+			Metadata:     messageMetadataFromRaw(rm.Metadata),
 		}
 	}
 	opts := []prompty.ChatTemplateOption{
@@ -133,13 +142,14 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	}
 	if raw.InputSchema != nil {
 		opts = append(opts, prompty.WithInputSchema(raw.InputSchema))
-		if schema := raw.InputSchema.Schema; schema != nil {
-			if req, ok := schema["required"]; ok {
+		if schemaMap, schemaErr := prompty.JSONDocumentAsMap(raw.InputSchema.Schema); schemaErr == nil &&
+			schemaMap != nil {
+			if req, ok := schemaMap["required"]; ok {
 				if ss, err := cast.ToStringSlice(req); err == nil && len(ss) > 0 {
 					opts = append(opts, prompty.WithRequiredVars(ss))
 				}
 			}
-			if props, _ := schema["properties"].(map[string]any); props != nil {
+			if props, _ := schemaMap["properties"].(map[string]any); props != nil {
 				partial := make(map[string]any)
 				for k, v := range props {
 					if m, ok := v.(map[string]any); ok && m["default"] != nil {
@@ -147,7 +157,15 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 					}
 				}
 				if len(partial) > 0 {
-					opts = append(opts, prompty.WithPartialVariables(partial))
+					doc, docErr := prompty.MapToJSONDocument(partial)
+					if docErr != nil {
+						return nil, docErr
+					}
+					partialOpt, partialErr := prompty.WithPartialVariablesJSON(doc)
+					if partialErr != nil {
+						return nil, partialErr
+					}
+					opts = append(opts, partialOpt)
 				}
 			}
 		}
@@ -198,6 +216,17 @@ func copyCacheControl(in *prompty.CacheControl) *prompty.CacheControl {
 }
 
 // normalizeRequiredTools returns a non-nil empty slice when required_tools is absent.
+func messageMetadataFromRaw(meta map[string]any) prompty.JSONDocument {
+	if len(meta) == 0 {
+		return nil
+	}
+	doc, err := prompty.MapToJSONDocument(maps.Clone(meta))
+	if err != nil {
+		return nil
+	}
+	return doc
+}
+
 func normalizeRequiredTools(tools []string) []string {
 	if tools == nil {
 		return []string{}

@@ -21,16 +21,17 @@ func TestRenderPlan_AppendToLayer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plan, err := NewRenderPlan(base, map[string]any{"q": "go"}).
-		AppendToLayer("policy", NewRenderPlan(appendTpl, nil))
+	plan, err := newRenderPlanFromMap(base, map[string]any{"q": "go"})
+	require.NoError(t, err)
+	plan, err = plan.AppendToLayer("policy", NewRenderPlan(appendTpl))
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 3)
-	assert.Equal(t, "base", TextFromParts(exec.Messages[0].Content))
-	assert.Equal(t, "extra", TextFromParts(exec.Messages[1].Content))
-	assert.Equal(t, "go", TextFromParts(exec.Messages[2].Content))
+	assert.Equal(t, "base", mustTextFromParts(t, exec.Messages[0].Content))
+	assert.Equal(t, "extra", mustTextFromParts(t, exec.Messages[1].Content))
+	assert.Equal(t, "go", mustTextFromParts(t, exec.Messages[2].Content))
 }
 
 func TestRenderPlan_WithResponseFormat_RuntimeOverride(t *testing.T) {
@@ -44,8 +45,9 @@ func TestRenderPlan_WithResponseFormat_RuntimeOverride(t *testing.T) {
 		Answer string `json:"answer"`
 	}
 
-	plan, err := NewRenderPlan(tpl, map[string]any{"q": "x"}).
-		WithResponseFormat(Out{})
+	plan, err := newRenderPlanFromMap(tpl, map[string]any{"q": "x"})
+	require.NoError(t, err)
+	plan, err = WithResponseFormatFromStruct[Out](plan)
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
@@ -57,12 +59,12 @@ func TestRenderPlan_WithResponseFormat_RuntimeOverride(t *testing.T) {
 func TestRenderPlan_WithResponseFormat_RuntimeOverridesManifest(t *testing.T) {
 	t.Parallel()
 	manifestSchema := &SchemaDefinition{
-		Schema: map[string]any{
+		Schema: mustJSONDocument(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"from_manifest": map[string]any{"type": "string"},
 			},
-		},
+		}),
 	}
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
@@ -72,12 +74,14 @@ func TestRenderPlan_WithResponseFormat_RuntimeOverridesManifest(t *testing.T) {
 	type RuntimeOut struct {
 		Answer string `json:"answer"`
 	}
-	plan, err := NewRenderPlan(tpl, map[string]any{"q": "x"}).WithResponseFormat(RuntimeOut{})
+	plan, err := newRenderPlanFromMap(tpl, map[string]any{"q": "x"})
+	require.NoError(t, err)
+	plan, err = WithResponseFormatFromStruct[RuntimeOut](plan)
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	props, _ := exec.ResponseFormat.Schema["properties"].(map[string]any)
+	props, _ := mustJSONDocumentMap(exec.ResponseFormat.Schema)["properties"].(map[string]any)
 	_, hasManifest := props["from_manifest"]
 	_, hasRuntime := props["answer"]
 	assert.False(t, hasManifest)
@@ -96,7 +100,7 @@ func TestRenderPlan_AppendToLayer_Provenance(t *testing.T) {
 	}, WithMetadata(PromptMetadata{ID: "append-manifest"}))
 	require.NoError(t, err)
 
-	plan, err := NewRenderPlan(base, nil).AppendToLayer("policy", NewRenderPlan(appendTpl, nil))
+	plan, err := NewRenderPlan(base).AppendToLayer("policy", NewRenderPlan(appendTpl))
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
@@ -113,18 +117,20 @@ func TestRenderPlan_WithResponseFormat_Errors(t *testing.T) {
 		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
 	})
 	require.NoError(t, err)
-	base := NewRenderPlan(tpl, map[string]any{"q": "x"})
+	base, err := newRenderPlanFromMap(tpl, map[string]any{"q": "x"})
+	require.NoError(t, err)
 
-	_, err = (*RenderPlan)(nil).WithResponseFormat(struct{}{})
+	schema := &SchemaDefinition{Schema: mustJSONDocument(map[string]any{"type": "object"})}
+	_, err = (*RenderPlan)(nil).WithResponseFormatDefinition(schema)
 	require.ErrorIs(t, err, ErrNilRenderPlan)
 
-	_, err = base.WithResponseFormat(nil)
+	_, err = base.WithResponseFormatDefinition(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "schema is required")
 
-	_, err = base.WithResponseFormat(make(chan int))
+	_, err = WithResponseFormatFromStruct[chan int](base)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported schema type")
+	assert.Contains(t, err.Error(), "response format")
 }
 
 func TestRenderPlan_ReplaceLayer_Errors(t *testing.T) {
@@ -138,12 +144,12 @@ func TestRenderPlan_ReplaceLayer_Errors(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = NewRenderPlan(base, nil).ReplaceLayer("", NewRenderPlan(override, nil))
+	_, err = NewRenderPlan(base).ReplaceLayer("", NewRenderPlan(override))
 	require.Error(t, err)
 
-	_, err = NewRenderPlan(base, nil).ReplaceLayer("missing", NewRenderPlan(override, nil))
+	_, err = NewRenderPlan(base).ReplaceLayer("missing", NewRenderPlan(override))
 	require.Error(t, err)
 
-	_, err = NewRenderPlan(base, nil).ReplaceLayer("policy", NewRenderPlan(override, nil))
+	_, err = NewRenderPlan(base).ReplaceLayer("policy", NewRenderPlan(override))
 	require.Error(t, err)
 }

@@ -202,7 +202,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{
 				Name:        "get_weather",
 				Description: "Get weather",
-				Parameters:  map[string]any{"type": "object"},
+				Parameters:  prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
 			},
 		},
 	}
@@ -233,7 +233,7 @@ func TestTranslate_WithForcedToolInstruction(t *testing.T) {
 			{
 				Name:        "get_weather",
 				Description: "Get weather",
-				Parameters:  map[string]any{"type": "object"},
+				Parameters:  prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
 			},
 		},
 		ForcedTool: "get_weather",
@@ -260,9 +260,9 @@ func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
 			},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"gemini_search_grounding": true,
-			},
+			}),
 		},
 	}
 	req, err := a.Translate(exec)
@@ -290,14 +290,14 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":             1,
 				"presence_penalty":  0.4,
 				"frequency_penalty": 0.2,
 				"stop_sequences":    []any{"STOP", "END"},
 				"thinking":          true,
 				"thinking_budget":   512,
-			},
+			}),
 		},
 	}
 	req, err := a.Translate(exec)
@@ -315,7 +315,7 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 	assert.Equal(t, int32(512), *req.Config.ThinkingConfig.ThinkingBudget)
 }
 
-func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+func TestTranslate_ProviderSettingsMapping_RejectsInvalidValues(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -323,22 +323,36 @@ func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":            "bad",
 				"presence_penalty": 0.3,
 				"thinking_budget":  "invalid",
 				"thinking":         true,
-			},
+			}),
 		},
 	}
-	req, err := a.Translate(exec)
-	require.NoError(t, err)
-	assert.Nil(t, req.Config.TopK)
-	require.NotNil(t, req.Config.PresencePenalty)
-	assert.InDelta(t, 0.3, float64(*req.Config.PresencePenalty), 1e-6)
-	require.NotNil(t, req.Config.ThinkingConfig)
-	assert.True(t, req.Config.ThinkingConfig.IncludeThoughts)
-	assert.Nil(t, req.Config.ThinkingConfig.ThinkingBudget)
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
+}
+
+func TestTranslate_ProviderSettingsMapping_RejectsUnknownKey(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
+				"top_k":          float32(5),
+				"unknown_gemini": true,
+			}),
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
 }
 
 func TestTranslate_ToolResult(t *testing.T) {
@@ -563,6 +577,21 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 	assert.Equal(t, "NYC", req.Contents[0].Parts[0].FunctionCall.Args["location"])
 }
 
+func TestTranslate_AssistantToolCall_RejectsArgsChunkWithoutGlue(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
+				prompty.ToolCallPart{ID: "call_1", Name: "get_weather", ArgsChunk: `{"location":"NYC"}`},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrIncompleteToolCallArgs)
+}
+
 func TestTranslate_UnsupportedRole(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -630,6 +659,27 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Equal(t, "get_weather", tc.Name)
 	assert.Contains(t, tc.Args, `"location"`)
 	assert.Contains(t, tc.Args, "NYC")
+}
+
+func TestParseResponse_EmptyFunctionCallArgsFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{
+				Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{
+						ID:   "call_1",
+						Name: "get_weather",
+						Args: map[string]any{},
+					},
+				}},
+			},
+		}},
+	}
+	_, err := a.ParseResponse(resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
 func TestParseResponse_InvalidType(t *testing.T) {
@@ -710,7 +760,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
 			},
 		},
-		ResponseFormat: &prompty.SchemaDefinition{Name: "out", Schema: schema},
+		ResponseFormat: &prompty.SchemaDefinition{Name: "out", Schema: prompty.MustJSONDocumentFromMap(schema)},
 	}
 	req, err := a.Translate(exec)
 	require.NoError(t, err)
@@ -742,4 +792,25 @@ func TestParseStreamChunk_InvalidType(t *testing.T) {
 	_, err := a.ParseStreamChunk(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
+}
+
+func TestParseStreamChunk_MalformedToolArgsFails(t *testing.T) {
+	t.Parallel()
+	a := New()
+	chunk := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{
+				Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{
+						ID:   "call_1",
+						Name: "get_weather",
+						Args: map[string]any{"bad": make(chan int)},
+					},
+				}},
+			},
+		}},
+	}
+	_, err := a.ParseStreamChunk(chunk)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }

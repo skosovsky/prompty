@@ -73,7 +73,11 @@ func TestTruncateTokens(t *testing.T) {
 func TestRenderToolsAsXML_Golden(t *testing.T) {
 	t.Parallel()
 	tools := []ToolDefinition{
-		{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+		{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  mustJSONDocument(map[string]any{"type": "object"}),
+		},
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	got, err := renderToolsAsXML(tools)
@@ -92,7 +96,11 @@ func TestRenderToolsAsXML_Golden(t *testing.T) {
 func TestRenderToolsAsJSON_Golden(t *testing.T) {
 	t.Parallel()
 	tools := []ToolDefinition{
-		{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}},
+		{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  mustJSONDocument(map[string]any{"type": "object"}),
+		},
 		{Name: "search", Description: "Search", Parameters: nil},
 	}
 	got, err := renderToolsAsJSON(tools)

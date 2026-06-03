@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/cmd/prompty-gen/gen"
 )
 
@@ -84,7 +85,7 @@ func TestIdFromRelativePath(t *testing.T) {
 func TestRunGenerate_Testdata(t *testing.T) {
 	configPath := "testdata/prompty.yaml"
 	if _, err := os.Stat(configPath); err != nil {
-		t.Skipf("testdata not found: %v", err)
+		t.Fatalf("testdata not found: %v", err)
 	}
 
 	if err := runGenerate(configPath); err != nil {
@@ -95,6 +96,10 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	sharedPath := "testdata/gen_out/prompts_shared_gen.go"
 	if _, err := os.Stat(sharedPath); err != nil {
 		t.Errorf("expected shared file %s: %v", sharedPath, err)
+	}
+	sharedContent, _ := os.ReadFile(sharedPath)
+	if strings.Contains(string(sharedContent), "ManifestResolver") {
+		t.Error("generated shared catalog must not reference ManifestResolver fallback")
 	}
 	manifestPath := "testdata/gen_out/support_agent_gen.go"
 	if _, err := os.Stat(manifestPath); err != nil {
@@ -181,6 +186,12 @@ func TestLoadSpec_DualSchemaFixture(t *testing.T) {
 
 func normalizeSchemaValue(value any) any {
 	switch x := value.(type) {
+	case prompty.JSONDocument:
+		m, err := prompty.JSONDocumentAsMap(x)
+		if err != nil {
+			return x
+		}
+		return normalizeSchemaValue(m)
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for key, item := range x {

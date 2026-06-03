@@ -18,15 +18,17 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry         = (*Registry)(nil)
-	_ prompty.Lister           = (*Registry)(nil)
-	_ prompty.Statter          = (*Registry)(nil)
-	_ prompty.ManifestResolver = (*Registry)(nil)
+	_ prompty.Registry            = (*Registry)(nil)
+	_ prompty.Lister              = (*Registry)(nil)
+	_ prompty.Statter             = (*Registry)(nil)
+	_ prompty.ManifestResolver    = (*Registry)(nil)
+	_ prompty.ManifestBytesReader = (*Registry)(nil)
+	_ prompty.PromptDescriber     = (*Registry)(nil)
 )
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
 // Resolves id to {dir}/{id}.yaml or {dir}/{id}.yml (id = basename without extension).
-// WithEnvironment(env): tries {dir}/{id}.{env}.yaml first, then {dir}/{id}.yaml.
+// WithEnvironment(env): resolves only {dir}/{id}.{env}.yaml|.yml|.json (no base-id fallback).
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
 	dir             string
@@ -60,8 +62,8 @@ func WithPartials(relativePattern string) Option {
 	return func(r *Registry) { r.partialsPattern = relativePattern }
 }
 
-// WithEnvironment sets env for fallback resolution: tries {id}.{env}.yaml first, then {id}.yaml.
-// Example: id "internal/router", env "prod" -> internal/router.prod.yaml, then internal/router.yaml.
+// WithEnvironment sets env for strict resolution: only {id}.{env} manifest paths are tried.
+// Example: id "internal/router", env "prod" -> internal/router.prod.yaml (not internal/router.yaml).
 func WithEnvironment(env string) Option {
 	return func(r *Registry) { r.env = env }
 }
@@ -79,21 +81,17 @@ func insertEnvBeforeExt(base, env string) string {
 	return base + "." + env
 }
 
-// idToPaths returns candidate paths for id in resolution order (io/fs slash-style id).
-// When env != "", tries {id}.{env}.yaml first, then base paths.
-// Uses [filepath.FromSlash] on id for Windows filesystem compatibility.
+// idToPaths returns manifest paths for id (io/fs slash-style id).
+// When env is set, only {id}.{env} variants are resolved (no base-id fallback).
 func idToPaths(dir, id, env string) []string {
 	exts := []string{".yaml", ".yml", ".json"}
 	var out []string
-	base := insertEnvBeforeExt(id, env)
+	resolvedID := id
 	if env != "" {
-		for _, ext := range exts {
-			path := filepath.FromSlash(base + ext)
-			out = append(out, filepath.Join(dir, path))
-		}
+		resolvedID = insertEnvBeforeExt(id, env)
 	}
 	for _, ext := range exts {
-		path := filepath.FromSlash(id + ext)
+		path := filepath.FromSlash(resolvedID + ext)
 		out = append(out, filepath.Join(dir, path))
 	}
 	return out
@@ -115,6 +113,11 @@ func (r *Registry) readManifestBytes(_ context.Context, id string) ([]byte, erro
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+// ReadManifestBytes returns raw manifest bytes for digest and metadata-only paths.
+func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	return r.readManifestBytes(ctx, id)
+}
+
 // ResolveManifest returns manifest metadata without compiling template AST.
 func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	data, err := r.readManifestBytes(ctx, id)
@@ -122,6 +125,11 @@ func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.Temp
 		return prompty.TemplateDescriptor{}, err
 	}
 	return manifest.ParseDescriptor(data, r.parser)
+}
+
+// DescribePrompt returns manifest metadata for routing and introspection.
+func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	return r.ResolveManifest(ctx, id)
 }
 
 // loadTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
@@ -170,12 +178,12 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 }
 
 // Plan returns a deferred render plan for the selected prompt id.
-func (r *Registry) Plan(ctx context.Context, id string, typedInput any) (*prompty.RenderPlan, error) {
+func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
 	tpl, err := r.loadTemplate(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlan(tpl, typedInput), nil
+	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
 }
 
 // baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).

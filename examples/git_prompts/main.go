@@ -14,6 +14,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 	geminiadapter "github.com/skosovsky/prompty/adapter/gemini"
 	"github.com/skosovsky/prompty/parser/yaml"
@@ -75,10 +76,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("remoteregistry.New: %w", err)
 	}
-	plan, err := reg.Plan(ctx, "demo", map[string]any{
-		"topic":    "math",
-		"question": "What is 3+3?",
-	})
+	planInput, err := prompty.RegistryPlanInputFrom(struct {
+		Topic    string `json:"topic"`
+		Question string `json:"question"`
+	}{Topic: "math", Question: "What is 3+3?"})
+	if err != nil {
+		return fmt.Errorf("registry plan input: %w", err)
+	}
+	plan, err := reg.Plan(ctx, "demo", planInput)
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
@@ -100,7 +105,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
-	fmt.Println(resp.Text())
+	text, err := resp.StrictText()
+	if err != nil {
+		return fmt.Errorf("strict text: %w", err)
+	}
+	fmt.Println(text)
 	return nil
 }
 

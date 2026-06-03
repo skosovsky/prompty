@@ -18,13 +18,15 @@ func TestRenderPlan_Execute_UsesInputAndLateVars(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plan := NewRenderPlan(tpl, map[string]any{"name": "Alice"}).
-		WithLateVariables(map[string]any{"suffix": "!"})
+	plan, err := newRenderPlanFromMap(tpl, map[string]any{"name": "Alice"})
+	require.NoError(t, err)
+	plan, err = plan.WithLateVariablesJSON(mustJSONDocument(map[string]any{"suffix": "!"}))
+	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, "hello Alice !", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "hello Alice !", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func TestRenderPlan_ReplaceLayer(t *testing.T) {
@@ -48,12 +50,12 @@ func TestRenderPlan_ReplaceLayer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plan, err := NewRenderPlan(tpl, nil).ReplaceLayer("s1", NewRenderPlan(overrideTemplate, nil))
+	plan, err := NewRenderPlan(tpl).ReplaceLayer("s1", NewRenderPlan(overrideTemplate))
 	require.NoError(t, err)
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2)
-	assert.Equal(t, "override", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "override", mustTextFromParts(t, exec.Messages[0].Content))
 	assert.Equal(t, RoleUser, exec.Messages[1].Role)
 }
 
@@ -66,13 +68,13 @@ func TestRenderPlan_Execute_CollapsesConsecutiveSystemMessages(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	exec, err := NewRenderPlan(tpl, nil).Execute(context.Background())
+	exec, err := NewRenderPlan(tpl).Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 3)
 	assert.Equal(t, RoleSystem, exec.Messages[0].Role)
-	assert.Equal(t, "A", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "A", mustTextFromParts(t, exec.Messages[0].Content))
 	assert.Equal(t, RoleDeveloper, exec.Messages[1].Role)
-	assert.Equal(t, "B", TextFromParts(exec.Messages[1].Content))
+	assert.Equal(t, "B", mustTextFromParts(t, exec.Messages[1].Content))
 }
 
 func TestRenderPlan_Execute_SetsProvenance(t *testing.T) {
@@ -87,7 +89,7 @@ func TestRenderPlan_Execute_SetsProvenance(t *testing.T) {
 	}, WithMetadata(PromptMetadata{ID: "base-manifest"}))
 	require.NoError(t, err)
 
-	exec, err := NewRenderPlan(tpl, nil).Execute(context.Background())
+	exec, err := NewRenderPlan(tpl).Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, LayerRef{LayerID: "policy", ManifestID: "base-manifest"}, exec.Messages[0].LayerRef)
@@ -109,12 +111,12 @@ func TestRenderPlan_ReplaceLayer_ReplacesContiguousSegmentOnce(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plan, err := NewRenderPlan(tpl, nil).ReplaceLayer("policy", NewRenderPlan(overrideTemplate, nil))
+	plan, err := NewRenderPlan(tpl).ReplaceLayer("policy", NewRenderPlan(overrideTemplate))
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2)
-	assert.Equal(t, "override", TextFromParts(exec.Messages[0].Content))
+	assert.Equal(t, "override", mustTextFromParts(t, exec.Messages[0].Content))
 	assert.Equal(t, RoleUser, exec.Messages[1].Role)
 }

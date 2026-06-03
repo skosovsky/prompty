@@ -133,7 +133,7 @@ func TestTranslate_WithTools(t *testing.T) {
 			{
 				Name:        "get_weather",
 				Description: "Get weather",
-				Parameters:  map[string]any{"type": "object"},
+				Parameters:  prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
 			},
 		},
 	}
@@ -153,7 +153,7 @@ func TestTranslate_ForcedToolChoice(t *testing.T) {
 		},
 		Tools: []prompty.ToolDefinition{{
 			Name:       "get_weather",
-			Parameters: map[string]any{"type": "object"},
+			Parameters: prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
 		}},
 		ForcedTool: "get_weather",
 	}
@@ -186,6 +186,41 @@ func TestTranslate_ToolResult(t *testing.T) {
 	assert.NotNil(t, params.Messages[0].OfTool)
 	assert.Equal(t, "call_1", params.Messages[0].OfTool.ToolCallID)
 	assert.Equal(t, "Sunny", params.Messages[0].OfTool.Content.OfString.Value)
+}
+
+func TestTranslate_ToolMessage_UnexpectedTextPart_FailFast(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
+				prompty.ToolResultPart{
+					ToolCallID: "call_1",
+					Name:       "get_weather",
+					Content:    []prompty.ContentPart{prompty.TextPart{Text: "Sunny"}},
+				},
+				prompty.TextPart{Text: "ignored noise"},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
+func TestTranslate_AssistantToolCall_RejectsArgsChunkWithoutGlue(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
+				prompty.ToolCallPart{ID: "call_1", Name: "get_weather", ArgsChunk: `{"location":"NYC"}`},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrIncompleteToolCallArgs)
 }
 
 func TestTranslate_BatchedToolResults(t *testing.T) {
@@ -278,14 +313,14 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 			Model:       "o3-mini",
 			Temperature: new(0.8),
 			MaxTokens:   new(int64(200)),
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"presence_penalty":  0.2,
 				"frequency_penalty": 0.4,
 				"seed":              42,
 				"logprobs":          true,
 				"top_logprobs":      5,
 				"reasoning_effort":  "low",
-			},
+			}),
 		},
 	}
 	params, err := a.Translate(exec)
@@ -329,7 +364,7 @@ func TestTranslate_ReasoningModelIgnoresTemperatureWithoutReasoningEffort(t *tes
 	assert.Equal(t, int64(150), params.MaxCompletionTokens.Value)
 }
 
-func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+func TestTranslate_ProviderSettingsMapping_RejectsInvalidValues(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -337,19 +372,53 @@ func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"presence_penalty": 0.2,
 				"seed":             "invalid",
 				"logprobs":         "yes",
-			},
+			}),
 		},
 	}
-	params, err := a.Translate(exec)
-	require.NoError(t, err)
-	assert.True(t, params.PresencePenalty.Valid())
-	assert.InDelta(t, 0.2, params.PresencePenalty.Value, 1e-6)
-	assert.False(t, params.Seed.Valid())
-	assert.False(t, params.Logprobs.Valid())
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
+}
+
+func TestTranslate_ProviderSettingsMapping_RejectsUnknownKey(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
+				"presence_penalty": 0.1,
+				"unknown_setting":  true,
+			}),
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
+}
+
+func TestTranslate_ProviderSettingsMapping_RejectsOutOfRangePenalty(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
+				"presence_penalty": float32(99),
+			}),
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
 }
 
 func TestTranslate_NilExecution(t *testing.T) {
@@ -626,6 +695,72 @@ func TestParseResponse_FinishReason(t *testing.T) {
 	assert.Equal(t, "stop", resp.FinishReason)
 }
 
+func TestParseResponse_MissingToolCallTypeFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	completion := &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{
+				ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{
+					ID:   "call_1",
+					Type: "",
+					Function: openai.ChatCompletionMessageFunctionToolCallFunction{
+						Name:      "get_weather",
+						Arguments: `{"location":"NYC"}`,
+					},
+				}},
+			},
+		}},
+	}
+	_, err := a.ParseResponse(completion)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
+}
+
+func TestParseResponse_UnknownToolCallTypeFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	completion := &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{
+				ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{
+					ID:   "call_1",
+					Type: "custom",
+					Function: openai.ChatCompletionMessageFunctionToolCallFunction{
+						Name:      "get_weather",
+						Arguments: `{"location":"NYC"}`,
+					},
+				}},
+			},
+		}},
+	}
+	_, err := a.ParseResponse(completion)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+}
+
+func TestParseResponse_EmptyToolCallArgsFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	completion := &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{
+				ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{
+					ID:   "call_1",
+					Type: "function",
+					Function: openai.ChatCompletionMessageFunctionToolCallFunction{
+						Name:      "get_weather",
+						Arguments: "",
+					},
+				}},
+			},
+		}},
+	}
+	_, err := a.ParseResponse(completion)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
+}
+
 func TestParseResponse_ToolCalls(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -739,7 +874,10 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
 			},
 		},
-		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Name:   "reply_schema",
+			Schema: prompty.MustJSONDocumentFromMap(schema),
+		},
 	}
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
@@ -811,7 +949,10 @@ func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T
 				Content: []prompty.ContentPart{prompty.TextPart{Text: "Reply with JSON"}},
 			},
 		},
-		ResponseFormat: &prompty.SchemaDefinition{Name: "reply_schema", Schema: schema},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Name:   "reply_schema",
+			Schema: prompty.MustJSONDocumentFromMap(schema),
+		},
 	}
 	params, err := a.Translate(exec)
 	require.NoError(t, err)

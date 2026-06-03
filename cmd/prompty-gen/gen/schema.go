@@ -22,11 +22,16 @@ const (
 // schemaMapper maps JSON Schema to Go types using jennifer.
 type schemaMapper struct {
 	rootName string
+	rootPath string // "Input" or "Output" — empty object allowed only at this path
 	types    map[string]jen.Code
 }
 
 func newSchemaMapper(rootName string) *schemaMapper {
-	return &schemaMapper{rootName: rootName, types: make(map[string]jen.Code)}
+	return &schemaMapper{
+		rootName: rootName,
+		rootPath: "",
+		types:    make(map[string]jen.Code),
+	}
 }
 
 // pascal converts snake_case and kebab-case to PascalCase.
@@ -143,12 +148,106 @@ func getRequired(schema map[string]any) map[string]bool {
 	return req
 }
 
+// schemaTypeInfo resolves JSON Schema type keyword including nullable unions.
+func schemaTypeInfo(schema map[string]any) (string, bool, bool) {
+	if schema == nil {
+		return "", false, false
+	}
+	if primary, nullable, ok := resolveOneOfNullable(schema); ok {
+		return primary, nullable, false
+	}
+	if _, ok := schema["oneOf"]; ok {
+		return "", false, true
+	}
+	if _, ok := schema["anyOf"]; ok {
+		return "", false, true
+	}
+	if typ, ok := schema["type"].(string); ok {
+		return typ, false, false
+	}
+	types, ok := schema["type"].([]any)
+	if !ok {
+		return "", false, false
+	}
+	var prim string
+	hasNull := false
+	for _, item := range types {
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		if s == "null" {
+			hasNull = true
+			continue
+		}
+		if prim == "" {
+			prim = s
+			continue
+		}
+		if prim != s {
+			return "", false, true
+		}
+	}
+	return prim, hasNull, false
+}
+
+func resolveOneOfNullable(schema map[string]any) (string, bool, bool) {
+	oneOf, exists := schema["oneOf"].([]any)
+	if !exists || len(oneOf) != 2 {
+		return "", false, false
+	}
+	var prim string
+	hasNull := false
+	for _, branch := range oneOf {
+		b, ok := branch.(map[string]any)
+		if !ok {
+			return "", false, false
+		}
+		t, n, u := schemaTypeInfo(b)
+		if u {
+			return "", false, false
+		}
+		if t == "" && n {
+			hasNull = true
+			continue
+		}
+		if t == "" {
+			return "", false, false
+		}
+		if prim != "" && prim != t {
+			return "", false, false
+		}
+		prim = t
+		if n {
+			hasNull = true
+		}
+	}
+	if prim == "" {
+		return "", false, false
+	}
+	return prim, hasNull, true
+}
+
+func schemaPathLabel(path []string) string {
+	if len(path) == 0 {
+		return "<root>"
+	}
+	return strings.Join(path, ".")
+}
+
+func errStrictSchema(path []string, reason string) error {
+	return fmt.Errorf("prompty-gen: schema at %s: %s", schemaPathLabel(path), reason)
+}
+
 // mapSchemaToGo generates Go type code from JSON Schema.
 func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen.Code, error) {
 	if schema == nil {
-		return jen.Id("any"), nil
+		return nil, errStrictSchema(path, "schema is nil")
 	}
-	typ, _ := schema["type"].(string)
+	typ, _, union := schemaTypeInfo(schema)
+	if union {
+		return nil, errStrictSchema(path, "oneOf/anyOf union requires explicit typed branches")
+	}
 	switch typ {
 	case jsonSchemaTypeString:
 		return jen.String(), nil
@@ -168,21 +267,30 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 	case jsonSchemaTypeObject:
 		props, _ := schema["properties"].(map[string]any)
 		if len(props) == 0 {
-			// additionalProperties: { type: string } -> map[string]string; true/absent -> map[string]any
-			if addl, ok := schema["additionalProperties"]; ok && addl != nil {
-				if addlSchema, ok := addl.(map[string]any); ok {
-					addlTyp, _ := addlSchema["type"].(string)
-					// Limitation: additionalProperties with type "object" (nested schema) falls back to map[string]any
-					// to avoid recursive struct generation; only primitive types (string, integer, number, boolean) produce typed maps.
-					if addlTyp != "" && addlTyp != jsonSchemaTypeObject {
-						elem, err := m.mapSchemaToGo(addlSchema, append(path, "Val")...)
-						if err == nil {
-							return jen.Map(jen.String()).Add(elem), nil
-						}
-					}
+			if len(path) == 1 && path[0] == m.rootPath {
+				name := m.typeName(path...)
+				if _, exists := m.types[name]; !exists {
+					m.types[name] = nil
 				}
+				return jen.Qual("", name), nil
 			}
-			return jen.Map(jen.String()).Add(jen.Id("any")), nil
+			addl, ok := schema["additionalProperties"]
+			if !ok || addl == nil {
+				return nil, errStrictSchema(path, "object without properties requires typed additionalProperties")
+			}
+			addlSchema, ok := addl.(map[string]any)
+			if !ok {
+				return nil, errStrictSchema(path, "additionalProperties must be a schema object with type")
+			}
+			addlTyp, _ := addlSchema["type"].(string)
+			if addlTyp == "" || addlTyp == jsonSchemaTypeObject {
+				return nil, errStrictSchema(path, "additionalProperties must declare a primitive or array item type")
+			}
+			elem, err := m.mapSchemaToGo(addlSchema, append(path, "Val")...)
+			if err != nil {
+				return nil, err
+			}
+			return jen.Map(jen.String()).Add(elem), nil
 		}
 		name := m.typeName(path...)
 		_, exists := m.types[name]
@@ -192,7 +300,7 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 		m.types[name] = nil
 		return jen.Qual("", name), nil
 	default:
-		return jen.Id("any"), nil
+		return nil, errStrictSchema(path, "missing or unsupported type keyword")
 	}
 }
 
@@ -287,8 +395,10 @@ func (m *schemaMapper) GenerateTypes(schema map[string]any, rootTypeName string)
 	if schema == nil {
 		return nil, nil
 	}
-	// Build type refs in mapSchemaToGo
-	_, _ = m.mapSchemaToGo(schema, rootTypeName)
+	m.rootPath = rootTypeName
+	if _, err := m.mapSchemaToGo(schema, rootTypeName); err != nil {
+		return nil, err
+	}
 
 	var specs []typeSpec
 	seen := make(map[string]string) // typeName -> path (for collision guard)
@@ -298,7 +408,11 @@ func (m *schemaMapper) GenerateTypes(schema map[string]any, rootTypeName string)
 
 	var stmts []jen.Code
 	for _, ts := range specs {
-		stmts = append(stmts, m.emitStruct(ts))
+		stmt, err := m.emitStruct(ts)
+		if err != nil {
+			return nil, err
+		}
+		stmts = append(stmts, stmt)
 	}
 	return stmts, nil
 }
@@ -372,7 +486,7 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-func (m *schemaMapper) emitStruct(ts typeSpec) jen.Code {
+func (m *schemaMapper) emitStruct(ts typeSpec) (jen.Code, error) {
 	var fields []jen.Code
 	// Base path for children: ts.Name = rootName+path; children need path+propPart (matches collectTypeSpecs).
 	basePath := strings.TrimPrefix(ts.Name, m.rootName)
@@ -381,13 +495,17 @@ func (m *schemaMapper) emitStruct(ts typeSpec) jen.Code {
 		propSchema, _ := propVal.(map[string]any)
 		// Child type name = ParentName + Pascal(propName); for array, mapSchemaToGo appends "Item".
 		nestedPath := basePath + pascal(propName)
-		goType, _ := m.mapSchemaToGo(propSchema, nestedPath)
+		goType, err := m.mapSchemaToGo(propSchema, nestedPath)
+		if err != nil {
+			return nil, err
+		}
 		optional := !ts.Required[propName]
-		typ, _ := propSchema["type"].(string)
-		if optional {
+		typ, nullable, union := schemaTypeInfo(propSchema)
+		usePointer := optional || nullable
+		if usePointer && !union {
 			// array: never * (slice is ref type). object with properties: use * for optional struct.
 			// object without properties (map-like): no *.
-			// any (typ=="" or unknown): no * — interface zero value is nil, *any is redundant.
+			// unknown/union: no * — use json.RawMessage without pointer.
 			switch typ {
 			case jsonSchemaTypeArray:
 				// slice is already a reference type; no pointer
@@ -399,8 +517,7 @@ func (m *schemaMapper) emitStruct(ts typeSpec) jen.Code {
 			case jsonSchemaTypeString, jsonSchemaTypeInteger, jsonSchemaTypeNumber, jsonSchemaTypeBoolean:
 				goType = jen.Op("*").Add(goType)
 			}
-			// else typ=="" or unknown -> any, no *
-		} else if typ == jsonSchemaTypeBoolean {
+		} else if typ == jsonSchemaTypeBoolean && ts.Required[propName] {
 			// required bool: use *bool + validate:"required" for presence semantics (nil=invalid, false=valid)
 			goType = jen.Op("*").Add(goType)
 		}
@@ -418,5 +535,5 @@ func (m *schemaMapper) emitStruct(ts typeSpec) jen.Code {
 		}
 		fields = append(fields, jen.Id(pascal(propName)).Add(goType).Tag(tags))
 	}
-	return jen.Type().Id(ts.Name).Struct(fields...)
+	return jen.Type().Id(ts.Name).Struct(fields...), nil
 }

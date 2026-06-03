@@ -50,17 +50,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(resp.Text())
+	text, err := resp.StrictText()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(text)
 }
 ```
 
 ## Main abstractions
 
-- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, typedInput) (*RenderPlan, error)`. Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
-- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.Text()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming.
+- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, input RegistryPlanInput) (*RenderPlan, error)` (JSON boundary; use `RegistryPlanInputFrom[T]` or `RegistryPlanInputFromJSON`). Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
+- **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.StrictText()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming. Token budgets: `adapter.EstimateTokens(estimator, exec)` is strict-by-default (`ErrNoTokenEstimator` without a provider estimator); use `adapter.NewClientWithEstimator` when wrapping an invoker.
+- **CompiledPrompt** — immutable serialized execution snapshot with manifest digest. `RenderPlan.Compile` / `CompileFromRegistry` require raw manifest bytes; use `CompileFromRegistryWithCanonicalSnapshot` only when bytes are unavailable (explicit opt-in, `DigestSourceCanonicalSnapshot`).
 - **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
-Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables / ReplaceLayer / AppendToLayer / WithResponseFormat** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
+Pipeline: **Registry.Plan(ctx, id, RegistryPlanInput)** → **RenderPlan.WithLateVariablesJSON / ReplaceLayer / AppendToLayer / WithResponseFormatDefinition** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
 
 ## Features
 
@@ -82,7 +87,7 @@ Pipeline: **Registry.Plan(...)** → **RenderPlan.WithLateVariables / ReplaceLay
 
 All three registries also implement optional `prompty.Lister` (`List(ctx)`), `prompty.Statter` (`Stat(ctx, id)`), and `prompty.ManifestResolver` (`ResolveManifest(ctx, id)` — metadata only, no template AST). When you have a variable of type `prompty.Registry` and need list/stat/descriptor APIs, use a type assertion.
 
-Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml` (or `.yml`), with fallback to `{name}.json`, `{name}.yaml`. Name must not contain `':'`.
+With `WithEnvironment(env)`, only `{name}.{env}.json|yaml|yml` are resolved (strict, no fallback to base `{name}`). Without env, `{name}.json|yaml|yml` are tried. Name must not contain `':'`.
 
 ## Adapters
 
@@ -93,7 +98,7 @@ Template name and environment resolve to `{name}.{env}.json`, `{name}.{env}.yaml
 | `github.com/skosovsky/prompty/adapter/gemini`    | `*gemini.Request`                 | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes     |
 | `github.com/skosovsky/prompty/adapter/ollama`    | `*api.ChatRequest`                | Native Ollama tools                                                                        |
 
-Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.Text()` for plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. When URL media is unsupported by the target adapter, call `exec.ResolvedMedia(ctx, fetcher)` first; otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
+Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.StrictText()` for fail-closed plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. When URL media is unsupported by the target adapter, call `exec.ResolvedMedia(ctx, fetcher)` first; otherwise the adapter returns `adapter.ErrMediaNotResolved`. The core has no HTTP dependency; the default implementation lives in `mediafetch`.
 
 ## Provider settings
 
@@ -117,7 +122,7 @@ Supported `provider_settings` keys:
 - Anthropic: `top_k`, `stop_sequences`
 - Ollama: `top_k`, `seed`, `num_ctx`, `repeat_penalty`
 
-Type conversion is fail-safe: invalid values for a specific key are ignored (other valid keys are still applied).
+Provider settings validation is fail-closed: unknown keys or invalid values return `adapter.ErrInvalidProviderSettings` (no silent ignore).
 
 ## Architecture
 
@@ -155,16 +160,16 @@ if err != nil {
 	return err
 }
 
-plan, err := reg.Plan(ctx, "support_agent", map[string]any{
+plan, err := reg.Plan(ctx, "support_agent", prompty.RegistryPlanInputFrom(map[string]any{
 	"user_query": "Where is my order?",
-})
+}))
 if err != nil {
 	return err
 }
 
-policyPlan, err := reg.Plan(ctx, "policy_overlay", map[string]any{
+policyPlan, err := reg.Plan(ctx, "policy_overlay", prompty.RegistryPlanInputFrom(map[string]any{
 	"policy_name": "strict",
-})
+}))
 if err != nil {
 	return err
 }
@@ -174,9 +179,14 @@ if err != nil {
 	return err
 }
 
-exec, err := composed.WithLateVariables(map[string]any{
+lateVars, _ := prompty.MapToJSONDocument(map[string]any{
 	"allowed_tools": []string{"get_order_status"},
-}).Execute(ctx)
+})
+composed, err = composed.WithLateVariablesJSON(lateVars)
+if err != nil {
+	return err
+}
+exec, err := composed.Execute(ctx)
 if err != nil {
 	return err
 }
@@ -214,7 +224,7 @@ Clean-break rules in v2:
 - **Layers:** tag messages with `layer_id` / `layer_kind`; compose with `ReplaceLayer` or append with `AppendToLayer`.
 - **Provenance:** rendered messages carry `LayerRef` and `ManifestID`.
 - **Metadata:** `ResolveManifest` / `PromptCatalog.Descriptor` for lightweight manifest introspection.
-- **Runtime schema:** `RenderPlan.WithResponseFormat(schema any)` overrides response format before execute.
+- **Runtime schema:** `WithResponseFormatDefinition` / `WithResponseFormatFromStruct` overrides response format before execute.
 - **Struct binding:** alias resolution cached per type; struct fields bind via `prompt` / `json` / snake_case tags.
 
 ## Resilience, timeouts, and structured output

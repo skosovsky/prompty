@@ -11,6 +11,7 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
 	openaiadapter "github.com/skosovsky/prompty/adapter/openai"
 	"github.com/skosovsky/prompty/fileregistry"
@@ -28,10 +29,14 @@ func main() {
 	}
 
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "support_agent", &supportInput{
+	planInput, err := prompty.RegistryPlanInputFrom(&supportInput{
 		UserName: "Alice",
 		Query:    "What is 2+2?",
 	})
+	if err != nil {
+		log.Fatalf("RegistryPlanInputFrom: %v", err)
+	}
+	plan, err := reg.Plan(ctx, "support_agent", planInput)
 	if err != nil {
 		log.Fatalf("Plan: %v", err)
 	}
@@ -51,5 +56,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Execute: %v", err)
 	}
-	fmt.Println(resp.Text())
+	text, err := resp.StrictText()
+	if err != nil {
+		log.Fatalf("StrictText: %v", err)
+	}
+	fmt.Println(text)
 }

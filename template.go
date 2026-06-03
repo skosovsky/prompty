@@ -212,7 +212,11 @@ func NewChatPromptTemplate(
 		}
 		var meta map[string]any
 		if len(m.Metadata) > 0 {
-			meta = maps.Clone(m.Metadata)
+			decoded, decodeErr := JSONDocumentAsMap(m.Metadata)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("%w: message %d metadata: %w", ErrTemplateParse, i, decodeErr)
+			}
+			meta = maps.Clone(decoded)
 		}
 		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
 			parts:        parsedParts,
@@ -343,11 +347,15 @@ func (c *ChatPromptTemplate) renderTemplates(
 				)
 			}
 		}
+		msgMeta, metaErr := MapToJSONDocument(pm.metadata)
+		if metaErr != nil {
+			return nil, fmt.Errorf("%w: message %d metadata: %w", ErrTemplateRender, i, metaErr)
+		}
 		out = append(out, ChatMessage{
 			Role:         pm.role,
 			Content:      contentParts,
 			CacheControl: cloneCacheControl(pm.cacheControl),
-			Metadata:     maps.Clone(pm.metadata),
+			Metadata:     msgMeta,
 			LayerID:      pm.layerID,
 			LayerKind:    pm.layerKind,
 			LayerRef: LayerRef{

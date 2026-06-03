@@ -25,7 +25,11 @@ func ExampleRenderPlan_Execute() {
 	tpl, _ := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
 		{Role: prompty.RoleSystem, Content: prompty.TextContent("Hello, {{ .Input.name }}!")},
 	})
-	exec, err := prompty.NewRenderPlan(tpl, map[string]any{"name": "Alice"}).Execute(context.Background())
+	plan, err := prompty.NewRenderPlanFromRegistryInput(tpl, prompty.RegistryPlanInput(`{"name":"Alice"}`))
+	if err != nil {
+		panic(err)
+	}
+	exec, err := plan.Execute(context.Background())
 	if err != nil {
 		panic(err)
 	}
@@ -53,12 +57,16 @@ func Example() {
 			{Role: prompty.RoleSystem, Content: prompty.TextContent("You are {{ .Input.bot_name }}.")},
 			{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .Input.query }}")},
 		},
-		prompty.WithPartialVariables(map[string]any{"bot_name": "HelperBot"}),
+		prompty.MustWithPartialVariablesJSON(prompty.MustJSONDocumentFromMap(map[string]any{"bot_name": "HelperBot"})),
 	)
 	if err != nil {
 		panic(err)
 	}
-	exec, err := prompty.NewRenderPlan(tpl, map[string]any{"query": "What is 2+2?"}).Execute(context.Background())
+	plan, err := prompty.NewRenderPlanFromRegistryInput(tpl, prompty.RegistryPlanInput(`{"query":"What is 2+2?"}`))
+	if err != nil {
+		panic(err)
+	}
+	exec, err := plan.Execute(context.Background())
 	if err != nil {
 		panic(err)
 	}

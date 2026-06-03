@@ -4,7 +4,6 @@ package prompts
 
 import (
 	"context"
-	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
 )
@@ -14,34 +13,21 @@ type PromptID string
 var validate = validator.New()
 
 type PromptCatalog interface {
-	RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error)
 	Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error)
 	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
 }
 
 type promptCatalog struct {
-	registry     prompty.Registry
+	registry     prompty.DescribingRegistry
 	SupportAgent *SupportAgentPrompt
 }
 
-func NewPromptCatalog(r prompty.Registry) PromptCatalog {
+func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog {
 	return &promptCatalog{registry: r, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
-func (c *promptCatalog) RenderByID(ctx context.Context, id PromptID, input any) (*prompty.RenderPlan, error) {
-	switch id {
-	case SupportAgent:
-		return c.SupportAgent.renderFromAny(ctx, input)
-	default:
-		return nil, fmt.Errorf("unknown prompt id: %q", id)
-	}
-}
-
 func (c *promptCatalog) Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error) {
-	if resolver, ok := c.registry.(prompty.ManifestResolver); ok {
-		return resolver.ResolveManifest(ctx, string(id))
-	}
-	return prompty.TemplateDescriptor{}, fmt.Errorf("prompty: registry does not implement ManifestResolver")
+	return c.registry.DescribePrompt(ctx, string(id))
 }
 
 func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {

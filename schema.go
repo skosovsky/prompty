@@ -9,7 +9,7 @@ var schemaProviderType = reflect.TypeFor[SchemaProvider]()
 
 // SchemaProvider allows caller-owned types to provide a JSON Schema without reflection.
 type SchemaProvider interface {
-	JSONSchema() map[string]any
+	JSONSchema() JSONDocument
 }
 
 // ExtractSchema returns a JSON Schema for v using SchemaProvider when available,
@@ -22,26 +22,6 @@ func ExtractSchema(v any) map[string]any {
 		return nil
 	}
 	return schema
-}
-
-// schemaToDefinition converts runtime schema input into SchemaDefinition.
-func schemaToDefinition(schema any) (*SchemaDefinition, error) {
-	if schema == nil {
-		return nil, errors.New("response format schema is required")
-	}
-	switch typed := schema.(type) {
-	case *SchemaDefinition:
-		return cloneSchemaDefinition(typed), nil
-	case SchemaDefinition:
-		out := typed
-		return &out, nil
-	default:
-		extracted := ExtractSchema(schema)
-		if extracted == nil {
-			return nil, errors.New("response format: unsupported schema type")
-		}
-		return &SchemaDefinition{Schema: cloneMapAny(extracted)}, nil
-	}
 }
 
 func extractSchema(v any) (map[string]any, error) {
@@ -96,7 +76,12 @@ func schemaFromProvider(t reflect.Type) (map[string]any, bool) {
 	for _, candidate := range candidates {
 		provider, ok := instantiateSchemaProvider(candidate)
 		if ok {
-			return cloneMapAny(provider.JSONSchema()), true
+			doc := provider.JSONSchema()
+			m, err := JSONDocumentAsMap(doc)
+			if err != nil {
+				return nil, false
+			}
+			return cloneMapAny(m), true
 		}
 	}
 	return nil, false

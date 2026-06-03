@@ -204,7 +204,7 @@ func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T)
 	assert.Equal(t, "Prod router", tpl.Messages[0].Content[0].Text, "env variant should be preferred")
 }
 
-func TestFileRegistry_GetTemplate_WithEnvironment_FallbackToBase(t *testing.T) {
+func TestFileRegistry_GetTemplate_WithEnvironment_RequiresEnvVariant(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "agent.json")
@@ -221,11 +221,9 @@ func TestFileRegistry_GetTemplate_WithEnvironment_FallbackToBase(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	tpl, err := templateFromPlan(ctx, reg, "agent")
-	require.NoError(t, err)
-	require.NotNil(t, tpl)
-	require.Len(t, tpl.Messages[0].Content, 1)
-	assert.Equal(t, "Base only", tpl.Messages[0].Content[0].Text, "should fallback to base when env variant missing")
+	_, err = templateFromPlan(ctx, reg, "agent")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
 func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
@@ -253,7 +251,7 @@ func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
 		{"slash_id_yaml", "internal/router", "prod", ".yaml", "Base", "Prod", "Prod"},
 		{"slash_id_yml", "a/b", "staging", ".yml", "Base", "Staging", "Staging"},
 		{"slash_id_json", "x/y/z", "dev", ".json", "Base", "Dev", "Dev"},
-		{"fallback_when_env_missing", "flat", "prod", ".json", "BaseOnly", "", "BaseOnly"},
+		{"env_variant_required", "flat", "prod", ".json", "BaseOnly", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -289,6 +287,11 @@ func TestFileRegistry_EnvFallback_TableDriven(t *testing.T) {
 			require.NoError(t, err)
 			ctx := context.Background()
 			tpl, err := templateFromPlan(ctx, reg, tt.id)
+			if tt.wantText == "" {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+				return
+			}
 			require.NoError(t, err)
 			require.NotNil(t, tpl)
 			require.Len(t, tpl.Messages[0].Content, 1)

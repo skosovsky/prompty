@@ -20,6 +20,6 @@ go get github.com/skosovsky/prompty/adapter/gemini
 - **Messages:** system, user, assistant; tools; media. URL and inline bytes are mapped through Gemini URI/inline parts; no need to call `exec.ResolvedMedia` for URL media.
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
 - **Cache control:** `CacheControl` is accepted on messages/parts and ignored by this adapter in current Gemini APIs.
-- **Helpers:** `prompty.TextFromParts`.
+- **Helpers:** `prompty.StrictTextFromParts`, `prompty.JoinAdapterTextParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/gemini) for the full API.

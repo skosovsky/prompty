@@ -35,7 +35,13 @@ func ExampleNew() {
 		panic(err)
 	}
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "support_agent", map[string]any{"user_name": "Alice"})
+	input, err := prompty.RegistryPlanInputFrom(struct {
+		UserName string `json:"user_name"`
+	}{UserName: "Alice"})
+	if err != nil {
+		panic(err)
+	}
+	plan, err := reg.Plan(ctx, "support_agent", input)
 	if err != nil {
 		panic(err)
 	}

@@ -104,7 +104,10 @@ func TestTranslate_WithTools(t *testing.T) {
 			{
 				Name:        "get_weather",
 				Description: "Get weather",
-				Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+				Parameters: prompty.MustJSONDocumentFromMap(map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				}),
 			},
 		},
 	}
@@ -127,7 +130,7 @@ func TestTranslate_WithForcedToolInstruction(t *testing.T) {
 			},
 		},
 		Tools: []prompty.ToolDefinition{
-			{Name: "get_weather", Parameters: map[string]any{"type": "object"}},
+			{Name: "get_weather", Parameters: prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"})},
 		},
 		ForcedTool: "get_weather",
 	}
@@ -220,12 +223,12 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":          10,
 				"seed":           42,
 				"num_ctx":        4096,
 				"repeat_penalty": 1.1,
-			},
+			}),
 		},
 	}
 	req, err := a.Translate(exec)
@@ -237,7 +240,7 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 	assert.InDelta(t, 1.1, req.Options["repeat_penalty"], 1e-6)
 }
 
-func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
+func TestTranslate_ProviderSettingsMapping_RejectsInvalidValues(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -245,19 +248,35 @@ func TestTranslate_ProviderSettingsMapping_IgnoresInvalidValues(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
 		ModelOptions: &prompty.ModelOptions{
-			ProviderSettings: map[string]any{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
 				"top_k":          10,
 				"num_ctx":        "invalid",
 				"repeat_penalty": "invalid",
-			},
+			}),
 		},
 	}
-	req, err := a.Translate(exec)
-	require.NoError(t, err)
-	require.NotNil(t, req.Options)
-	assert.Equal(t, 10, req.Options["top_k"])
-	assert.NotContains(t, req.Options, "num_ctx")
-	assert.NotContains(t, req.Options, "repeat_penalty")
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
+}
+
+func TestTranslate_ProviderSettingsMapping_RejectsUnknownKey(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
+		},
+		ModelOptions: &prompty.ModelOptions{
+			ProviderSettings: prompty.MustJSONDocumentFromMap(map[string]any{
+				"top_k":          10,
+				"unknown_ollama": true,
+			}),
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrInvalidProviderSettings)
 }
 
 func TestTranslate_ImagePartData(t *testing.T) {
@@ -459,6 +478,21 @@ func TestTranslate_AssistantToolCalls(t *testing.T) {
 	assert.Equal(t, 1, req.Messages[0].ToolCalls[1].Function.Index)
 }
 
+func TestTranslate_AssistantToolCall_RejectsArgsChunkWithoutGlue(t *testing.T) {
+	t.Parallel()
+	a := New()
+	exec := &prompty.PromptExecution{
+		Messages: []prompty.ChatMessage{
+			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
+				prompty.ToolCallPart{ID: "call_1", Name: "get_weather", ArgsChunk: `{"location":"NYC"}`},
+			}},
+		},
+	}
+	_, err := a.Translate(exec)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrIncompleteToolCallArgs)
+}
+
 func TestTranslate_UnsupportedRole(t *testing.T) {
 	t.Parallel()
 	a := New()
@@ -510,6 +544,25 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Equal(t, "call_1", tc.ID)
 	assert.Equal(t, "get_weather", tc.Name)
 	assert.Contains(t, tc.Args, "NYC")
+}
+
+func TestParseResponse_EmptyToolCallArgsFailsClosed(t *testing.T) {
+	t.Parallel()
+	a := New()
+	resp := &api.ChatResponse{
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{{
+				ID: "call_1",
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: api.NewToolCallFunctionArguments(),
+				},
+			}},
+		},
+	}
+	_, err := a.ParseResponse(resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
 func TestParseResponse_InvalidType(t *testing.T) {
@@ -568,7 +621,9 @@ func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
-		ResponseFormat: &prompty.SchemaDefinition{Schema: map[string]any{"type": "object"}},
+		ResponseFormat: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{"type": "object"}),
+		},
 	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
@@ -594,4 +649,26 @@ func TestParseStreamChunk_InvalidType(t *testing.T) {
 	_, err := a.ParseStreamChunk(nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
+}
+
+func TestParseStreamChunk_MalformedToolArgsFails(t *testing.T) {
+	t.Parallel()
+	a := New()
+	args := api.NewToolCallFunctionArguments()
+	args.Set("bad", make(chan int))
+	chunk := &api.ChatResponse{
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{{
+				ID: "call_1",
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: args,
+				},
+			}},
+		},
+		Done: false,
+	}
+	_, err := a.ParseStreamChunk(chunk)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }

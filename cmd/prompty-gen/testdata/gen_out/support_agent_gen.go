@@ -27,26 +27,15 @@ func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput
 	if err := validate.Struct(&input); err != nil {
 		return nil, fmt.Errorf("validate input: %w", err)
 	}
-	plan, err := p.registry.Plan(ctx, string(SupportAgent), input)
+	planInput, err := prompty.RegistryPlanInputFrom[SupportAgentInput](input)
+	if err != nil {
+		return nil, fmt.Errorf("encode render input: %w", err)
+	}
+	plan, err := p.registry.Plan(ctx, string(SupportAgent), planInput)
 	if err != nil {
 		return nil, fmt.Errorf("build render plan: %w", err)
 	}
 	return plan, nil
-}
-
-func (p *SupportAgentPrompt) renderFromAny(ctx context.Context, input any) (*prompty.RenderPlan, error) {
-	switch typed := input.(type) {
-	case SupportAgentInput:
-		return p.Render(ctx, typed)
-	case *SupportAgentInput:
-		if typed == nil {
-			return nil, fmt.Errorf("invalid input type for %s: got nil pointer", SupportAgent)
-		}
-		return p.Render(ctx, *typed)
-	default:
-		var expected SupportAgentInput
-		return nil, fmt.Errorf("invalid input type for %s: expected %T, got %T", SupportAgent, expected, input)
-	}
 }
 
 func (p *SupportAgentPrompt) RequiredTools() []string {

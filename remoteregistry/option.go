@@ -12,7 +12,7 @@ func WithParser(u manifest.Unmarshaler) Option {
 	return func(r *Registry) { r.parser = u }
 }
 
-// WithEnvironment sets env for fallback: Fetch tries id.env first, then id.
+// WithEnvironment sets env for strict resolution: only id.env manifests are fetched.
 func WithEnvironment(env string) Option {
 	return func(r *Registry) { r.env = env }
 }

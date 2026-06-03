@@ -46,9 +46,9 @@ func TestNewStructuredExecutor_ValidationErrorAppendsAssistantAndUser(t *testing
 	require.Len(t, seen, 2)
 	require.Len(t, seen[1].Messages, 3)
 	assert.Equal(t, RoleAssistant, seen[1].Messages[1].Role)
-	assert.Equal(t, `{invalid`, TextFromParts(seen[1].Messages[1].Content))
+	assert.Equal(t, `{invalid`, mustTextFromParts(t, seen[1].Messages[1].Content))
 	assert.Equal(t, RoleUser, seen[1].Messages[2].Role)
-	assert.Contains(t, TextFromParts(seen[1].Messages[2].Content), "invalid character")
+	assert.Contains(t, mustTextFromParts(t, seen[1].Messages[2].Content), "invalid character")
 }
 
 func TestNewStructuredExecutor_ToolCallErrorAppendsAssistantAndTool(t *testing.T) {

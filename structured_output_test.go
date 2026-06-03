@@ -3,6 +3,7 @@ package prompty
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,7 +43,7 @@ func TestExecuteWithStructuredOutput_InvalidJSONReturnsValidationError(t *testin
 	require.ErrorAs(t, err, &valErr)
 	require.NotNil(t, valErr.RawAssistantMessage)
 	assert.Equal(t, RoleAssistant, valErr.RawAssistantMessage.Role)
-	assert.Equal(t, `{invalid`, TextFromParts(valErr.RawAssistantMessage.Content))
+	assert.Equal(t, `{invalid`, mustTextFromParts(t, valErr.RawAssistantMessage.Content))
 	assert.Contains(t, valErr.FeedbackPrompt, "JSON validation failed:")
 	assert.Contains(t, valErr.FeedbackPrompt, "Please fix your output.")
 }
@@ -68,7 +69,7 @@ func TestExecuteWithStructuredOutput_SemanticValidationReturnsValidationError(t 
 	var valErr *ValidationError
 	require.ErrorAs(t, err, &valErr)
 	require.NotNil(t, valErr.RawAssistantMessage)
-	assert.JSONEq(t, `{"answer":""}`, TextFromParts(valErr.RawAssistantMessage.Content))
+	assert.JSONEq(t, `{"answer":""}`, mustTextFromParts(t, valErr.RawAssistantMessage.Content))
 	assert.Equal(
 		t,
 		"The JSON format is valid, but data violates business rules: assert.AnError general error for testing. Fix it.",
@@ -82,7 +83,7 @@ func TestExecuteWithStructuredOutput_AutoSchemaValueReceiver(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
 			require.NotNil(t, exec.ResponseFormat)
-			assert.Equal(t, "object", exec.ResponseFormat.Schema["type"])
+			assert.Equal(t, "object", mustJSONDocumentMap(exec.ResponseFormat.Schema)["type"])
 			return NewResponse([]ContentPart{TextPart{Text: `{"answer":"ok"}`}}), nil
 		},
 	}
@@ -99,7 +100,7 @@ func TestExecuteWithStructuredOutput_AutoSchemaPointerReceiver(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, exec *PromptExecution) (*Response, error) {
 			require.NotNil(t, exec.ResponseFormat)
-			assert.Equal(t, "object", exec.ResponseFormat.Schema["type"])
+			assert.Equal(t, "object", mustJSONDocumentMap(exec.ResponseFormat.Schema)["type"])
 			return NewResponse([]ContentPart{TextPart{Text: `{"answer":"ok"}`}}), nil
 		},
 	}
@@ -116,12 +117,12 @@ func TestExecuteWithStructuredOutput_PreservesExplicitResponseFormat(t *testing.
 	exec := SimplePrompt("hi")
 	exec.ResponseFormat = &SchemaDefinition{
 		Name: "explicit",
-		Schema: map[string]any{
+		Schema: mustJSONDocument(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"answer": map[string]any{"type": "string"},
 			},
-		},
+		}),
 	}
 
 	invoker := &scriptedInvoker{
@@ -131,7 +132,7 @@ func TestExecuteWithStructuredOutput_PreservesExplicitResponseFormat(t *testing.
 			assert.Equal(
 				t,
 				"string",
-				got.ResponseFormat.Schema["properties"].(map[string]any)["answer"].(map[string]any)["type"],
+				mustJSONDocumentMap(got.ResponseFormat.Schema)["properties"].(map[string]any)["answer"].(map[string]any)["type"],
 			)
 			return NewResponse([]ContentPart{TextPart{Text: `{"answer":"ok"}`}}), nil
 		},
@@ -173,7 +174,7 @@ func TestExecuteWithStructuredOutput_AutoSchemaDoesNotBlockToolsInCore(t *testin
 	require.Len(t, exec.Tools, 1)
 }
 
-func TestExecuteWithStructuredOutput_StripsJSONFenceWithPrefixAndSuffix(t *testing.T) {
+func TestExecuteWithStructuredOutput_RejectsJSONFenceWithPrefixAndSuffix(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -188,12 +189,18 @@ func TestExecuteWithStructuredOutput_StripsJSONFenceWithPrefixAndSuffix(t *testi
 	}
 
 	result, err := ExecuteWithStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"))
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, "ok", result.Answer)
+	require.Nil(t, result)
+	require.Error(t, err)
+	var valErr *ValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.True(t,
+		strings.Contains(valErr.Err.Error(), "markdown code fences are not supported") ||
+			strings.Contains(valErr.Err.Error(), "looking for beginning of value"),
+		valErr.Err.Error(),
+	)
 }
 
-func TestExecuteWithStructuredOutput_StripsGenericFence(t *testing.T) {
+func TestExecuteWithStructuredOutput_RejectsGenericFence(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -204,12 +211,18 @@ func TestExecuteWithStructuredOutput_StripsGenericFence(t *testing.T) {
 	}
 
 	result, err := ExecuteWithStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"))
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, "ok", result.Answer)
+	require.Nil(t, result)
+	require.Error(t, err)
+	var valErr *ValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.True(t,
+		strings.Contains(valErr.Err.Error(), "markdown code fences are not supported") ||
+			strings.Contains(valErr.Err.Error(), "looking for beginning of value"),
+		valErr.Err.Error(),
+	)
 }
 
-func TestExecuteWithStructuredOutput_FenceParserIgnoresBackticksInsideJSONString(t *testing.T) {
+func TestExecuteWithStructuredOutput_AcceptsBackticksInsideJSONString(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -218,7 +231,7 @@ func TestExecuteWithStructuredOutput_FenceParserIgnoresBackticksInsideJSONString
 			return NewResponse(
 				[]ContentPart{
 					TextPart{
-						Text: "prefix\n```json\n{\"answer\":\"ok\",\"code\":\"```go\\nfmt.Println()\\n```\"}\n```\nsuffix\n```note\nignored\n```",
+						Text: "{\"answer\":\"ok\",\"code\":\"```go\\nfmt.Println()\\n```\"}",
 					},
 				},
 			), nil
@@ -263,22 +276,22 @@ type valueSchemaResult struct {
 	Answer string `json:"answer"`
 }
 
-func (valueSchemaResult) JSONSchema() map[string]any {
-	return map[string]any{
+func (valueSchemaResult) JSONSchema() JSONDocument {
+	return MustJSONDocumentFromMap(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"answer": map[string]any{"type": "string"},
 		},
 		"required":             []string{"answer"},
 		"additionalProperties": false,
-	}
+	})
 }
 
 type pointerSchemaResult struct {
 	Answer string `json:"answer"`
 }
 
-func (*pointerSchemaResult) JSONSchema() map[string]any {
+func (*pointerSchemaResult) JSONSchema() JSONDocument {
 	return valueSchemaResult{}.JSONSchema()
 }
 
@@ -293,6 +306,6 @@ func (r semanticFeedbackResult) Validate() error {
 	return assert.AnError
 }
 
-func (r semanticFeedbackResult) JSONSchema() map[string]any {
+func (r semanticFeedbackResult) JSONSchema() JSONDocument {
 	return valueSchemaResult{}.JSONSchema()
 }

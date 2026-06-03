@@ -47,7 +47,7 @@ func cloneModelOptions(opts *ModelOptions) *ModelOptions {
 	out := &ModelOptions{
 		Model:            opts.Model,
 		Stop:             cloneStringSlice(opts.Stop),
-		ProviderSettings: cloneMapAny(opts.ProviderSettings),
+		ProviderSettings: CloneJSONDocument(opts.ProviderSettings),
 	}
 	if opts.Temperature != nil {
 		v := *opts.Temperature
@@ -66,12 +66,13 @@ func cloneModelOptions(opts *ModelOptions) *ModelOptions {
 
 func clonePromptMetadata(meta PromptMetadata) PromptMetadata {
 	return PromptMetadata{
-		ID:          meta.ID,
-		Version:     meta.Version,
-		Description: meta.Description,
-		Tags:        cloneStringSlice(meta.Tags),
-		Environment: meta.Environment,
-		Extras:      cloneMapAny(meta.Extras),
+		ID:           meta.ID,
+		Version:      meta.Version,
+		Description:  meta.Description,
+		Tags:         cloneStringSlice(meta.Tags),
+		Capabilities: cloneStringSlice(meta.Capabilities),
+		Environment:  meta.Environment,
+		Extras:       CloneJSONDocument(meta.Extras),
 	}
 }
 
@@ -82,7 +83,7 @@ func cloneSchemaDefinition(schema *SchemaDefinition) *SchemaDefinition {
 	return &SchemaDefinition{
 		Name:        schema.Name,
 		Description: schema.Description,
-		Schema:      cloneMapAny(schema.Schema),
+		Schema:      CloneJSONDocument(schema.Schema),
 	}
 }
 
@@ -103,7 +104,7 @@ func cloneToolDefinitions(tools []ToolDefinition) []ToolDefinition {
 		out[i] = ToolDefinition{
 			Name:        tool.Name,
 			Description: tool.Description,
-			Parameters:  cloneMapAny(tool.Parameters),
+			Parameters:  CloneJSONDocument(tool.Parameters),
 		}
 	}
 	return out
@@ -120,7 +121,7 @@ func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
 			Content:      slicesCloneTemplateParts(msg.Content),
 			Optional:     msg.Optional,
 			CacheControl: cloneCacheControl(msg.CacheControl),
-			Metadata:     cloneMapAny(msg.Metadata),
+			Metadata:     CloneJSONDocument(msg.Metadata),
 			LayerID:      msg.LayerID,
 			LayerKind:    msg.LayerKind,
 		}
@@ -150,7 +151,7 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 			Role:         msg.Role,
 			Content:      cloneContentParts(msg.Content),
 			CacheControl: cloneCacheControl(msg.CacheControl),
-			Metadata:     cloneMapAny(msg.Metadata),
+			Metadata:     CloneJSONDocument(msg.Metadata),
 			LayerID:      msg.LayerID,
 			LayerKind:    msg.LayerKind,
 			LayerRef:     msg.LayerRef,

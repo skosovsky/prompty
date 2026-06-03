@@ -84,13 +84,24 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			config.StopSequences = exec.ModelOptions.Stop
 		}
 	}
-	wantGoogleSearch := applyGeminiProviderSettings(config, modelProviderSettings(exec.ModelOptions))
+	providerSettings, err := modelProviderSettings(exec.ModelOptions)
+	if err != nil {
+		return nil, err
+	}
+	wantGoogleSearch, err := applyGeminiProviderSettings(config, providerSettings)
+	if err != nil {
+		return nil, err
+	}
 	var systemParts []string
 	var contents []*genai.Content
 	for _, msg := range working.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			systemParts = append(systemParts, prompty.TextFromParts(msg.Content))
+			text, err := prompty.StrictTextFromParts(msg.Content)
+			if err != nil {
+				return nil, err
+			}
+			systemParts = append(systemParts, text)
 		case prompty.RoleUser:
 			c, err := a.userContent(msg.Content)
 			if err != nil {
@@ -149,7 +160,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	}
 	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
 		config.ResponseMIMEType = "application/json"
-		schema, err := mapToGenaiSchema(exec.ResponseFormat.Schema)
+		schemaMap, err := prompty.SchemaMap(exec.ResponseFormat)
+		if err != nil {
+			return nil, fmt.Errorf("response_format schema: %w", err)
+		}
+		schema, err := mapToGenaiSchema(schemaMap)
 		if err != nil {
 			return nil, fmt.Errorf("response_format schema: %w", err)
 		}
@@ -220,11 +235,13 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 		case prompty.TextPart:
 			genParts = append(genParts, genai.NewPartFromText(x.Text))
 		case prompty.ToolCallPart:
+			argsJSON, argsErr := prompty.ToolCallArgsForTranslate(x)
+			if argsErr != nil {
+				return nil, argsErr
+			}
 			var args map[string]any
-			if x.Args != "" {
-				if err := json.Unmarshal([]byte(x.Args), &args); err != nil {
-					return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
-				}
+			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+				return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
 			}
 			if args == nil {
 				args = make(map[string]any)
@@ -243,16 +260,29 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content, error) {
 	genParts := make([]*genai.Part, 0, len(parts))
 	for _, p := range parts {
-		if tr, ok := p.(prompty.ToolResultPart); ok {
-			// Fail-fast on MediaPart: FunctionResponse expects map[string]any (JSON), no native image support
-			for _, cp := range tr.Content {
-				if _, ok := cp.(prompty.MediaPart); ok {
-					return nil, adapter.ErrUnsupportedContentType
-				}
+		var tr prompty.ToolResultPart
+		switch x := p.(type) {
+		case prompty.ToolResultPart:
+			tr = x
+		case *prompty.ToolResultPart:
+			if x == nil {
+				return nil, adapter.ErrUnsupportedContentType
 			}
-			text := prompty.TextFromParts(tr.Content)
-			genParts = append(genParts, genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text}))
+			tr = *x
+		default:
+			return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
 		}
+		// Fail-fast on MediaPart: FunctionResponse expects map[string]any (JSON), no native image support
+		for _, cp := range tr.Content {
+			if _, ok := cp.(prompty.MediaPart); ok {
+				return nil, adapter.ErrUnsupportedContentType
+			}
+		}
+		text, err := prompty.StrictTextFromParts(tr.Content)
+		if err != nil {
+			return nil, err
+		}
+		genParts = append(genParts, genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text}))
 	}
 	if len(genParts) == 0 {
 		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)
@@ -270,17 +300,18 @@ func (a *Adapter) ParseResponse(resp *genai.GenerateContentResponse) (*prompty.R
 		out = append(out, prompty.TextPart{Text: text})
 	}
 	for _, fc := range resp.FunctionCalls() {
-		var args string
-		if len(fc.Args) > 0 {
-			b, err := json.Marshal(fc.Args)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
-			}
-			args = string(b)
-		} else {
-			args = "{}"
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf(
+				"%w: empty function call args for %q",
+				adapter.ErrMalformedArgs,
+				fc.Name,
+			)
 		}
-		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, Args: args})
+		b, err := json.Marshal(fc.Args)
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
+		}
+		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, Args: string(b)})
 	}
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse
@@ -304,7 +335,7 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 		if len(fc.Args) > 0 {
 			b, err := json.Marshal(fc.Args)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
 			}
 			argsChunk = string(b)
 		}
@@ -313,68 +344,106 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 	return out, nil
 }
 
-func modelProviderSettings(opts *prompty.ModelOptions) map[string]any {
-	if opts == nil {
-		return nil
-	}
-	return opts.ProviderSettings
+func modelProviderSettings(opts *prompty.ModelOptions) (map[string]any, error) {
+	return prompty.ProviderSettingsMap(opts)
 }
 
-func applyGeminiProviderSettings(config *genai.GenerateContentConfig, settings map[string]any) bool {
+func geminiProviderSettingKeys() []string {
+	return []string{
+		"top_k",
+		"presence_penalty",
+		"frequency_penalty",
+		"stop_sequences",
+		"thinking",
+		"thinking_budget",
+		"gemini_search_grounding",
+	}
+}
+
+func applyGeminiProviderSettings(config *genai.GenerateContentConfig, settings map[string]any) (bool, error) {
 	if len(settings) == 0 {
-		return false
+		return false, nil
+	}
+	if err := adapter.RejectUnknownProviderSettingKeys(settings, geminiProviderSettingKeys()); err != nil {
+		return false, err
 	}
 	if raw, ok := settings["top_k"]; ok {
-		if topK, err := cast.ToFloat32(raw); err == nil {
-			config.TopK = &topK
+		topK, err := cast.ToFloat32(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("top_k", err)
 		}
+		if topK < 1 {
+			return false, adapter.ProviderSettingError("top_k", fmt.Errorf("value %v must be >= 1", topK))
+		}
+		config.TopK = &topK
 	}
 	if raw, ok := settings["presence_penalty"]; ok {
-		if penalty, err := cast.ToFloat32(raw); err == nil {
-			config.PresencePenalty = &penalty
+		penalty, err := cast.ToFloat32(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("presence_penalty", err)
 		}
+		if err := adapter.ValidateFloat32Range("presence_penalty", penalty, -2, 2); err != nil {
+			return false, err
+		}
+		config.PresencePenalty = &penalty
 	}
 	if raw, ok := settings["frequency_penalty"]; ok {
-		if penalty, err := cast.ToFloat32(raw); err == nil {
-			config.FrequencyPenalty = &penalty
+		penalty, err := cast.ToFloat32(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("frequency_penalty", err)
 		}
+		if err := adapter.ValidateFloat32Range("frequency_penalty", penalty, -2, 2); err != nil {
+			return false, err
+		}
+		config.FrequencyPenalty = &penalty
 	}
 	if raw, ok := settings["stop_sequences"]; ok {
-		if stops, err := cast.ToStringSlice(raw); err == nil {
-			config.StopSequences = stops
+		stops, err := cast.ToStringSlice(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("stop_sequences", err)
 		}
+		config.StopSequences = stops
 	}
 
 	thinkingCfg := config.ThinkingConfig
 	var hasThinkingSettings bool
 	if raw, ok := settings["thinking"]; ok {
-		if includeThoughts, err := cast.ToBool(raw); err == nil {
-			if thinkingCfg == nil {
-				thinkingCfg = &genai.ThinkingConfig{}
-			}
-			thinkingCfg.IncludeThoughts = includeThoughts
-			hasThinkingSettings = true
+		includeThoughts, err := cast.ToBool(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("thinking", err)
 		}
+		if thinkingCfg == nil {
+			thinkingCfg = &genai.ThinkingConfig{}
+		}
+		thinkingCfg.IncludeThoughts = includeThoughts
+		hasThinkingSettings = true
 	}
 	if raw, ok := settings["thinking_budget"]; ok {
-		if budget, err := cast.ToInt32(raw); err == nil {
-			if thinkingCfg == nil {
-				thinkingCfg = &genai.ThinkingConfig{}
-			}
-			thinkingCfg.ThinkingBudget = &budget
-			hasThinkingSettings = true
+		budget, err := cast.ToInt32(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("thinking_budget", err)
 		}
+		if err := adapter.ValidateInt32Min("thinking_budget", budget, 0); err != nil {
+			return false, err
+		}
+		if thinkingCfg == nil {
+			thinkingCfg = &genai.ThinkingConfig{}
+		}
+		thinkingCfg.ThinkingBudget = &budget
+		hasThinkingSettings = true
 	}
 	if hasThinkingSettings {
 		config.ThinkingConfig = thinkingCfg
 	}
 
 	if raw, ok := settings["gemini_search_grounding"]; ok {
-		if enabled, err := cast.ToBool(raw); err == nil {
-			return enabled
+		enabled, err := cast.ToBool(raw)
+		if err != nil {
+			return false, adapter.ProviderSettingError("gemini_search_grounding", err)
 		}
+		return enabled, nil
 	}
-	return false
+	return false, nil
 }
 
 var _ adapter.ProviderAdapter[*Request, *genai.GenerateContentResponse] = (*Adapter)(nil)

@@ -101,7 +101,7 @@ func TestStreamStructuredOutput_EscapedQuotesAndBracesInsideStrings(t *testing.T
 	assert.Equal(t, `He said: "Hello, {world}"`, items[0].Answer)
 }
 
-func TestStreamStructuredOutput_MarkdownFencedJSON(t *testing.T) {
+func TestStreamStructuredOutput_RejectsMarkdownFencedJSON(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -120,12 +120,50 @@ func TestStreamStructuredOutput_MarkdownFencedJSON(t *testing.T) {
 		},
 	}
 
-	items, err := collectSeq(
+	_, err := collectSeq(
 		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
 	)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	assert.Equal(t, "ok", items[0].Answer)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "markdown code fences")
+}
+
+func TestStreamStructuredOutput_NilChunkFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	invoker := &scriptedInvoker{
+		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
+			return func(yield func(*ResponseChunk, error) bool) {
+				yield(nil, nil)
+			}
+		},
+	}
+
+	_, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil chunk")
+}
+
+func TestStreamStructuredOutput_NonTextChunkFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	invoker := &scriptedInvoker{
+		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
+			return func(yield func(*ResponseChunk, error) bool) {
+				yield(&ResponseChunk{
+					Content:    []ContentPart{ToolCallPart{Name: "lookup", Args: `{}`}},
+					IsFinished: true,
+				}, nil)
+			}
+		},
+	}
+
+	_, err := collectSeq(
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNonTextResponse)
 }
 
 func TestStreamStructuredOutput_IncompleteJSONIncludesPreview(t *testing.T) {

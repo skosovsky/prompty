@@ -40,10 +40,17 @@ var (
 	ErrStructuredOutputNotSupported = errors.New(
 		"adapter: structured output (response_format) not supported by this provider",
 	)
-	ErrMediaNotResolved   = errors.New("adapter: media URL not resolved (call ResolvedMedia first)")
-	ErrNoClient           = errors.New("adapter: SDK client not set (use WithClient)")
-	ErrForcedToolNotFound = errors.New("adapter: forced tool is not declared in execution tools")
+	ErrMediaNotResolved        = errors.New("adapter: media URL not resolved (call ResolvedMedia first)")
+	ErrNoClient                = errors.New("adapter: SDK client not set (use WithClient)")
+	ErrForcedToolNotFound      = errors.New("adapter: forced tool is not declared in execution tools")
+	ErrNoTokenEstimator        = errors.New("adapter: TokenEstimator not implemented")
+	ErrInvalidProviderSettings = errors.New("adapter: invalid provider settings")
 )
+
+// ProviderSettingError wraps a per-key provider settings validation failure.
+func ProviderSettingError(key string, err error) error {
+	return fmt.Errorf("%w: %q: %w", ErrInvalidProviderSettings, key, err)
+}
 
 // ValidateExecution performs cross-provider preflight validation.
 func ValidateExecution(exec *prompty.PromptExecution) error {

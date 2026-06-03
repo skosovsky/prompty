@@ -29,11 +29,13 @@ func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testin
 		context.Background(),
 		invoker,
 		exec,
-		toolValidatorFunc(func(name string, argsJSON string) error {
-			assert.Equal(t, "lookup", name)
-			assert.JSONEq(t, `{"city":1}`, argsJSON)
-			return errors.New("city must be a string")
-		}),
+		stubToolInvoker{
+			validate: func(name string, argsJSON string) error {
+				assert.Equal(t, "lookup", name)
+				assert.JSONEq(t, `{"city":1}`, argsJSON)
+				return errors.New("city must be a string")
+			},
+		},
 	)
 	require.Error(t, err)
 	require.NotNil(t, result)
@@ -69,9 +71,11 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 		context.Background(),
 		invoker,
 		SimplePrompt("hi"),
-		toolValidatorFunc(func(name string, _ string) error {
-			return errors.New(name + " invalid")
-		}),
+		stubToolInvoker{
+			validate: func(name string, _ string) error {
+				return errors.New(name + " invalid")
+			},
+		},
 	)
 	require.Error(t, err)
 	require.NotNil(t, result)
@@ -84,8 +88,18 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 	assert.Equal(t, "weather invalid", toolErr.ToolResults[1].(ToolResultPart).Content[0].(TextPart).Text)
 }
 
-func TestExecuteWithToolValidation_ValidToolCallReturnsImmediately(t *testing.T) {
+func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
 	t.Parallel()
+
+	var invoked bool
+	tool, err := NewTypedTool("lookup", func(_ struct{}) (string, error) {
+		invoked = true
+		return "ok", nil
+	})
+	require.NoError(t, err)
+
+	reg := NewTypedToolRegistry()
+	require.NoError(t, RegisterTool(reg, tool))
 
 	callNum := 0
 	invoker := &scriptedInvoker{
@@ -101,21 +115,19 @@ func TestExecuteWithToolValidation_ValidToolCallReturnsImmediately(t *testing.T)
 		context.Background(),
 		invoker,
 		SimplePrompt("hi"),
-		toolValidatorFunc(func(string, string) error {
-			return nil
-		}),
+		reg,
 	)
 	require.NoError(t, err)
+	require.True(t, invoked)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, callNum)
-	require.Len(t, result.Messages, 2)
-	assert.Equal(t, RoleAssistant, result.Messages[1].Role)
+	require.Len(t, result.Messages, 3)
+	assert.Equal(t, RoleTool, result.Messages[2].Role)
 }
 
 func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testing.T) {
 	t.Parallel()
 
-	validatorCalls := 0
 	invoker := &scriptedInvoker{
 		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
 			return NewResponse([]ContentPart{TextPart{Text: "plain text"}}), nil
@@ -126,15 +138,32 @@ func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testin
 		context.Background(),
 		invoker,
 		SimplePrompt("hi"),
-		toolValidatorFunc(func(string, string) error {
-			validatorCalls++
-			return nil
-		}),
+		NewTypedToolRegistry(),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.Messages, 2)
-	assert.Equal(t, 0, validatorCalls)
+}
+
+func TestExecuteWithToolValidation_RequiresToolInvoker(t *testing.T) {
+	t.Parallel()
+
+	invoker := &scriptedInvoker{
+		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
+			return NewResponse([]ContentPart{
+				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
+			}), nil
+		},
+	}
+
+	_, err := ExecuteWithToolValidation(
+		context.Background(),
+		invoker,
+		SimplePrompt("hi"),
+		toolValidatorFunc(func(string, string) error { return nil }),
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrToolInvokerRequired)
 }
 
 func TestExecuteWithToolValidation_NilValidatorWithToolCall(t *testing.T) {
@@ -148,9 +177,7 @@ func TestExecuteWithToolValidation_NilValidatorWithToolCall(t *testing.T) {
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), nil)
+	_, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), nil)
 	require.Error(t, err)
-	require.NotNil(t, result)
-	require.Len(t, result.Messages, 1)
-	assert.Contains(t, err.Error(), "validator is nil")
+	assert.Contains(t, err.Error(), "tool invoker is nil")
 }
