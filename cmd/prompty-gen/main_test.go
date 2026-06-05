@@ -115,6 +115,51 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	}
 }
 
+func TestRunGenerate_EmptyInputUsesRegistryPlanInput(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "prompts")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `id: no_vars
+version: "1"
+messages:
+  - role: user
+    content: "Hi"
+inputs: {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "no_vars.yaml"), []byte(body), 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cfgPath := filepath.Join(tmp, "prompty.yaml")
+	cfg := `version: "1"
+packages:
+  - name: pkg
+    path: out
+    queries: ["prompts/*.yaml"]
+    package: pkg
+    mode: types
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := runGenerate(cfgPath); err != nil {
+		t.Fatalf("runGenerate: %v", err)
+	}
+	genPath := filepath.Join(tmp, "out", "no_vars_gen.go")
+	data, err := os.ReadFile(genPath)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "prompty.RegistryPlanInput{}") {
+		t.Error("expected RegistryPlanInput{} for empty input manifest")
+	}
+	if strings.Contains(content, "PlanInputFrom") {
+		t.Error("empty input manifest must not call PlanInputFrom")
+	}
+}
+
 func TestLoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
 	manifestPath := "testdata/doctor_agent_required_tools.yaml"
 	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})

@@ -1,0 +1,5 @@
+id: nil_optionals
+version: "1"
+messages:
+  - role: user
+    content: "flag={{ .Input.flag }} tags={{ len .Input.tags }}"

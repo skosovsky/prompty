@@ -60,7 +60,7 @@ func main() {
 
 ## Main abstractions
 
-- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, input RegistryPlanInput) (*RenderPlan, error)` (JSON boundary; use `RegistryPlanInputFrom[T]` or `RegistryPlanInputFromJSON`). Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
+- **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, input RegistryPlanInput) (*RenderPlan, error)` (opaque bound payload; use `PlanInputFrom[T]` before `Plan`). Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
 - **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.StrictText()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming. Token budgets: `adapter.EstimateTokens(estimator, exec)` is strict-by-default (`ErrNoTokenEstimator` without a provider estimator); use `adapter.NewClientWithEstimator` when wrapping an invoker.
 - **CompiledPrompt** — immutable serialized execution snapshot with manifest digest. `RenderPlan.Compile` / `CompileFromRegistry` require raw manifest bytes; use `CompileFromRegistryWithCanonicalSnapshot` only when bytes are unavailable (explicit opt-in, `DigestSourceCanonicalSnapshot`).
 - **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
@@ -136,7 +136,7 @@ flowchart LR
     API[LLM API]
 
     Registry -->|Plan(ctx,id,input)| Plan
-    Plan -->|WithLateVariables / ReplaceLayer / AppendToLayer| Execute
+    Plan -->|WithLateVariablesJSON / ReplaceLayer / AppendToLayer| Execute
     Execute --> Exec
     Exec -->|Translate| Adapter
     Adapter -->|request| API
@@ -150,6 +150,12 @@ Pipeline: **Registry.Plan(...)** → **RenderPlan composition** → **RenderPlan
 
 Migration guide: [`MIGRATION_V1_TO_V2.md`](./MIGRATION_V1_TO_V2.md).
 
+## Migration: Template Input Binding (task32)
+
+Migration guide: [`MIGRATION_TASK32.md`](./MIGRATION_TASK32.md).
+
+Regression gate: `make task32-gates` (static binder invariants + targeted tests; fast, no `-race` — full suite: `make test`).
+
 ## V2 tutorial (task29)
 
 `prompty` v2 is a deferred pipeline. Render first, compose plans, execute once:
@@ -160,16 +166,24 @@ if err != nil {
 	return err
 }
 
-plan, err := reg.Plan(ctx, "support_agent", prompty.RegistryPlanInputFrom(map[string]any{
-	"user_query": "Where is my order?",
-}))
+planInput, err := prompty.PlanInputFrom(struct {
+	UserQuery string `prompt:"user_query"`
+}{UserQuery: "Where is my order?"})
+if err != nil {
+	return err
+}
+plan, err := reg.Plan(ctx, "support_agent", planInput)
 if err != nil {
 	return err
 }
 
-policyPlan, err := reg.Plan(ctx, "policy_overlay", prompty.RegistryPlanInputFrom(map[string]any{
-	"policy_name": "strict",
-}))
+policyInput, err := prompty.PlanInputFrom(struct {
+	PolicyName string `prompt:"policy_name"`
+}{PolicyName: "strict"})
+if err != nil {
+	return err
+}
+policyPlan, err := reg.Plan(ctx, "policy_overlay", policyInput)
 if err != nil {
 	return err
 }

@@ -56,7 +56,7 @@ func (m *mockRegistryWithExtras) Plan(
 	_ string,
 	input prompty.RegistryPlanInput,
 ) (*prompty.RenderPlan, error) {
-	return prompty.NewRenderPlanFromRegistryInput(prompty.CloneTemplate(m.tpl), input)
+	return prompty.NewRenderPlanFromPlanInput(prompty.CloneTemplate(m.tpl), input)
 }
 
 func (m *mockRegistryWithExtras) List(_ context.Context) ([]string, error) {

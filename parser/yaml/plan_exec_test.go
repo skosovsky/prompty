@@ -2,25 +2,23 @@ package yaml
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/skosovsky/prompty"
 )
 
 func executeTemplatePlan(tpl *prompty.ChatPromptTemplate, input any) (*prompty.PromptExecution, error) {
+	if tpl == nil {
+		return nil, prompty.ErrNilRenderPlan
+	}
 	if input == nil {
-		return prompty.NewRenderPlan(tpl).Execute(context.Background())
+		return nil, prompty.ErrInvalidPayload
 	}
 	if m, ok := input.(map[string]any); ok {
-		data, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		plan, err := prompty.NewRenderPlanFromRegistryInput(tpl, data)
-		if err != nil {
-			return nil, err
-		}
-		return plan.Execute(context.Background())
+		return prompty.NewRenderPlanFromMap(tpl, m).Execute(context.Background())
 	}
-	return prompty.NewRenderPlanFromStruct(tpl, input).Execute(context.Background())
+	plan, err := prompty.NewRenderPlanFromStruct(tpl, input)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Execute(context.Background())
 }

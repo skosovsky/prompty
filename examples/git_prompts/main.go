@@ -76,9 +76,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("remoteregistry.New: %w", err)
 	}
-	planInput, err := prompty.RegistryPlanInputFrom(struct {
-		Topic    string `json:"topic"`
-		Question string `json:"question"`
+	planInput, err := prompty.PlanInputFrom(struct {
+		Topic    string `prompt:"topic"`
+		Question string `prompt:"question"`
 	}{Topic: "math", Question: "What is 3+3?"})
 	if err != nil {
 		return fmt.Errorf("registry plan input: %w", err)

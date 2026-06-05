@@ -167,7 +167,7 @@ messages:
 	reg, err := remoteregistry.New(g, remoteregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "integ", nil)
+	plan, err := reg.Plan(ctx, "integ", prompty.RegistryPlanInput{})
 	require.NoError(t, err)
 	tpl := plan.Template()
 	require.NotNil(t, tpl)
@@ -412,7 +412,7 @@ func TestFetcher_ListIDs_IncludesJson(t *testing.T) {
 	// Fetch and List should be consistent: GetTemplate works for listed ids
 	reg, err := remoteregistry.New(g, remoteregistry.WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
-	plan, err := reg.Plan(ctx, "json_only", nil)
+	plan, err := reg.Plan(ctx, "json_only", prompty.RegistryPlanInput{})
 	require.NoError(t, err)
 	tpl := plan.Template()
 	require.NotNil(t, tpl)

@@ -150,6 +150,12 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "p.registry.Plan") {
 		t.Error("expected Plan call")
 	}
+	if !strings.Contains(out, "PlanInputFrom") {
+		t.Error("expected PlanInputFrom call")
+	}
+	if !strings.Contains(out, `prompt:"`) {
+		t.Error("expected prompt tags in generated input struct")
+	}
 	if !strings.Contains(out, "string(SupportAgent)") {
 		t.Error("DoD: Plan must receive string(PromptID) for Registry interface")
 	}
@@ -389,6 +395,7 @@ func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	if !strings.Contains(out, "func (p *NoVarsPrompt) Render(") {
 		t.Error("expected Render on NoVarsPrompt")
 	}
+	assertEmptyInputPlanInputContract(t, out)
 }
 
 func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
@@ -416,6 +423,17 @@ func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
 	}
 	if !strings.Contains(out, `"get_current_time"`) {
 		t.Error("expected get_current_time in RequiredTools return")
+	}
+	assertEmptyInputPlanInputContract(t, out)
+}
+
+func assertEmptyInputPlanInputContract(t *testing.T, out string) {
+	t.Helper()
+	if !strings.Contains(out, "prompty.RegistryPlanInput{}") {
+		t.Error("expected RegistryPlanInput{} for empty input schema")
+	}
+	if strings.Contains(out, "PlanInputFrom") {
+		t.Error("empty input schema must not call PlanInputFrom")
 	}
 }
 
@@ -635,6 +653,7 @@ func TestGenerateManifestTypes_RootObjectWithoutProperties(t *testing.T) {
 	if !strings.Contains(out, "type EmptyInputInput struct") {
 		t.Error("expected empty Input struct for root object without properties")
 	}
+	assertEmptyInputPlanInputContract(t, out)
 }
 
 func TestGenerateManifestTypes_ArrayOfArray(t *testing.T) {
@@ -937,6 +956,22 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 	compareGolden(t, goldenDir, "consts_gen.go.golden", func() (string, error) {
 		var b strings.Builder
 		if renderErr := consts.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
+	noVarsSpec := &PromptSpec{ID: "no_vars"}
+	noVarsFile, err := GenerateManifestTypes(noVarsSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes no_vars: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, noVarsFile, filepath.Join(goldenDir, "no_vars_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "no_vars_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := noVarsFile.Render(&b); renderErr != nil {
 			return "", renderErr
 		}
 		return b.String(), nil

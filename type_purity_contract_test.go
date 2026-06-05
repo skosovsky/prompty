@@ -23,23 +23,29 @@ func TestTypePurity_RegistryPlanUsesRegistryPlanInput(t *testing.T) {
 	require.Equal(t, reflect.TypeFor[RegistryPlanInput](), method.Type.In(2))
 }
 
-func TestTypePurity_RegistryPlanInputAliasExists(t *testing.T) {
+func TestTypePurity_RegistryPlanInputIsOpaqueStruct(t *testing.T) {
 	t.Parallel()
-	var input = RegistryPlanInput(`{"q":"x"}`)
-	assert.JSONEq(t, `{"q":"x"}`, string(input))
+	typ := reflect.TypeFor[RegistryPlanInput]()
+	require.Equal(t, reflect.Struct, typ.Kind())
+	_, hasBound := typ.FieldByName("boundVars")
+	assert.True(t, hasBound)
+	assert.False(t, hasBound && typ.Field(0).IsExported())
 }
 
-func TestTypePurity_RegistryPlanInputTypedFactories(t *testing.T) {
+func TestTypePurity_PlanInputFromBindsTypedPayload(t *testing.T) {
 	t.Parallel()
-	fromStruct, err := RegistryPlanInputFrom(struct {
-		Q string `json:"q"`
+	input, err := PlanInputFrom(struct {
+		Q string `prompt:"q"`
 	}{Q: "x"})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"q":"x"}`, string(fromStruct))
-
-	fromJSON, err := RegistryPlanInputFromJSON([]byte(`{"q":"x"}`))
+	plan, err := NewRenderPlanFromPlanInput(
+		mustTemplate(t, `{{ .Input.q }}`),
+		input,
+	)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"q":"x"}`, string(fromJSON))
+	exec, err := plan.Execute(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "x", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func TestTypePurity_PublicJSONDocumentBoundaries(t *testing.T) {
@@ -67,11 +73,16 @@ func TestTypePurity_RenderPlanTypedConstructorsCompile(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("{{ .Input.q }}")}})
 	require.NoError(t, err)
-	_, err = NewRenderPlanFromRegistryInput(tpl, RegistryPlanInput(`{"q":"x"}`))
-	require.NoError(t, err)
-	_ = NewRenderPlanFromStruct(tpl, struct {
+	input, err := PlanInputFrom(struct {
 		Q string `prompt:"q"`
 	}{Q: "x"})
+	require.NoError(t, err)
+	_, err = NewRenderPlanFromPlanInput(tpl, input)
+	require.NoError(t, err)
+	_, err = NewRenderPlanFromStruct(tpl, struct {
+		Q string `prompt:"q"`
+	}{Q: "x"})
+	require.NoError(t, err)
 }
 
 func TestTypePurity_RenderPlanStrictMethodsOnly(t *testing.T) {
@@ -81,4 +92,11 @@ func TestTypePurity_RenderPlanStrictMethodsOnly(t *testing.T) {
 	assert.False(t, ok, "WithLateVariables(map) removed; use WithLateVariablesJSON")
 	_, ok = rt.MethodByName("WithResponseFormat")
 	assert.False(t, ok, "WithResponseFormat(any) removed; use WithResponseFormatDefinition/FromStruct")
+}
+
+func mustTemplate(t *testing.T, body string) *ChatPromptTemplate {
+	t.Helper()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent(body)}})
+	require.NoError(t, err)
+	return tpl
 }

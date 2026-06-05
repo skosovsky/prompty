@@ -2,35 +2,10 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"time"
 )
-
-// RegistryPlanInput is the JSON boundary for registry planning (prompty-gen DTO payloads).
-type RegistryPlanInput = json.RawMessage
-
-// RegistryPlanInputFromJSON wraps validated JSON bytes for Registry.Plan.
-func RegistryPlanInputFromJSON(data []byte) (RegistryPlanInput, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	if !json.Valid(data) {
-		return nil, errors.New("registry plan input: invalid JSON")
-	}
-	return RegistryPlanInput(data), nil
-}
-
-// RegistryPlanInputFrom JSON-encodes a typed value for Registry.Plan.
-func RegistryPlanInputFrom[T any](v T) (RegistryPlanInput, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("registry plan input: %w", err)
-	}
-	return RegistryPlanInput(data), nil
-}
 
 // Role is the message role in a chat (system, developer, user, assistant, tool).
 type Role string

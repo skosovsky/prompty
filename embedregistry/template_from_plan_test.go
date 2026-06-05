@@ -13,7 +13,7 @@ func templateFromPlan(
 	},
 	id string,
 ) (*prompty.ChatPromptTemplate, error) {
-	plan, err := reg.Plan(ctx, id, nil)
+	plan, err := reg.Plan(ctx, id, prompty.RegistryPlanInput{})
 	if err != nil {
 		return nil, err
 	}

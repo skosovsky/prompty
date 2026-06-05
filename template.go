@@ -399,7 +399,8 @@ func (c *ChatPromptTemplate) formatContext(data renderContext) (*PromptExecution
 	return c.renderTemplates(merged, nil)
 }
 
-// ValidateVariables runs a dry-run execute with the given data (same merge as RenderPlan.Execute input: PartialVariables + data + Tools).
+// ValidateVariables runs a dry-run execute with the given map-shaped data (PartialVariables + data + Tools).
+// It does not run BindTemplateVars; callers must pass template keys already shaped for .Input.
 // Returns an error with role/message index context if any template references a missing or invalid input field.
 func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
 	input := maps.Clone(c.PartialVariables)

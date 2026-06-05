@@ -150,13 +150,13 @@ func (r *CachedRegistry) Plan(
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
+	return prompty.NewRenderPlanFromPlanInput(tpl, input)
 }
 
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	defer inFlight.cancel()
 
-	plan, err := r.base.Plan(inFlight.ctx, id, nil)
+	plan, err := r.base.Plan(inFlight.ctx, id, prompty.RegistryPlanInput{})
 	if err == nil {
 		tpl := plan.Template()
 		if tpl == nil {

@@ -29,12 +29,12 @@ func main() {
 	}
 
 	ctx := context.Background()
-	planInput, err := prompty.RegistryPlanInputFrom(&supportInput{
+	planInput, err := prompty.PlanInputFrom(&supportInput{
 		UserName: "Alice",
 		Query:    "What is 2+2?",
 	})
 	if err != nil {
-		log.Fatalf("RegistryPlanInputFrom: %v", err)
+		log.Fatalf("PlanInputFrom: %v", err)
 	}
 	plan, err := reg.Plan(ctx, "support_agent", planInput)
 	if err != nil {

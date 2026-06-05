@@ -65,6 +65,22 @@ func (s stubToolInvoker) InvokeTool(name, argsJSON string) (json.RawMessage, err
 	return json.RawMessage(`""`), nil
 }
 
+type compileStubRegistry struct{}
+
+func (compileStubRegistry) Plan(_ context.Context, _ string, input RegistryPlanInput) (*RenderPlan, error) {
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
+	}, WithMetadata(PromptMetadata{ID: "stub"}))
+	if err != nil {
+		return nil, err
+	}
+	return NewRenderPlanFromPlanInput(tpl, input)
+}
+
+func (compileStubRegistry) ReadManifestBytes(context.Context, string) ([]byte, error) {
+	return nil, ErrManifestBytesUnavailable
+}
+
 func mustTextFromParts(t *testing.T, parts []ContentPart) string {
 	t.Helper()
 	text, err := StrictTextFromParts(parts)

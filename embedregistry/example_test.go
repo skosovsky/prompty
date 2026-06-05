@@ -35,11 +35,17 @@ func ExampleRegistry_Plan() {
 		panic(err)
 	}
 	ctx := context.Background()
-	tpl, err := templateFromPlan(ctx, reg, "agent")
+	input, err := prompty.PlanInputFrom(struct {
+		UserName string `prompt:"user_name"`
+	}{UserName: "Bob"})
 	if err != nil {
 		panic(err)
 	}
-	exec, err := executeTemplatePlan(tpl, map[string]any{"user_name": "Bob"})
+	plan, err := reg.Plan(ctx, "agent", input)
+	if err != nil {
+		panic(err)
+	}
+	exec, err := plan.Execute(ctx)
 	if err != nil {
 		panic(err)
 	}

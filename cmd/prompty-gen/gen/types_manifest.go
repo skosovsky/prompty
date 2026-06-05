@@ -100,7 +100,7 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 	)
 	f.Line()
 
-	renderBody, err := buildRenderMethodBody(spec.InputSchema, constName, inputType)
+	renderBody, err := buildRenderMethodBody(spec.InputSchema, constName)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +140,20 @@ func requiredToolsReturn(tools []string) jen.Code {
 	return jen.Return(jen.Index().String().Values(lits...))
 }
 
-func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, error) {
+func inputSchemaHasBindableProperties(schemaDef *prompty.SchemaDefinition) bool {
 	if schemaDef == nil || len(schemaDef.Schema) == 0 {
+		return false
+	}
+	schema, err := schemaAsMap(schemaDef.Schema)
+	if err != nil {
+		return false
+	}
+	props, _ := schema["properties"].(map[string]any)
+	return len(props) > 0
+}
+
+func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, error) {
+	if !inputSchemaHasBindableProperties(schemaDef) {
 		return nil, nil
 	}
 	schema, err := schemaAsMap(schemaDef.Schema)
@@ -149,9 +161,6 @@ func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, e
 		return nil, err
 	}
 	props, _ := schema["properties"].(map[string]any)
-	if len(props) == 0 {
-		return nil, nil
-	}
 	required := getRequired(schema)
 	stmts := make([]jen.Code, 0, len(props))
 	for _, propName := range sortedKeys(props) {
@@ -233,7 +242,7 @@ func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, e
 	return stmts, nil
 }
 
-func buildRenderMethodBody(inputSchema *prompty.SchemaDefinition, constName, inputType string) ([]jen.Code, error) {
+func buildRenderMethodBody(inputSchema *prompty.SchemaDefinition, constName string) ([]jen.Code, error) {
 	renderBody := []jen.Code{}
 	defaultStmts, err := buildInputDefaultsBlock(inputSchema)
 	if err != nil {
@@ -246,14 +255,26 @@ func buildRenderMethodBody(inputSchema *prompty.SchemaDefinition, constName, inp
 			Block(
 				jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validate input: %w"), jen.Id("err")))),
 			),
-		jen.List(jen.Id("planInput"), jen.Id("err")).
-			Op(":=").
-			Qual("github.com/skosovsky/prompty", "RegistryPlanInputFrom").
-			Index(jen.Id(inputType)).
-			Call(jen.Id("input")),
-		jen.If(jen.Id("err").Op("!=").Nil()).Block(
-			jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("encode render input: %w"), jen.Id("err")))),
-		),
+	)
+	if inputSchemaHasBindableProperties(inputSchema) {
+		renderBody = append(
+			renderBody,
+			jen.List(jen.Id("planInput"), jen.Id("err")).
+				Op(":=").
+				Qual("github.com/skosovsky/prompty", "PlanInputFrom").
+				Call(jen.Id("input")),
+			jen.If(jen.Id("err").Op("!=").Nil()).Block(
+				jen.Return(jen.List(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("bind render input: %w"), jen.Id("err")))),
+			),
+		)
+	} else {
+		renderBody = append(
+			renderBody,
+			jen.Id("planInput").Op(":=").Qual("github.com/skosovsky/prompty", "RegistryPlanInput").Values(),
+		)
+	}
+	renderBody = append(
+		renderBody,
 		jen.List(jen.Id("plan"), jen.Id("err")).
 			Op(":=").
 			Id("p").

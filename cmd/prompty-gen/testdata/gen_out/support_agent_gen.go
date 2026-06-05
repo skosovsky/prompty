@@ -27,9 +27,9 @@ func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput
 	if err := validate.Struct(&input); err != nil {
 		return nil, fmt.Errorf("validate input: %w", err)
 	}
-	planInput, err := prompty.RegistryPlanInputFrom[SupportAgentInput](input)
+	planInput, err := prompty.PlanInputFrom(input)
 	if err != nil {
-		return nil, fmt.Errorf("encode render input: %w", err)
+		return nil, fmt.Errorf("bind render input: %w", err)
 	}
 	plan, err := p.registry.Plan(ctx, string(SupportAgent), planInput)
 	if err != nil {

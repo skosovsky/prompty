@@ -228,7 +228,7 @@ func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPl
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
+	return prompty.NewRenderPlanFromPlanInput(tpl, input)
 }
 
 // List returns all template ids (order from walk).

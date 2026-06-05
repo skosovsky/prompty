@@ -12,11 +12,11 @@ func executeTemplatePlan(tpl *ChatPromptTemplate, input any) (*PromptExecution, 
 		return nil, ErrInvalidPayload
 	}
 	if m, ok := input.(map[string]any); ok {
-		plan, err := newRenderPlanFromMap(tpl, m)
-		if err != nil {
-			return nil, err
-		}
-		return plan.Execute(context.Background())
+		return NewRenderPlanFromMap(tpl, m).Execute(context.Background())
 	}
-	return NewRenderPlanFromStruct(tpl, input).Execute(context.Background())
+	plan, err := NewRenderPlanFromStruct(tpl, input)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Execute(context.Background())
 }

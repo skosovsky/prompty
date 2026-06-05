@@ -557,20 +557,18 @@ func TestRenderPlan_InvalidPayload(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
-// TestRenderPlan_JsonTagFallback ensures payload uses json tag when prompt tag is missing (strings.Split(tag, ",")[0]).
-func TestRenderPlan_JsonTagFallback(t *testing.T) {
+func TestRenderPlan_RequiresPromptTag(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
-		UserName string `json:"user_name,omitempty"` // no prompt tag; fallback to json first part
+		UserName string `json:"user_name,omitempty"`
 	}
-	exec, err := executeTemplatePlan(tpl, &Payload{UserName: "Bob"})
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, "Hello, Bob!", exec.Messages[0].Content[0].(TextPart).Text)
+	_, err = executeTemplatePlan(tpl, &Payload{UserName: "Bob"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
 func TestRenderPlan_NilPayload(t *testing.T) {
@@ -791,9 +789,7 @@ func TestNewChatPromptTemplate_WithPartialsGlob(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
-	}{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 2)
 	require.Len(t, exec.Messages[0].Content, 1)

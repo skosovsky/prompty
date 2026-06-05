@@ -84,7 +84,7 @@ prompty-gen list
 - **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type PromptCatalog` (интерфейс), `func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, методы `Render`, `RequiredTools()`, `ID()`.
 
-Render выполняет: validate input → `RegistryPlanInputFrom[<Name>Input](input)` → `registry.Plan(ctx, id, planInput)` и возвращает `*prompty.RenderPlan`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
+Render выполняет: validate input → bind plan input → `registry.Plan(ctx, id, planInput)` и возвращает `*prompty.RenderPlan`. Для манифестов с полями в `inputs` bind — `PlanInputFrom(input)`; для пустого input (без `properties`) — `prompty.RegistryPlanInput{}`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
 
 ## Mapping JSON Schema → Go
 
@@ -103,6 +103,13 @@ Render выполняет: validate input → `RegistryPlanInputFrom[<Name>Input
 - Supported defaults: `string`, `integer`, `number`, `boolean` (optional поля).
 - Defaults для неподдерживаемых типов (например `array`, вложенный `object`) приводят к fail-fast ошибке генерации.
 - `minItems` / `maxItems` → validate-теги `min` / `max` для длины массива.
+
+### Template binding (`prompt` vs `json`)
+
+- Генератор всегда эмитит `prompt:"<field>"` для полей, участвующих в шаблонизации (ключи `.Input` в манифесте).
+- Теги `json` (включая `omitempty`) нужны только для transport/API; на рендеринг шаблона они **не влияют**.
+- `Render*` с непустым input schema: `prompty.PlanInputFrom(input)` → `registry.Plan(ctx, id, planInput)`; nil-указатели и пустые слайсы сохраняют ключи в `.Input`.
+- Пустой manifest input (без `properties` / без payload): `prompty.RegistryPlanInput{}`, не `PlanInputFrom` и не `nil`.
 
 ## Tutorial: композиция Render + Execute
 
@@ -147,7 +154,7 @@ resp, err := invoker.Execute(ctx, exec)
 
 ```go
 for _, id := range AllPromptIDs() {
-    _, _ = reg.Plan(ctx, string(id), nil)
+    _, _ = reg.Plan(ctx, string(id), prompty.RegistryPlanInput{})
 }
 ```
 
@@ -211,7 +218,7 @@ go get github.com/go-playground/validator/v10
 go test ./cmd/prompty-gen/gen -run TestGenerate_Golden -args -golden=./cmd/prompty-gen/testdata
 ```
 
-Файлы `shared_gen.go.golden`, `support_agent_gen.go.golden`, `consts_gen.go.golden` будут перезаписаны. Без `-golden` тест `TestGenerate_Golden` пропускается; `TestGenerate_GoldenCompare` проверяет соответствие сгенерированного кода golden-файлам.
+Файлы `shared_gen.go.golden`, `support_agent_gen.go.golden`, `no_vars_gen.go.golden`, `consts_gen.go.golden` будут перезаписаны. Без `-golden` тест `TestGenerate_Golden` пропускается; `TestGenerate_GoldenCompare` проверяет соответствие сгенерированного кода golden-файлам.
 
 ## External DoD validation (kosmify-prompts)
 

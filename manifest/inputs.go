@@ -26,8 +26,14 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 	}
 	normalized := normalizeMapAny(raw)
 	if len(normalized) == 0 {
-		//nolint:nilnil // empty inputs block is valid and represented as nil schema.
-		return nil, nil
+		schemaDoc, err := prompty.MapToJSONDocument(map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &prompty.SchemaDefinition{Schema: schemaDoc}, nil
 	}
 
 	if _, hasWrapper := normalized["schema"].(map[string]any); hasWrapper {

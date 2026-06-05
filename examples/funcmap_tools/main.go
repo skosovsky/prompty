@@ -25,11 +25,11 @@ func main() {
 		log.Fatalf("fileregistry.New: %v", err)
 	}
 	ctx := context.Background()
-	planInput, err := prompty.RegistryPlanInputFrom(struct {
-		Query string `json:"query"`
+	planInput, err := prompty.PlanInputFrom(struct {
+		Query string `prompt:"query"`
 	}{Query: "What is the weather in Paris? (hint: use a tool)"})
 	if err != nil {
-		log.Fatalf("RegistryPlanInputFrom: %v", err)
+		log.Fatalf("PlanInputFrom: %v", err)
 	}
 	plan, err := reg.Plan(ctx, "tools_demo", planInput)
 	if err != nil {

@@ -25,7 +25,13 @@ func ExampleRenderPlan_Execute() {
 	tpl, _ := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
 		{Role: prompty.RoleSystem, Content: prompty.TextContent("Hello, {{ .Input.name }}!")},
 	})
-	plan, err := prompty.NewRenderPlanFromRegistryInput(tpl, prompty.RegistryPlanInput(`{"name":"Alice"}`))
+	planInput, err := prompty.PlanInputFrom(struct {
+		Name string `prompt:"name"`
+	}{Name: "Alice"})
+	if err != nil {
+		panic(err)
+	}
+	plan, err := prompty.NewRenderPlanFromPlanInput(tpl, planInput)
 	if err != nil {
 		panic(err)
 	}
@@ -62,7 +68,13 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-	plan, err := prompty.NewRenderPlanFromRegistryInput(tpl, prompty.RegistryPlanInput(`{"query":"What is 2+2?"}`))
+	planInput, err := prompty.PlanInputFrom(struct {
+		Query string `prompt:"query"`
+	}{Query: "What is 2+2?"})
+	if err != nil {
+		panic(err)
+	}
+	plan, err := prompty.NewRenderPlanFromPlanInput(tpl, planInput)
 	if err != nil {
 		panic(err)
 	}

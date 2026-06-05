@@ -183,7 +183,7 @@ func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPl
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromRegistryInput(tpl, input)
+	return prompty.NewRenderPlanFromPlanInput(tpl, input)
 }
 
 // baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).

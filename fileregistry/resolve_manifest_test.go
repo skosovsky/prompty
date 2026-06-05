@@ -38,8 +38,8 @@ func TestRegistry_ResolveManifest_LightweightNoTemplateCache(t *testing.T) {
 	reg.mu.RUnlock()
 	assert.False(t, cached, "ResolveManifest must not compile or cache ChatPromptTemplate")
 
-	input, err := prompty.RegistryPlanInputFrom(struct {
-		Q string `json:"q"`
+	input, err := prompty.PlanInputFrom(struct {
+		Q string `prompt:"q"`
 	}{Q: "x"})
 	require.NoError(t, err)
 	_, err = reg.Plan(context.Background(), "agent", input)
@@ -72,8 +72,8 @@ messages:
 	assert.Equal(t, "2", desc.Metadata.Version)
 	assert.Equal(t, "Support bot", desc.Metadata.Description)
 
-	planInput, err := prompty.RegistryPlanInputFrom(struct {
-		Q string `json:"q"`
+	planInput, err := prompty.PlanInputFrom(struct {
+		Q string `prompt:"q"`
 	}{Q: "hi"})
 	require.NoError(t, err)
 	plan, err := reg.Plan(context.Background(), "support", planInput)

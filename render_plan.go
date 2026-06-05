@@ -2,11 +2,9 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 )
 
@@ -41,24 +39,43 @@ func NewRenderPlan(tpl *ChatPromptTemplate) *RenderPlan {
 	return newRenderPlan(tpl, nil)
 }
 
-// NewRenderPlanFromStruct builds a render plan from a struct payload (template .Input fields).
-func NewRenderPlanFromStruct[T any](tpl *ChatPromptTemplate, input T) *RenderPlan {
-	return newRenderPlan(tpl, input)
+// NewRenderPlanFromMap builds a render plan from pre-shaped template variable maps.
+// It does not run BindTemplateVars; use for tests or advanced callers that already
+// have template keys shaped for .Input.
+func NewRenderPlanFromMap(tpl *ChatPromptTemplate, vars map[string]any) *RenderPlan {
+	if vars == nil {
+		return NewRenderPlan(tpl)
+	}
+	return newRenderPlan(tpl, cloneMapAny(vars))
 }
 
-// NewRenderPlanFromRegistryInput builds a render plan from JSON registry input (fail-closed decode).
-func NewRenderPlanFromRegistryInput(tpl *ChatPromptTemplate, input RegistryPlanInput) (*RenderPlan, error) {
+// boundPlanInput holds template-bound vars and optional chat history for rendering.
+type boundPlanInput struct {
+	vars    map[string]any
+	history []ChatMessage
+}
+
+// NewRenderPlanFromStruct builds a render plan from a struct payload (template .Input fields).
+func NewRenderPlanFromStruct[T any](tpl *ChatPromptTemplate, input T) (*RenderPlan, error) {
+	planInput, err := PlanInputFrom(input)
+	if err != nil {
+		return nil, err
+	}
+	return NewRenderPlanFromPlanInput(tpl, planInput)
+}
+
+// NewRenderPlanFromPlanInput builds a render plan from a bound registry payload.
+func NewRenderPlanFromPlanInput(tpl *ChatPromptTemplate, input RegistryPlanInput) (*RenderPlan, error) {
 	if tpl == nil {
 		return nil, errors.New("render plan: template is nil")
 	}
-	if len(input) == 0 {
+	if input.isEmpty() {
 		return newRenderPlan(tpl, nil), nil
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(input, &payload); err != nil {
-		return nil, fmt.Errorf("render plan: decode registry input: %w", err)
-	}
-	return newRenderPlan(tpl, payload), nil
+	return newRenderPlan(tpl, &boundPlanInput{
+		vars:    cloneMapAny(input.boundVars),
+		history: cloneMessages(input.chatHistory),
+	}), nil
 }
 
 // Template returns a cloned underlying template for adapter registries.
@@ -191,15 +208,6 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 			return nil, validateErr
 		}
 	}
-	if prepared.binding != nil {
-		if validateErr := validateStructInputVars(
-			p.template,
-			prepared.structVal,
-			prepared.binding,
-		); validateErr != nil {
-			return nil, validateErr
-		}
-	}
 	ctxData := renderContext{
 		Input:    prepared.templateInput(),
 		LateVars: cloneMapAny(p.lateVars),
@@ -248,9 +256,7 @@ func (p *RenderPlan) applyComposition(ctx context.Context, exec *PromptExecution
 type preparedInput struct {
 	input     any
 	history   []ChatMessage
-	binding   *structBinding
-	structVal reflect.Value
-	mergedMap map[string]any // set only when partial variables require map merge
+	mergedMap map[string]any
 }
 
 func (pi *preparedInput) release() {
@@ -273,29 +279,30 @@ func (p *RenderPlan) prepareExecutionInput() (*preparedInput, error) {
 		return nil, ErrNilRenderPlan
 	}
 	if p.typedInput == nil {
-		return &preparedInput{}, nil
-	}
-	if inputMap, ok := p.typedInput.(map[string]any); ok {
+		merged := mergeBoundVarsWithPartials(p.template, map[string]any{})
 		return &preparedInput{
-			input:     cloneMapAny(inputMap),
+			input:     merged,
 			history:   nil,
-			binding:   nil,
-			structVal: reflect.Value{},
-			mergedMap: nil,
+			mergedMap: merged,
 		}, nil
 	}
-	val, binding, history, err := extractStructPayload(p.typedInput)
-	if err != nil {
-		return nil, err
+	if bound, ok := p.typedInput.(*boundPlanInput); ok {
+		merged := mergeBoundVarsWithPartials(p.template, bound.vars)
+		return &preparedInput{
+			input:     merged,
+			history:   bound.history,
+			mergedMap: merged,
+		}, nil
 	}
-	merged := buildStructTemplateInput(p.template, val, binding)
-	return &preparedInput{
-		input:     merged,
-		history:   history,
-		binding:   binding,
-		structVal: val,
-		mergedMap: merged,
-	}, nil
+	if inputMap, ok := p.typedInput.(map[string]any); ok {
+		merged := mergeBoundVarsWithPartials(p.template, cloneMapAny(inputMap))
+		return &preparedInput{
+			input:     merged,
+			history:   nil,
+			mergedMap: merged,
+		}, nil
+	}
+	return nil, ErrInvalidPayload
 }
 
 func validateRequiredInputVars(tpl *ChatPromptTemplate, input map[string]any) error {

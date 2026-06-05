@@ -5,8 +5,8 @@ import (
 )
 
 type benchInput struct {
-	UserName string `json:"user_name" prompt:"user_name"`
-	Query    string `json:"query"     prompt:"query"`
+	UserName string `prompt:"user_name"`
+	Query    string `prompt:"query"`
 }
 
 func BenchmarkStructBindingCacheHit(b *testing.B) {
@@ -19,10 +19,10 @@ func BenchmarkStructBindingCacheHit(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		val, binding, _, err := extractStructPayload(&input)
+		vars, _, err := BindTemplateVars(&input)
 		if err != nil {
 			b.Fatal(err)
 		}
-		releaseBoundInputMap(buildStructTemplateInput(tpl, val, binding))
+		releaseBoundInputMap(mergeBoundVarsWithPartials(tpl, vars))
 	}
 }

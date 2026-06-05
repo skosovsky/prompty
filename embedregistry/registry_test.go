@@ -264,9 +264,7 @@ func TestEmbedRegistry_Plan_WithPartials(t *testing.T) {
 	tpl, err := templateFromPlan(ctx, reg, "doctor")
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
-	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
-	}{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)

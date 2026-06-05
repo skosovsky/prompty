@@ -283,9 +283,7 @@ func TestParse_ContentScalar(t *testing.T) {
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "text", tpl.Messages[0].Content[0].Type)
 	assert.Equal(t, "Ты ассистент", tpl.Messages[0].Content[0].Text)
-	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
-	}{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages[0].Content, 1)
 	assert.Equal(t, "Ты ассистент", exec.Messages[0].Content[0].(prompty.TextPart).Text)
@@ -307,8 +305,8 @@ func TestParse_ContentMultimodalArray(t *testing.T) {
 	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
 	assert.Equal(t, "{{ .Input.img }}", tpl.Messages[0].Content[1].URL)
 	exec, err := executeTemplatePlan(tpl, &struct {
-		X   string `json:"x"`
-		Img string `json:"img"`
+		X   string `prompt:"x"`
+		Img string `prompt:"img"`
 	}{X: "done", Img: "https://example.com/photo.png"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages[0].Content, 2)
@@ -347,9 +345,7 @@ func TestParse_ResponseFormat(t *testing.T) {
 	assert.Equal(t, "my_schema", tpl.ResponseFormat.Name)
 	require.NotNil(t, tpl.ResponseFormat.Schema)
 	assert.Equal(t, "object", prompty.MustJSONDocumentAsMap(tpl.ResponseFormat.Schema)["type"])
-	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
-	}{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.NotNil(t, exec.ResponseFormat)
 	assert.Equal(t, "my_schema", exec.ResponseFormat.Name)
@@ -378,7 +374,7 @@ func TestParse_MetadataPassThrough(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
+		X string `prompt:"x"`
 	}{X: "ok"})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
@@ -408,9 +404,7 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 	assert.Equal(t, "ephemeral", tpl.Messages[0].Content[0].CacheControl.Type)
 	require.NotNil(t, tpl.Messages[0].Metadata)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(tpl.Messages[0].Metadata)["gemini_search_grounding"])
-	exec, err := executeTemplatePlan(tpl, &struct {
-		X string `json:"x"`
-	}{})
+	exec, err := executeTemplatePlan(tpl, map[string]any{})
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)

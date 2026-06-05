@@ -9,6 +9,8 @@ import (
 	"github.com/skosovsky/prompty/parser/yaml"
 )
 
+// ExampleRegistry_Plan loads a deferred plan without payload (partials only).
+// For PlanInputFrom + Execute see ExampleNew.
 func ExampleRegistry_Plan() {
 	dir := "testdata/prompts"
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
@@ -16,7 +18,7 @@ func ExampleRegistry_Plan() {
 		panic(err)
 	}
 	ctx := context.Background()
-	plan, err := reg.Plan(ctx, "support_agent", nil)
+	plan, err := reg.Plan(ctx, "support_agent", prompty.RegistryPlanInput{})
 	if err != nil {
 		panic(err)
 	}
@@ -35,8 +37,8 @@ func ExampleNew() {
 		panic(err)
 	}
 	ctx := context.Background()
-	input, err := prompty.RegistryPlanInputFrom(struct {
-		UserName string `json:"user_name"`
+	input, err := prompty.PlanInputFrom(struct {
+		UserName string `prompt:"user_name"`
 	}{UserName: "Alice"})
 	if err != nil {
 		panic(err)

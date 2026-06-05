@@ -9,22 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type compileStubRegistry struct{}
-
-func (compileStubRegistry) Plan(_ context.Context, _ string, input RegistryPlanInput) (*RenderPlan, error) {
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
-	}, WithMetadata(PromptMetadata{ID: "stub"}))
-	if err != nil {
-		return nil, err
-	}
-	return NewRenderPlanFromRegistryInput(tpl, input)
-}
-
-func (compileStubRegistry) ReadManifestBytes(context.Context, string) ([]byte, error) {
-	return nil, ErrManifestBytesUnavailable
-}
-
 func TestCompileFromRegistry_ManifestBytesUnavailableFails(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{

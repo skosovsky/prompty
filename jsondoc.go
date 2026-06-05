@@ -2,6 +2,7 @@ package prompty
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -86,12 +87,8 @@ func ProviderSettingsMap(opts *ModelOptions) (map[string]any, error) {
 
 // newRenderPlanFromMap builds a render plan from map-shaped template variables (tests/internal only).
 func newRenderPlanFromMap(tpl *ChatPromptTemplate, input map[string]any) (*RenderPlan, error) {
-	if input == nil {
-		return NewRenderPlan(tpl), nil
+	if tpl == nil {
+		return nil, errors.New("render plan: template is nil")
 	}
-	data, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("render plan: encode input: %w", err)
-	}
-	return NewRenderPlanFromRegistryInput(tpl, data)
+	return NewRenderPlanFromMap(tpl, input), nil
 }

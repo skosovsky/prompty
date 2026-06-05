@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 )
 
@@ -26,15 +27,24 @@ func ExampleRegistry_Plan() {
 	base, _ := New(fetcher, WithParser(manifest.NewJSONParser()))
 	reg := WithCache(base, time.Minute)
 	ctx := context.Background()
-	tpl, err := templateFromPlan(ctx, reg, "demo")
+	input, err := prompty.PlanInputFrom(struct {
+		Name string `prompt:"name"`
+	}{Name: "Ada"})
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(tpl.Metadata.ID)
-	fmt.Println(len(tpl.Messages))
+	plan, err := reg.Plan(ctx, "demo", input)
+	if err != nil {
+		panic(err)
+	}
+	exec, err := plan.Execute(ctx)
+	if err != nil {
+		panic(err)
+	}
+	text := exec.Messages[0].Content[0].(prompty.TextPart).Text
+	fmt.Println(text)
 	// Output:
-	// demo
-	// 1
+	// Hello Ada
 }
 
 func ExampleNew() {
