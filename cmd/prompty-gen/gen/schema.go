@@ -240,6 +240,8 @@ func errStrictSchema(path []string, reason string) error {
 }
 
 // mapSchemaToGo generates Go type code from JSON Schema.
+//
+//nolint:funlen // schema mapping branches per JSON Schema keyword
 func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen.Code, error) {
 	if schema == nil {
 		return nil, errStrictSchema(path, "schema is nil")
@@ -258,6 +260,9 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 	case jsonSchemaTypeBoolean:
 		return jen.Bool(), nil
 	case jsonSchemaTypeArray:
+		if format, _ := schema["format"].(string); format == "messages" {
+			return jen.Index().Qual("github.com/skosovsky/prompty", "ChatMessage"), nil
+		}
 		items, _ := schema["items"].(map[string]any)
 		elem, err := m.mapSchemaToGo(items, append(path, "Item")...)
 		if err != nil {

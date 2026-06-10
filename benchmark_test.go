@@ -21,7 +21,7 @@ func BenchmarkRenderPlanExecute(b *testing.B) {
 	}
 }
 
-func BenchmarkBindTemplateVars(b *testing.B) {
+func Benchmark_bindTemplateVars(b *testing.B) {
 	type P struct {
 		A string `prompt:"a"`
 		B string `prompt:"b"`
@@ -30,7 +30,7 @@ func BenchmarkBindTemplateVars(b *testing.B) {
 	payload := &P{A: "x", B: "y", C: "z"}
 	b.ResetTimer()
 	for range b.N {
-		_, _, _ = BindTemplateVars(payload)
+		_, _, _ = bindTemplateVars(payload)
 	}
 }
 

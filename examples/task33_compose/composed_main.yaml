@@ -1,0 +1,20 @@
+id: composed_main
+inputs:
+  query:
+    type: string
+    required: true
+  clinic_name:
+    type: string
+imports:
+  - id: composed_child
+layers:
+  - id: base_system
+    role: system
+    content:
+      - type: text
+        text: "Base layer."
+  - id: child_rules
+    import_ref: composed_child
+  - id: user_turn
+    role: user
+    content: "{{ .Input.query }}"

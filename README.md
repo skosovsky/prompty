@@ -62,14 +62,14 @@ func main() {
 
 - **Registry** — supplies deferred `RenderPlan` by id (from files, embed, or remote). Interface: `Plan(ctx, id, input RegistryPlanInput) (*RenderPlan, error)` (opaque bound payload; use `PlanInputFrom[T]` before `Plan`). Optional `ManifestResolver.ResolveManifest(ctx, id)` returns metadata without compiling templates.
 - **Adapter** — maps `PromptExecution` to a provider request and parses the response. Recommended: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)` → `resp.StrictText()`. Low-level: `Translate` → `Execute` → `ParseResponse`. For streaming use `ExecuteStream`; adapters implement `StreamerAdapter.ExecuteStream` for native streaming. Token budgets: `adapter.EstimateTokens(estimator, exec)` is strict-by-default (`ErrNoTokenEstimator` without a provider estimator); use `adapter.NewClientWithEstimator` when wrapping an invoker.
-- **CompiledPrompt** — immutable serialized execution snapshot with manifest digest. `RenderPlan.Compile` / `CompileFromRegistry` require raw manifest bytes; use `CompileFromRegistryWithCanonicalSnapshot` only when bytes are unavailable (explicit opt-in, `DigestSourceCanonicalSnapshot`).
-- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML) and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
+- **ManifestDescriptor** — lightweight checkpoint token `{ID, Digest}` for application state; rehydrate via `Registry.Plan` + typed render at runtime. Optional `internal/compiled.Prompt` is an adapter/otel wire snapshot only (root module); application checkpoints use `ManifestDescriptor` via `ManifestCheckpointRegistry`.
+- **Templating** — `ChatPromptTemplate` is built from message templates and optional tools; rendering is deferred via `Registry.Plan(...)` / `RenderPlan.Execute(ctx)`. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML), expand declarative `imports`/`layers`, and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
-Pipeline: **Registry.Plan(ctx, id, RegistryPlanInput)** → **RenderPlan.WithLateVariablesJSON / ReplaceLayer / AppendToLayer / WithResponseFormatDefinition** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
+Pipeline: **Registry.Plan(ctx, id, RegistryPlanInput)** → **RenderPlan.WithLateInput / WithResponseFormatDefinition** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → provider API.
 
 ## Features
 
-- **Domain model**: `ContentPart` (text/media/tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). Prompt caching uses `CacheControl` on message and/or part level (`cache_control` in manifests). **Execution-level provider knobs:** use `PromptExecution.ModelOptions.ProviderSettings` (e.g. `gemini_search_grounding` for Gemini).
+- **Domain model**: `ContentPart` (text/media/tool call/result), `ChatMessage`, `ToolDefinition`, `PromptExecution` with metadata; open-ended roles in manifests (validation in adapters). Prompt caching uses `CachePolicy` on message and/or part level (`cache_policy` in manifests). **Execution-level provider knobs:** use `PromptExecution.ModelOptions.ProviderSettings` (e.g. `gemini_search_grounding` for Gemini).
 - **Media**: `exec.ResolvedMedia(ctx, fetcher)` returns a cloned execution with `MediaPart.Data` filled via a `Fetcher` (e.g. `mediafetch.DefaultFetcher{}`); use it before `Translate` for adapters that require inline data (for example Ollama, and Anthropic for unsupported URL media shapes). OpenAI and Gemini accept URL natively.
 - **Templating**: `text/template` with fail-fast validation, `PartialVariables`, optional messages, chat history splicing. **DRY:** registries support `WithPartials(pattern)` so manifests can use `{{ template "name" }}` with shared partials (e.g. `_partials/*.tmpl`).
 - **Template functions**: `truncate_chars`, `truncate_tokens`, `render_tools_as_xml` / `render_tools_as_json` for tool injection.
@@ -136,7 +136,7 @@ flowchart LR
     API[LLM API]
 
     Registry -->|Plan(ctx,id,input)| Plan
-    Plan -->|WithLateVariablesJSON / ReplaceLayer / AppendToLayer| Execute
+    Plan -->|WithLateInput / WithResponseFormat| Execute
     Execute --> Exec
     Exec -->|Translate| Adapter
     Adapter -->|request| API
@@ -146,17 +146,15 @@ flowchart LR
 
 Pipeline: **Registry.Plan(...)** → **RenderPlan composition** → **RenderPlan.Execute()** → **PromptExecution** → **Adapter** → LLM API.
 
-## Migration v1 -> v2
+## Migration: Task33 (clear break)
 
-Migration guide: [`MIGRATION_V1_TO_V2.md`](./MIGRATION_V1_TO_V2.md).
+Migration guide: [`MIGRATION_TASK33.md`](./MIGRATION_TASK33.md).
 
-## Migration: Template Input Binding (task32)
+Regression gate: `make task33-gates` (legacy API scan + all modules + `TestTypePurity`; full suite with race: `make test`). Gates scan **git-tracked** files only (`git ls-files`); untracked local files are not included.
 
-Migration guide: [`MIGRATION_TASK32.md`](./MIGRATION_TASK32.md).
+**Checkpoint ops:** compose manifests must list only resolvable import ids for `RecommendManifestDescriptor` / `VerifyManifestDescriptor` (all declared imports, including inactive conditional branches). **Compose caching:** `ManifestUsesComposeE` returns an error on corrupt bytes; cached registries bypass template cache conservatively on error.
 
-Regression gate: `make task32-gates` (static binder invariants + targeted tests; fast, no `-race` — full suite: `make test`).
-
-## V2 tutorial (task29)
+## Deferred render pipeline
 
 `prompty` v2 is a deferred pipeline. Render first, compose plans, execute once:
 
@@ -172,35 +170,21 @@ planInput, err := prompty.PlanInputFrom(struct {
 if err != nil {
 	return err
 }
-plan, err := reg.Plan(ctx, "support_agent", planInput)
-if err != nil {
-	return err
-}
-
-policyInput, err := prompty.PlanInputFrom(struct {
-	PolicyName string `prompt:"policy_name"`
-}{PolicyName: "strict"})
-if err != nil {
-	return err
-}
-policyPlan, err := reg.Plan(ctx, "policy_overlay", policyInput)
-if err != nil {
-	return err
-}
-
-composed, err := plan.ReplaceLayer("policy", policyPlan)
-if err != nil {
-	return err
-}
-
-lateVars, _ := prompty.MapToJSONDocument(map[string]any{
-	"allowed_tools": []string{"get_order_status"},
+planInput = prompty.PlanInputWithCapabilities(planInput, map[string]any{
+	"capabilities": map[string]any{"workspace_enabled": true},
 })
-composed, err = composed.WithLateVariablesJSON(lateVars)
+plan, err := reg.Plan(ctx, "main_agent", planInput)
 if err != nil {
 	return err
 }
-exec, err := composed.Execute(ctx)
+
+late, err := plan.WithLateInput(struct {
+	AllowedTools []string `prompt:"allowed_tools"`
+}{AllowedTools: []string{"get_order_status"}})
+if err != nil {
+	return err
+}
+exec, err := late.Execute(ctx)
 if err != nil {
 	return err
 }
@@ -233,13 +217,31 @@ Clean-break rules in v2:
 - template context is explicit: `.Input.*` and `.LateVars.*`
 - provider message normalization runs in adapters, not in `RenderPlan.Execute()`
 
-### task30 additions
+### Task33 additions
 
-- **Layers:** tag messages with `layer_id` / `layer_kind`; compose with `ReplaceLayer` or append with `AppendToLayer`.
-- **Provenance:** rendered messages carry `LayerRef` and `ManifestID`.
-- **Metadata:** `ResolveManifest` / `PromptCatalog.Descriptor` for lightweight manifest introspection.
+- **Declarative composition:** manifest `imports` + `layers` with `condition.match`; registries expand at `Plan` time using `PlanInputWithCapabilities`.
+- **Layers:** tag messages with `layer_id` / `layer_kind` (or define layers in manifest).
+- **Provenance:** rendered messages carry `Provenance *MessageProvenance` (`LayerID`, `ManifestID`).
+- **Late binding:** typed `WithLateInput` / codegen `*LateInput` + `WithLate` (no JSON tunnel).
+- **Checkpoints:** `ManifestDescriptor{ID, Digest}` instead of public compiled blobs.
+- **Metadata:** `ResolveManifest` / `PromptCatalog.Descriptor` for lightweight manifest introspection (`WithResolveComposeCapabilities` for runtime layer view).
+- **Compose fixtures:** see [`fileregistry/testdata/prompts/composed_main.yaml`](fileregistry/testdata/prompts/composed_main.yaml) and [`composed_conditional_main.yaml`](fileregistry/testdata/prompts/composed_conditional_main.yaml).
+- **Example app:** [`examples/task33_compose`](examples/task33_compose) — minimal compose manifest with checkpoint + provenance.
 - **Runtime schema:** `WithResponseFormatDefinition` / `WithResponseFormatFromStruct` overrides response format before execute.
 - **Struct binding:** alias resolution cached per type; struct fields bind via `prompt` / `json` / snake_case tags.
+
+### Flat vs compose layers
+
+Manifests use **either** top-level `messages` (flat) **or** `layers` with optional `imports` (compose). Declaring both is rejected — when migrating to compose, move every turn (including the user message) into `layers`:
+
+```yaml
+layers:
+  - id: user_turn
+    role: user
+    content: "{{ .Input.query }}"
+```
+
+Flat manifests keep legacy `messages` + optional `layer_id` per message. Compose manifests resolve imports transitively and attach `MessageProvenance` per expanded layer. See [`examples/task33_compose`](examples/task33_compose) for a working compose example with checkpoint verification.
 
 ## Resilience, timeouts, and structured output
 

@@ -19,7 +19,7 @@ import (
 //     name: ...
 //     description: ...
 //     schema: { type: object, properties: ... }
-func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nolint:gocognit
+func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nolint:gocognit,funlen
 	if raw == nil {
 		//nolint:nilnil // nil inputs block is valid and represented as nil schema.
 		return nil, nil
@@ -78,6 +78,26 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 				required = append(required, inputName)
 			}
 			delete(prop, "required")
+		}
+		if formatAny, hasFormat := prop["format"]; hasFormat {
+			formatStr, ok := formatAny.(string)
+			if !ok {
+				return nil, fmt.Errorf("inputs.%s.format must be string", inputName)
+			}
+			if formatStr == "messages" {
+				if typ, _ := prop["type"].(string); typ != "array" {
+					return nil, fmt.Errorf("inputs.%s.format messages requires type array", inputName)
+				}
+			}
+		}
+		if lateAny, hasLate := prop["late"]; hasLate {
+			lateBool, ok := lateAny.(bool)
+			if !ok {
+				return nil, fmt.Errorf("inputs.%s.late must be boolean", inputName)
+			}
+			if lateBool {
+				prop["x-prompty-late"] = true
+			}
 		}
 		properties[inputName] = prop
 	}

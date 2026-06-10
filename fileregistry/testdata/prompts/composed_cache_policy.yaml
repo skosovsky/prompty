@@ -1,0 +1,14 @@
+id: composed_cache_policy
+inputs:
+  query:
+    type: string
+    required: true
+layers:
+  - id: cached_layer
+    role: system
+    cache_policy:
+      type: ephemeral
+    content: "Cached system rules."
+  - id: user_turn
+    role: user
+    content: "{{ .Input.query }}"

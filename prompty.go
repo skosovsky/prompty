@@ -31,16 +31,22 @@ type ContentPart interface {
 	isContentPart()
 }
 
-// CacheControl declares cache behavior for a message or content part.
+// CachePolicy declares cache behavior for a message or content part.
 // Type examples: "ephemeral".
-type CacheControl struct {
+type CachePolicy struct {
 	Type string `json:"type,omitempty" yaml:"type,omitempty"`
+}
+
+// MessageProvenance tracks manifest/layer origin for a rendered message.
+type MessageProvenance struct {
+	ManifestID string `json:"manifest_id,omitempty" yaml:"manifest_id,omitempty"`
+	LayerID    string `json:"layer_id,omitempty"    yaml:"layer_id,omitempty"`
 }
 
 // TextPart holds plain text content.
 type TextPart struct {
-	Text         string
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Text        string
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 func (TextPart) isContentPart() {}
@@ -48,19 +54,19 @@ func (TextPart) isContentPart() {}
 // MediaPart holds universal media (image, audio, video, document). URL or Data may be set.
 // Adapters that do not accept URL natively may require callers to resolve URLs into inline data first.
 type MediaPart struct {
-	MediaType    string        // "image", "audio", "video", "document"
-	MIMEType     string        // e.g. "application/pdf", "image/jpeg"
-	URL          string        // Optional: link (adapters may fetch and convert to inline)
-	Data         []byte        // Optional: raw bytes (base64 is decoded by adapters as needed)
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	MediaType   string       // "image", "audio", "video", "document"
+	MIMEType    string       // e.g. "application/pdf", "image/jpeg"
+	URL         string       // Optional: link (adapters may fetch and convert to inline)
+	Data        []byte       // Optional: raw bytes (base64 is decoded by adapters as needed)
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 func (MediaPart) isContentPart() {}
 
 // ReasoningPart is the hidden reasoning chain returned by some models (e.g. DeepSeek R1, OpenAI o-series).
 type ReasoningPart struct {
-	Text         string
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Text        string
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 func (ReasoningPart) isContentPart() {}
@@ -68,11 +74,11 @@ func (ReasoningPart) isContentPart() {}
 // ToolCallPart represents an AI request to call a function (in assistant message).
 // In streaming: ArgsChunk holds incremental JSON; Args is set in non-stream ParseResponse.
 type ToolCallPart struct {
-	ID           string // Empty for models that do not support ID (e.g. base Gemini)
-	Name         string
-	Args         string        // Full JSON string of arguments (non-stream response)
-	ArgsChunk    string        // Chunk of JSON arguments (streaming); client glues chunks
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	ID          string // Empty for models that do not support ID (e.g. base Gemini)
+	Name        string
+	Args        string       // Full JSON string of arguments (non-stream response)
+	ArgsChunk   string       // Chunk of JSON arguments (streaming); client glues chunks
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 func (ToolCallPart) isContentPart() {}
@@ -80,33 +86,27 @@ func (ToolCallPart) isContentPart() {}
 // ToolResultPart is the result of a tool call (in message with Role "tool").
 // Content is a slice of multimodal parts (text, images, etc.).
 type ToolResultPart struct {
-	ToolCallID   string
-	Name         string
-	Content      []ContentPart
-	IsError      bool
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	ToolCallID  string
+	Name        string
+	Content     []ContentPart
+	IsError     bool
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 func (ToolResultPart) isContentPart() {}
 
-// LayerRef tracks provenance for a rendered message or content part.
-type LayerRef struct {
-	LayerID    string `json:"layer_id,omitempty"    yaml:"layer_id,omitempty"`
-	ManifestID string `json:"manifest_id,omitempty" yaml:"manifest_id,omitempty"`
-}
-
 // ChatMessage is a single message with role and content parts (supports multimodal).
-// CacheControl hints providers to cache this message (e.g. ephemeral prompt caching).
-// Metadata is message-scoped and should not be used for execution-level model controls.
+// CachePolicy hints providers to cache this message (e.g. ephemeral prompt caching).
+// Provenance records manifest/layer origin; Metadata is for provider-specific extras only.
+//
+//nolint:golines // ChatMessage tag block kept readable alongside CachePolicy/Provenance
 type ChatMessage struct {
-	Role         Role
-	Content      []ContentPart
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
-	Metadata     JSONDocument  // Provider-specific message-scoped extras (JSON object)
-	LayerID      string        `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`    //nolint:tagalign // Keep golines-compatible formatting for this struct block.
-	LayerKind    LayerKind     `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`  //nolint:tagalign // Keep golines-compatible formatting for this struct block.
-	LayerRef     LayerRef      `json:"layer_ref,omitzero"      yaml:"layer_ref,omitempty"`   //nolint:tagalign // Provenance for composition/debugging.
-	ManifestID   string        `json:"manifest_id,omitempty"   yaml:"manifest_id,omitempty"` //nolint:tagalign // Originating manifest id when known.
+	Role        Role
+	Content     []ContentPart
+	CachePolicy *CachePolicy       `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
+	Provenance  *MessageProvenance `json:"provenance,omitempty"   yaml:"provenance,omitempty"`
+	Metadata    JSONDocument       // Provider-specific message-scoped extras (JSON object)
+	LayerKind   LayerKind          `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"`
 }
 
 // ToolDefinition is the universal tool schema.
@@ -195,6 +195,8 @@ func (e *PromptExecution) WithMessages(messages []ChatMessage) *PromptExecution 
 
 // Normalize returns a new PromptExecution with consecutive system/developer messages merged into one.
 // Content is merged: TextPart texts are concatenated with "\n\n"; other parts (e.g. MediaPart) are preserved in order.
+// Provenance, Metadata, and LayerKind use first-wins semantics from the leading message; trailing values are dropped.
+// Adjacent messages are not merged when LayerID differs (including empty vs non-empty).
 // Call explicitly when history may have produced adjacent system messages (e.g. to avoid provider 400).
 func (e *PromptExecution) Normalize() *PromptExecution {
 	if e == nil || len(e.Messages) == 0 {
@@ -207,9 +209,12 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 			out = append(out, cloneChatMessage(cur))
 			continue
 		}
-		// Merge all consecutive system/developer messages into one.
+		// Merge consecutive system/developer messages unless layer provenance differs.
 		merged := cloneChatMessage(cur)
 		for j := i + 1; j < len(e.Messages) && (e.Messages[j].Role == RoleSystem || e.Messages[j].Role == RoleDeveloper); j++ {
+			if provenanceLayerIDConflicts(merged, e.Messages[j]) {
+				break
+			}
 			merged = mergeSystemMessages(merged, e.Messages[j])
 			i = j
 		}
@@ -227,7 +232,8 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 }
 
 // mergeSystemMessages merges two system/developer messages while preserving content-part boundaries.
-// If either source has nil CacheControl or cache types mismatch, merged message CacheControl is nil.
+// Provenance, Metadata, and LayerKind are taken from a (first wins).
+// If either source has nil CachePolicy or cache types mismatch, merged message CachePolicy is nil.
 func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 	content := make([]ContentPart, 0, len(a.Content)+len(b.Content)+1)
 	content = append(content, cloneContentParts(a.Content)...)
@@ -236,14 +242,12 @@ func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 	}
 	content = append(content, cloneContentParts(b.Content)...)
 	return ChatMessage{
-		Role:         a.Role,
-		Content:      content,
-		CacheControl: mergeMessageCacheControl(a.CacheControl, b.CacheControl),
-		Metadata:     CloneJSONDocument(a.Metadata),
-		LayerID:      a.LayerID,
-		LayerKind:    a.LayerKind,
-		LayerRef:     a.LayerRef,
-		ManifestID:   a.ManifestID,
+		Role:        a.Role,
+		Content:     content,
+		CachePolicy: mergeMessageCachePolicy(a.CachePolicy, b.CachePolicy),
+		Provenance:  cloneMessageProvenance(a.Provenance),
+		Metadata:    CloneJSONDocument(a.Metadata),
+		LayerKind:   a.LayerKind,
 	}
 }
 
@@ -257,14 +261,27 @@ func hasTextContent(parts []ContentPart) bool {
 	return false
 }
 
-func mergeMessageCacheControl(a, b *CacheControl) *CacheControl {
+func provenanceLayerID(msg ChatMessage) string {
+	if msg.Provenance == nil {
+		return ""
+	}
+	return msg.Provenance.LayerID
+}
+
+func provenanceLayerIDConflicts(a, b ChatMessage) bool {
+	aID := provenanceLayerID(a)
+	bID := provenanceLayerID(b)
+	return aID != bID
+}
+
+func mergeMessageCachePolicy(a, b *CachePolicy) *CachePolicy {
 	if a == nil || b == nil {
 		return nil
 	}
 	if a.Type != b.Type {
 		return nil
 	}
-	return cloneCacheControl(a)
+	return cloneCachePolicy(a)
 }
 
 // Fetcher defines how media URLs are resolved into raw bytes. Callers can use mediafetch.DefaultFetcher or provide a custom implementation (e.g. S3, local files).
@@ -368,12 +385,12 @@ func newToolResultPart(toolCallID, name, text string, isError bool) ToolResultPa
 
 // TemplatePart is one part of a message template (text or media). Type determines which field set is the template source.
 type TemplatePart struct {
-	Type         string        // "text" or "media"
-	Text         string        // Go text/template for type "text"
-	MediaType    string        // Go text/template for type "media" (for example: image, audio, video, document)
-	MIMEType     string        // Optional Go text/template for type "media" (for example: image/png)
-	URL          string        // Optional Go text/template for type "media"
-	CacheControl *CacheControl `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
+	Type        string       // "text" or "media"
+	Text        string       // Go text/template for type "text"
+	MediaType   string       // Go text/template for type "media" (for example: image, audio, video, document)
+	MIMEType    string       // Optional Go text/template for type "media" (for example: image/png)
+	URL         string       // Optional Go text/template for type "media"
+	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 }
 
 // TextContent returns a single text TemplatePart slice for convenience.
@@ -384,15 +401,15 @@ func TextContent(text string) []TemplatePart {
 // MessageTemplate is the raw template for one message before rendering.
 // After RenderPlan.Execute it becomes a ChatMessage with substituted values.
 // Optional: true skips the message if all referenced variables are zero-value.
-// CacheControl applies message-level cache hint; parts may override with their own cache_control.
+// CachePolicy applies message-level cache hint; parts may override with their own cache_policy.
 type MessageTemplate struct {
-	Role         Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
-	Content      []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
-	Optional     bool           // true → skip if all referenced variables are zero-value
-	CacheControl *CacheControl  `json:"cache_control,omitempty" yaml:"cache_control,omitempty"`
-	Metadata     JSONDocument   `json:"metadata,omitempty"      yaml:"metadata,omitempty"`
-	LayerID      string         `json:"layer_id,omitempty"      yaml:"layer_id,omitempty"`
-	LayerKind    LayerKind      `json:"layer_kind,omitempty"    yaml:"layer_kind,omitempty"`
+	Role        Role           // RoleSystem, RoleUser, RoleAssistant (and others; see Role* constants)
+	Content     []TemplatePart // Parts to render (text and/or media); each part is a Go text/template
+	Optional    bool           // true → skip if all referenced variables are zero-value
+	CachePolicy *CachePolicy   `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
+	Metadata    JSONDocument   `json:"metadata,omitempty"     yaml:"metadata,omitempty"`
+	LayerID     string         `json:"layer_id,omitempty"     yaml:"layer_id,omitempty"`
+	LayerKind   LayerKind      `json:"layer_kind,omitempty"   yaml:"layer_kind,omitempty"`
 }
 
 // TemplateInfo holds metadata about a template without parsing its body.
@@ -416,9 +433,44 @@ type TemplateDescriptor struct {
 	Tags              []string
 }
 
+// ResolveManifestOpts configures manifest metadata resolution (e.g. runtime compose capabilities).
+type ResolveManifestOpts struct {
+	ComposeCapabilities map[string]any
+	// ComposeCapsSet is true when WithResolveComposeCapabilities was called with a non-nil map
+	// (including an empty map for runtime strict evaluation).
+	ComposeCapsSet bool
+}
+
+// ResolveManifestOption configures ResolveManifest. Without options, composed manifests use a
+// conservative view (union of all imports) suitable for codegen.
+type ResolveManifestOption func(*ResolveManifestOpts)
+
+// WithResolveComposeCapabilities sets capabilities for condition.match during descriptor expansion.
+// Pass a non-nil map (including map[string]any{}) for runtime strict evaluation; omit the option for conservative compose.
+func WithResolveComposeCapabilities(caps map[string]any) ResolveManifestOption {
+	return func(o *ResolveManifestOpts) {
+		if caps == nil {
+			return
+		}
+		o.ComposeCapsSet = true
+		o.ComposeCapabilities = cloneCapabilitiesMap(caps)
+	}
+}
+
+// ApplyResolveManifestOptions merges resolve options.
+func ApplyResolveManifestOptions(opts []ResolveManifestOption) ResolveManifestOpts {
+	var out ResolveManifestOpts
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&out)
+		}
+	}
+	return out
+}
+
 // ManifestResolver resolves manifest metadata without rendering.
 type ManifestResolver interface {
-	ResolveManifest(ctx context.Context, id string) (TemplateDescriptor, error)
+	ResolveManifest(ctx context.Context, id string, opts ...ResolveManifestOption) (TemplateDescriptor, error)
 }
 
 // PromptDescriber exposes declarative prompt introspection for host routing.
@@ -431,10 +483,10 @@ type ManifestBytesReader interface {
 	ReadManifestBytes(ctx context.Context, id string) ([]byte, error)
 }
 
-// DigestRegistry is required by RenderPlan.CompileFromRegistry (plan + raw manifest bytes).
-type DigestRegistry interface {
-	Registry
-	ManifestBytesReader
+// ManifestComposeChecker reports whether a manifest uses imports/layers (compose-aware caching).
+// Corrupt manifest bytes must return a non-nil error (never silently report false).
+type ManifestComposeChecker interface {
+	ManifestUsesComposeE(ctx context.Context, id string) (bool, error)
 }
 
 // DescribingRegistry is required by prompty-gen NewPromptCatalog (plan + DescribePrompt).
@@ -447,6 +499,14 @@ type DescribingRegistry interface {
 // id is a single identifier (e.g. "doctor", "doctor.prod"); environments are expressed via file layout.
 type Registry interface {
 	Plan(ctx context.Context, id string, input RegistryPlanInput) (*RenderPlan, error)
+}
+
+// ManifestCheckpointRegistry supplies registry Plan, raw bytes, and manifest checkpoint recommend/verify.
+type ManifestCheckpointRegistry interface {
+	Registry
+	ManifestBytesReader
+	RecommendManifestDescriptor(ctx context.Context, id string) (ManifestDescriptor, error)
+	VerifyManifestDescriptor(ctx context.Context, desc ManifestDescriptor) error
 }
 
 // Lister is optional. When implemented by a registry, List returns available template ids.

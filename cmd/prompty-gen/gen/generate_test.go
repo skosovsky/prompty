@@ -890,6 +890,132 @@ func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.
 	}
 }
 
+func TestGenerateManifestTypes_FormatMessages(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "kosmify_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"chat_history": map[string]any{
+						"type":   "array",
+						"format": "messages",
+					},
+					"query": map[string]any{"type": "string"},
+				},
+			}),
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ChatHistory []prompty.ChatMessage") {
+		t.Errorf("expected []prompty.ChatMessage for format messages, got:\n%s", out)
+	}
+	if !strings.Contains(out, `prompt:"chat_history"`) {
+		t.Error("expected prompt tag chat_history")
+	}
+}
+
+func TestGenerateManifestTypes_LateInput(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "main_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"user_name": map[string]any{"type": "string"},
+					"patient_dossier": map[string]any{
+						"type": "string",
+						"late": true,
+					},
+				},
+			}),
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "type MainAgentInput struct") {
+		t.Error("expected MainAgentInput")
+	}
+	if !strings.Contains(out, "UserName") {
+		t.Error("expected UserName on MainAgentInput")
+	}
+	idx := strings.Index(out, "type MainAgentInput struct")
+	lateIdx := strings.Index(out, "type MainAgentLateInput struct")
+	if lateIdx < 0 {
+		t.Fatal("expected MainAgentLateInput")
+	}
+	if idx >= 0 && strings.Contains(out[idx:lateIdx], "PatientDossier") {
+		t.Error("late field must not appear on MainAgentInput")
+	}
+	if !strings.Contains(out, "type MainAgentLateInput struct") {
+		t.Error("expected MainAgentLateInput")
+	}
+	if !strings.Contains(out, `prompt:"patient_dossier"`) {
+		t.Error("expected prompt tag on late field")
+	}
+	if !strings.Contains(out, "func (p *MainAgentPrompt) WithLate(") {
+		t.Error("expected WithLate wrapper")
+	}
+	if !strings.Contains(out, "WithLateInput") {
+		t.Error("expected WithLateInput call")
+	}
+}
+
+func TestGenerateManifestTypes_LateRequiredInput(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "late_required_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"user_query": map[string]any{"type": "string"},
+					"patient_dossier": map[string]any{
+						"type":     "string",
+						"late":     true,
+						"required": true,
+					},
+				},
+				"required": []any{"user_query", "patient_dossier"},
+			}),
+		},
+	}
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	lateIdx := strings.Index(out, "type LateRequiredAgentLateInput struct")
+	if lateIdx < 0 {
+		t.Fatal("expected LateRequiredAgentLateInput")
+	}
+	lateBlock := out[lateIdx:]
+	if !strings.Contains(lateBlock, "PatientDossier") || !strings.Contains(lateBlock, `validate:"required"`) {
+		t.Errorf("expected required late field with validate tag, got:\n%s", lateBlock)
+	}
+	if !strings.Contains(lateBlock, `prompt:"patient_dossier"`) {
+		t.Error("expected prompt tag on required late field")
+	}
+}
+
 // TestGenerate_GoldenCompare compares generated output to golden files (regression test).
 // Run with -golden=<dir> to overwrite golden files in that directory.
 func TestGenerate_GoldenCompare(t *testing.T) {
@@ -961,6 +1087,37 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		return b.String(), nil
 	})
 
+	lateSpec := &PromptSpec{
+		ID: "late_binding_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"user_query": map[string]any{"type": "string"},
+					"patient_dossier": map[string]any{
+						"type": "string",
+						"late": true,
+					},
+				},
+				"required": []any{"user_query"},
+			}),
+		},
+	}
+	lateFile, err := GenerateManifestTypes(lateSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes late_binding_agent: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, lateFile, filepath.Join(goldenDir, "late_binding_agent_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "late_binding_agent_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := lateFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
 	noVarsSpec := &PromptSpec{ID: "no_vars"}
 	noVarsFile, err := GenerateManifestTypes(noVarsSpec, "prompts")
 	if err != nil {
@@ -972,6 +1129,82 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 	compareGolden(t, goldenDir, "no_vars_gen.go.golden", func() (string, error) {
 		var b strings.Builder
 		if renderErr := noVarsFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
+	lateRequiredSpec := loadTestPromptSpec(t, filepath.Join(testdataPromptsDir(t), "late_required_agent.yaml"), nil)
+	lateRequiredFile, err := GenerateManifestTypes(lateRequiredSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes late_required_agent: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, lateRequiredFile, filepath.Join(goldenDir, "late_required_agent_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "late_required_agent_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := lateRequiredFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
+	composedMainSpec := loadTestPromptSpec(
+		t,
+		filepath.Join(testdataPromptsDir(t), "composed_main.yaml"),
+		composeTestLoader(t),
+	)
+	composedMainFile, err := GenerateManifestTypes(composedMainSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes composed_main: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, composedMainFile, filepath.Join(goldenDir, "composed_main_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "composed_main_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := composedMainFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
+	composedChildSpec := loadTestPromptSpec(
+		t,
+		filepath.Join(testdataPromptsDir(t), "composed_child.yaml"),
+		composeTestLoader(t),
+	)
+	composedChildFile, err := GenerateManifestTypes(composedChildSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes composed_child: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, composedChildFile, filepath.Join(goldenDir, "composed_child_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "composed_child_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := composedChildFile.Render(&b); renderErr != nil {
+			return "", renderErr
+		}
+		return b.String(), nil
+	})
+
+	composedConditionalSpec := loadTestPromptSpec(
+		t,
+		filepath.Join(testdataPromptsDir(t), "composed_conditional_main.yaml"),
+		composeTestLoader(t),
+	)
+	composedConditionalFile, err := GenerateManifestTypes(composedConditionalSpec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes composed_conditional_main: %v", err)
+	}
+	if goldenFlag() != "" {
+		writeGolden(t, composedConditionalFile, filepath.Join(goldenDir, "composed_conditional_main_gen.go.golden"))
+	}
+	compareGolden(t, goldenDir, "composed_conditional_main_gen.go.golden", func() (string, error) {
+		var b strings.Builder
+		if renderErr := composedConditionalFile.Render(&b); renderErr != nil {
 			return "", renderErr
 		}
 		return b.String(), nil

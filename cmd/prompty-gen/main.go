@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 
 	yamlv3 "gopkg.in/yaml.v3"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 	"github.com/skosovsky/prompty/parser/yaml"
 
@@ -146,19 +148,31 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 }
 
 // runTypes generates shared _shared_gen.go plus per-manifest _gen.go (hybrid types mode).
+func indexManifests(files []string, configDir string, queries []string) (manifest.ManifestLoader, error) {
+	return manifest.IndexFileManifests(files, readRawManifestFile, manifest.IndexFileOptions{
+		IDFromPath: func(fpath string) string {
+			return manifest.PathIDFromFile(fpath, configDir, queries)
+		},
+	})
+}
+
 func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
+	loader, err := indexManifests(files, configDir, pkg.Queries)
+	if err != nil {
+		return err
+	}
 	var specs []*gen.PromptSpec
 	seenIDs := make(map[string]string) // id -> first fpath
 	for _, fpath := range files {
-		spec, err := loadSpec(fpath, configDir, pkg.Queries)
-		if err != nil {
-			return fmt.Errorf("manifest %s: %w", fpath, err)
+		spec, loadErr := loadSpec(fpath, configDir, pkg.Queries, loader)
+		if loadErr != nil {
+			return fmt.Errorf("manifest %s: %w", fpath, loadErr)
 		}
 		if spec.ID == "" {
 			return fmt.Errorf("manifest %s: id is empty", fpath)
 		}
-		if err := gen.ValidatePromptID(spec.ID); err != nil {
-			return fmt.Errorf("manifest %s: %w", fpath, err)
+		if validateErr := gen.ValidatePromptID(spec.ID); validateErr != nil {
+			return fmt.Errorf("manifest %s: %w", fpath, validateErr)
 		}
 		if prev, ok := seenIDs[spec.ID]; ok {
 			return fmt.Errorf("duplicate id %q in %s and %s", spec.ID, prev, fpath)
@@ -212,8 +226,13 @@ func runList(configPath string) error {
 		if err != nil {
 			return fmt.Errorf("package %q: %w", pkg.Name, err)
 		}
+		loader, loaderErr := indexManifests(files, configDir, pkg.Queries)
+		if loaderErr != nil {
+			fmt.Fprintf(os.Stderr, "  package %s: %v\n", pkg.Name, loaderErr)
+			continue
+		}
 		for _, fpath := range files {
-			spec, err := loadSpec(fpath, configDir, pkg.Queries)
+			spec, err := loadSpec(fpath, configDir, pkg.Queries, loader)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  %s: %v\n", fpath, err)
 				continue
@@ -224,12 +243,14 @@ func runList(configPath string) error {
 	return nil
 }
 
-func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec, error) {
+func readRawManifestFile(fpath string) (*manifest.RawManifest, error) {
 	data, err := os.ReadFile(fpath)
 	if err != nil {
 		return nil, err
 	}
-
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%s: %w: manifest bytes are empty", fpath, prompty.ErrInvalidManifest)
+	}
 	var u manifest.Unmarshaler
 	switch strings.ToLower(filepath.Ext(fpath)) {
 	case extYAML, extYML:
@@ -237,12 +258,36 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 	case extJSON:
 		u = manifest.NewJSONParser()
 	default:
-		return nil, errors.New("unsupported manifest format")
+		return nil, fmt.Errorf("%s: unsupported manifest format", fpath)
 	}
-
 	var raw manifest.RawManifest
 	if unmarshalErr := u.Unmarshal(data, &raw); unmarshalErr != nil {
-		return nil, fmt.Errorf("%w", unmarshalErr)
+		return nil, fmt.Errorf("%s: %w", fpath, wrapRawManifestUnmarshalErr(unmarshalErr))
+	}
+	return &raw, nil
+}
+
+// wrapRawManifestUnmarshalErr aligns prompty-gen with registry LoadByID error taxonomy.
+// YAML parser already wraps ErrInvalidManifest; JSON and rare YAML paths may not.
+func wrapRawManifestUnmarshalErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, prompty.ErrInvalidManifest) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
+}
+
+func loadSpec(
+	fpath string,
+	configDir string,
+	queries []string,
+	loader manifest.ManifestLoader,
+) (*gen.PromptSpec, error) {
+	raw, err := readRawManifestFile(fpath)
+	if err != nil {
+		return nil, err
 	}
 	if raw.ID == "" {
 		raw.ID = idFromRelativePath(fpath, configDir, queries)
@@ -250,15 +295,27 @@ func loadSpec(fpath string, configDir string, queries []string) (*gen.PromptSpec
 			return nil, errors.New("manifest has no id field and could not derive id from path")
 		}
 	}
-	// Clean Break v2.0: types mode requires messages and inputs
-	if len(raw.Messages) == 0 {
-		return nil, errors.New("manifest missing messages block (v2.0 required)")
-	}
 	if raw.InputSchema == nil {
 		return nil, errors.New("manifest missing inputs block (v2.0 required)")
 	}
+	if len(raw.Messages) == 0 && len(raw.Layers) == 0 {
+		return nil, errors.New("manifest missing messages or layers block (v2.0 required)")
+	}
+	effectiveSchema, err := manifest.ResolveEffectiveInputSchema(context.Background(), raw, loader)
+	if err != nil {
+		return nil, err
+	}
+	raw.InputSchema = effectiveSchema
+	if expandErr := manifest.ExpandRawManifest(raw, manifest.ComposeContext{
+		Ctx: context.Background(), Loader: loader, Capabilities: nil,
+	}); expandErr != nil {
+		return nil, expandErr
+	}
+	if len(raw.Messages) == 0 {
+		return nil, errors.New("manifest missing messages after composition")
+	}
 
-	tpl, err := manifest.BuildFromRaw(&raw, nil)
+	tpl, err := manifest.BuildFromRaw(raw, nil)
 	if err != nil {
 		return nil, err
 	}

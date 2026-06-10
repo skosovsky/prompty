@@ -10,32 +10,34 @@ type Unmarshaler interface {
 
 // RawContentPart is one content element of a message (format-agnostic).
 type RawContentPart struct {
-	Type         string                `json:"type"`
-	Text         string                `json:"text,omitempty"`
-	MediaType    string                `json:"media_type,omitempty"`
-	MIMEType     string                `json:"mime_type,omitempty"`
-	URL          string                `json:"url,omitempty"`
-	CacheControl *prompty.CacheControl `json:"cache_control,omitempty"`
+	Type        string               `json:"type"`
+	Text        string               `json:"text,omitempty"`
+	MediaType   string               `json:"media_type,omitempty"`
+	MIMEType    string               `json:"mime_type,omitempty"`
+	URL         string               `json:"url,omitempty"`
+	CachePolicy *prompty.CachePolicy `json:"cache_policy,omitempty"`
 }
 
 // RawMessage is the raw representation of a single message.
 //
 //nolint:golines // struct fields share aligned json/yaml tag layout
 type RawMessage struct {
-	Role           string                `json:"role"`
-	LayerKind      prompty.LayerKind     `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
-	LayerID        string                `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
-	LegacySourceID string                `json:"source_id,omitempty" yaml:"source_id,omitempty"`   //nolint:tagalign // legacy reject field
-	Content        []RawContentPart      `json:"content"`
-	Optional       bool                  `json:"optional"`
-	CacheControl   *prompty.CacheControl `json:"cache_control,omitempty"`
-	Metadata       map[string]any        `json:"metadata,omitempty"`
+	Role           string               `json:"role"`
+	LayerKind      prompty.LayerKind    `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
+	LayerID        string               `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
+	LegacySourceID string               `json:"source_id,omitempty" yaml:"source_id,omitempty"`   //nolint:tagalign // legacy reject field
+	Content        []RawContentPart     `json:"content"`
+	Optional       bool                 `json:"optional"`
+	CachePolicy    *prompty.CachePolicy `json:"cache_policy,omitempty"`
+	Metadata       map[string]any       `json:"metadata,omitempty"`
 }
 
 // RawManifest is the raw representation of a manifest, sufficient for buildTemplate.
 // Supports Unmarshaler (YAML, JSON, etc.).
 // InputSchema is the JSON Schema for input typing (prompty-gen, required/partial derivation).
 // Metadata is the full metadata block; BuildFromRaw extracts tags and puts the rest into Extras.
+//
+//nolint:golines,tagalign // manifest wire struct uses wide aligned field columns
 type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
@@ -48,6 +50,8 @@ type RawManifest struct {
 	Tools          []prompty.ToolDefinition  `json:"tools"`
 	ResponseFormat *prompty.SchemaDefinition `json:"response_format"`
 	Messages       []RawMessage              `json:"messages"`
+	Imports        []RawImport               `json:"imports,omitempty" yaml:"imports,omitempty"`
+	Layers         []RawLayer                `json:"layers,omitempty"         yaml:"layers,omitempty"`
 
 	// Legacy v1 fields: strict-mode parser rejects manifests that still use them.
 	LegacyModelConfig map[string]any            `json:"model_config,omitempty" yaml:"model_config,omitempty"`

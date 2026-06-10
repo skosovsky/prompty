@@ -58,6 +58,23 @@ type parseOpts struct {
 	partialsGlob      string
 	partialsFS        fs.FS
 	partialsFSPattern string
+	compose           *ComposeContext
+}
+
+// WithCompose enables declarative imports/layers expansion at parse time.
+func WithCompose(ctx ComposeContext) ParseOption {
+	return func(o *parseOpts) { o.compose = &ctx }
+}
+
+// WithComposeCapabilities sets runtime capabilities on an existing or new compose context.
+func WithComposeCapabilities(caps map[string]any) ParseOption {
+	return func(o *parseOpts) {
+		if o.compose == nil {
+			o.compose = &ComposeContext{Ctx: nil, Capabilities: caps, Loader: nil}
+			return
+		}
+		o.compose.Capabilities = caps
+	}
 }
 
 // WithPartialsGlob sets a glob for partials when loading from file (e.g. "_partials/*.tmpl").
@@ -90,6 +107,8 @@ func Parse(data []byte, u Unmarshaler, opts ...ParseOption) (*prompty.ChatPrompt
 }
 
 // BuildFromRaw builds ChatPromptTemplate from RawManifest (used by parsers and tests).
+//
+//nolint:cyclop,gocyclo // template option assembly from normalized manifest
 func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate, error) {
 	if raw.LegacyModelConfig != nil || raw.LegacyInputSchema != nil {
 		return nil, fmt.Errorf(
@@ -99,6 +118,21 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	}
 	if raw.ID == "" {
 		return nil, fmt.Errorf("%w: missing id", prompty.ErrInvalidManifest)
+	}
+	composeCtx := ComposeContext{Ctx: nil, Capabilities: nil, Loader: nil}
+	if po != nil && po.compose != nil {
+		composeCtx = *po.compose
+	}
+	if len(raw.Layers) > 0 || len(raw.Imports) > 0 {
+		if composeCtx.Loader == nil {
+			return nil, fmt.Errorf(
+				"%w: imports/layers require compose loader (use manifest.WithCompose)",
+				prompty.ErrInvalidManifest,
+			)
+		}
+		if expandErr := ExpandRawManifest(raw, composeCtx); expandErr != nil {
+			return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, expandErr)
+		}
 	}
 	if len(raw.Messages) == 0 {
 		return nil, fmt.Errorf("%w: missing messages", prompty.ErrInvalidManifest)
@@ -119,22 +153,22 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		content := make([]prompty.TemplatePart, len(rm.Content))
 		for j, p := range rm.Content {
 			content[j] = prompty.TemplatePart{
-				Type:         p.Type,
-				Text:         p.Text,
-				MediaType:    p.MediaType,
-				MIMEType:     p.MIMEType,
-				URL:          p.URL,
-				CacheControl: copyCacheControl(p.CacheControl),
+				Type:        p.Type,
+				Text:        p.Text,
+				MediaType:   p.MediaType,
+				MIMEType:    p.MIMEType,
+				URL:         p.URL,
+				CachePolicy: copyCachePolicy(p.CachePolicy),
 			}
 		}
 		messages[i] = prompty.MessageTemplate{
-			Role:         prompty.Role(rm.Role),
-			LayerKind:    layerKind,
-			LayerID:      rm.LayerID,
-			Content:      content,
-			Optional:     rm.Optional,
-			CacheControl: copyCacheControl(rm.CacheControl),
-			Metadata:     messageMetadataFromRaw(rm.Metadata),
+			Role:        prompty.Role(rm.Role),
+			LayerKind:   layerKind,
+			LayerID:     rm.LayerID,
+			Content:     content,
+			Optional:    rm.Optional,
+			CachePolicy: copyCachePolicy(rm.CachePolicy),
+			Metadata:    messageMetadataFromRaw(rm.Metadata),
 		}
 	}
 	opts := []prompty.ChatTemplateOption{
@@ -144,12 +178,13 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 		opts = append(opts, prompty.WithInputSchema(raw.InputSchema))
 		if schemaMap, schemaErr := prompty.JSONDocumentAsMap(raw.InputSchema.Schema); schemaErr == nil &&
 			schemaMap != nil {
+			props, _ := schemaMap["properties"].(map[string]any)
 			if req, ok := schemaMap["required"]; ok {
 				if ss, err := cast.ToStringSlice(req); err == nil && len(ss) > 0 {
-					opts = append(opts, prompty.WithRequiredVars(ss))
+					opts = append(opts, prompty.WithRequiredVars(FilterEarlyRequired(ss, props)))
 				}
 			}
-			if props, _ := schemaMap["properties"].(map[string]any); props != nil {
+			if props != nil {
 				partial := make(map[string]any)
 				for k, v := range props {
 					if m, ok := v.(map[string]any); ok && m["default"] != nil {
@@ -207,7 +242,7 @@ func ParseFS(fsys fs.FS, name string, u Unmarshaler, opts ...ParseOption) (*prom
 	return Parse(data, u, opts...)
 }
 
-func copyCacheControl(in *prompty.CacheControl) *prompty.CacheControl {
+func copyCachePolicy(in *prompty.CachePolicy) *prompty.CachePolicy {
 	if in == nil {
 		return nil
 	}

@@ -1,0 +1,10 @@
+id: composed_child
+inputs:
+  clinic_name:
+    type: string
+layers:
+  - id: child_rules
+    role: system
+    content:
+      - type: text
+        text: "Child workspace rules."

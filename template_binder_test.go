@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBindTemplateVars_NilOptionalBool(t *testing.T) {
+func Test_bindTemplateVars_NilOptionalBool(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleUser, Content: TextContent("flag={{ .Input.flag }}")},
@@ -21,14 +21,14 @@ func TestBindTemplateVars_NilOptionalBool(t *testing.T) {
 	require.NoError(t, err)
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	vars, _, bindErr := BindTemplateVars(&Payload{})
+	vars, _, bindErr := bindTemplateVars(&Payload{})
 	require.NoError(t, bindErr)
 	require.Contains(t, vars, "flag")
 	assert.Equal(t, false, vars["flag"])
 	assert.Equal(t, "flag=false", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestBindTemplateVars_NilOptionalSlice(t *testing.T) {
+func Test_bindTemplateVars_NilOptionalSlice(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleUser, Content: TextContent("{{ range .Input.tags }}x{{ end }}done")},
@@ -41,14 +41,14 @@ func TestBindTemplateVars_NilOptionalSlice(t *testing.T) {
 	require.NoError(t, err)
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	vars, _, bindErr := BindTemplateVars(&Payload{})
+	vars, _, bindErr := bindTemplateVars(&Payload{})
 	require.NoError(t, bindErr)
 	require.Contains(t, vars, "tags")
 	assert.Equal(t, []string{}, vars["tags"])
 	assert.Equal(t, "done", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestBindTemplateVars_RecursiveNestedNilPointer(t *testing.T) {
+func Test_bindTemplateVars_RecursiveNestedNilPointer(t *testing.T) {
 	t.Parallel()
 	type UserDTO struct {
 		FirstName string `prompt:"first_name"`
@@ -56,7 +56,7 @@ func TestBindTemplateVars_RecursiveNestedNilPointer(t *testing.T) {
 	type Payload struct {
 		User *UserDTO `prompt:"user"`
 	}
-	vars, _, err := BindTemplateVars(&Payload{})
+	vars, _, err := bindTemplateVars(&Payload{})
 	require.NoError(t, err)
 	nested, ok := vars["user"].(map[string]any)
 	require.True(t, ok, "nested user must be map[string]any, got %T", vars["user"])
@@ -131,7 +131,7 @@ func TestPlanInputFrom_RegistryPathE2E(t *testing.T) {
 	assert.Equal(t, "ok", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestBindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
+func Test_bindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleUser, Content: TextContent("flag={{ .Input.flag }} tags={{ len .Input.tags }}")},
@@ -148,12 +148,12 @@ func TestBindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
 	assert.Equal(t, "flag=false tags=0", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestBindTemplateVars_PromptTagOverridesJson(t *testing.T) {
+func Test_bindTemplateVars_PromptTagOverridesJson(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		Value string `json:"wrong" prompt:"right"`
 	}
-	vars, _, err := BindTemplateVars(Payload{Value: "v"})
+	vars, _, err := bindTemplateVars(Payload{Value: "v"})
 	require.NoError(t, err)
 	require.Contains(t, vars, "right")
 	assert.Equal(t, "v", vars["right"])
@@ -161,23 +161,23 @@ func TestBindTemplateVars_PromptTagOverridesJson(t *testing.T) {
 	assert.False(t, hasWrong)
 }
 
-func TestBindTemplateVars_InterfaceNilPointer(t *testing.T) {
+func Test_bindTemplateVars_InterfaceNilPointer(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		Flag any `prompt:"flag"`
 	}
-	vars, _, err := BindTemplateVars(&Payload{Flag: (*bool)(nil)})
+	vars, _, err := bindTemplateVars(&Payload{Flag: (*bool)(nil)})
 	require.NoError(t, err)
 	require.Contains(t, vars, "flag")
 	assert.Equal(t, false, vars["flag"])
 }
 
-func TestBindTemplateVars_InterfaceFieldUnset(t *testing.T) {
+func Test_bindTemplateVars_InterfaceFieldUnset(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		Flag any `prompt:"flag"`
 	}
-	vars, _, err := BindTemplateVars(Payload{})
+	vars, _, err := bindTemplateVars(Payload{})
 	require.NoError(t, err)
 	require.Contains(t, vars, "flag")
 	assert.Nil(t, vars["flag"])
@@ -210,13 +210,13 @@ func TestPlanInputFrom_HistoryPointerElements(t *testing.T) {
 	assert.Equal(t, "hi", mustTextFromParts(t, exec.Messages[1].Content))
 }
 
-func TestBindTemplateVars_DuplicatePromptAliasFails(t *testing.T) {
+func Test_bindTemplateVars_DuplicatePromptAliasFails(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		A string `prompt:"x"`
 		B string `prompt:"x"`
 	}
-	_, _, err := BindTemplateVars(Payload{A: "1", B: "2"})
+	_, _, err := bindTemplateVars(Payload{A: "1", B: "2"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
@@ -300,7 +300,7 @@ func TestPlanInputFrom_HistorySpliceViaPlanInputFrom(t *testing.T) {
 	assert.Equal(t, "last", mustTextFromParts(t, exec.Messages[3].Content))
 }
 
-func TestBindTemplateVars_NestedTwoLevelsNil(t *testing.T) {
+func Test_bindTemplateVars_NestedTwoLevelsNil(t *testing.T) {
 	t.Parallel()
 	type Inner struct {
 		X string `prompt:"x"`
@@ -311,7 +311,7 @@ func TestBindTemplateVars_NestedTwoLevelsNil(t *testing.T) {
 	type Payload struct {
 		Middle *Middle `prompt:"middle"`
 	}
-	vars, _, err := BindTemplateVars(&Payload{})
+	vars, _, err := bindTemplateVars(&Payload{})
 	require.NoError(t, err)
 	middle, ok := vars["middle"].(map[string]any)
 	require.True(t, ok)
@@ -322,7 +322,7 @@ func TestBindTemplateVars_NestedTwoLevelsNil(t *testing.T) {
 	assert.Empty(t, inner["x"])
 }
 
-func TestBindTemplateVars_BindSliceOfPromptStructs(t *testing.T) {
+func Test_bindTemplateVars_BindSliceOfPromptStructs(t *testing.T) {
 	t.Parallel()
 	type Item struct {
 		Name string `prompt:"name"`
@@ -330,7 +330,7 @@ func TestBindTemplateVars_BindSliceOfPromptStructs(t *testing.T) {
 	type Payload struct {
 		Items []Item `prompt:"items"`
 	}
-	vars, _, err := BindTemplateVars(Payload{Items: []Item{{Name: "a"}, {Name: "b"}}})
+	vars, _, err := bindTemplateVars(Payload{Items: []Item{{Name: "a"}, {Name: "b"}}})
 	require.NoError(t, err)
 	items, ok := vars["items"].([]map[string]any)
 	require.True(t, ok)
@@ -339,7 +339,7 @@ func TestBindTemplateVars_BindSliceOfPromptStructs(t *testing.T) {
 	assert.Equal(t, "b", items[1]["name"])
 }
 
-func TestBindTemplateVars_NilOptionalsNeverErrMissingVariable(t *testing.T) {
+func Test_bindTemplateVars_NilOptionalsNeverErrMissingVariable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
@@ -376,13 +376,13 @@ func TestBindTemplateVars_NilOptionalsNeverErrMissingVariable(t *testing.T) {
 	}
 }
 
-func TestBindTemplateVars_NilOptionalScalars(t *testing.T) {
+func Test_bindTemplateVars_NilOptionalScalars(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		Label *string `prompt:"label"`
 		Count *int    `prompt:"count"`
 	}
-	vars, _, err := BindTemplateVars(&Payload{})
+	vars, _, err := bindTemplateVars(&Payload{})
 	require.NoError(t, err)
 	require.Contains(t, vars, "label")
 	require.Contains(t, vars, "count")
@@ -400,7 +400,7 @@ func TestBindTemplateVars_NilOptionalScalars(t *testing.T) {
 	assert.Equal(t, ":0", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestBindTemplateVars_NestedStructWithoutPromptFields(t *testing.T) {
+func Test_bindTemplateVars_NestedStructWithoutPromptFields(t *testing.T) {
 	t.Parallel()
 	type Inner struct {
 		X string
@@ -408,12 +408,12 @@ func TestBindTemplateVars_NestedStructWithoutPromptFields(t *testing.T) {
 	type Payload struct {
 		Inner Inner `prompt:"inner"`
 	}
-	_, _, err := BindTemplateVars(Payload{Inner: Inner{X: "x"}})
+	_, _, err := bindTemplateVars(Payload{Inner: Inner{X: "x"}})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }
 
-func TestBindTemplateVars_AnonymousEmbeddedStructFails(t *testing.T) {
+func Test_bindTemplateVars_AnonymousEmbeddedStructFails(t *testing.T) {
 	t.Parallel()
 	type Inner struct {
 		FirstName string `prompt:"first_name"`
@@ -421,7 +421,7 @@ func TestBindTemplateVars_AnonymousEmbeddedStructFails(t *testing.T) {
 	type Payload struct {
 		Inner
 	}
-	_, _, err := BindTemplateVars(Payload{})
+	_, _, err := bindTemplateVars(Payload{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }

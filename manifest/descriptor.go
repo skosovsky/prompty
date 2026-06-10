@@ -8,7 +8,7 @@ import (
 )
 
 // BuildDescriptorFromRaw builds metadata-only descriptor without compiling templates.
-func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error) { //nolint:gocognit
+func BuildDescriptorFromRaw(raw *RawManifest, po *parseOpts) (prompty.TemplateDescriptor, error) { //nolint:gocognit
 	if raw.LegacyModelConfig != nil || raw.LegacyInputSchema != nil {
 		return prompty.TemplateDescriptor{}, fmt.Errorf(
 			"%w: use model_options/inputs instead of model_config/input_schema",
@@ -18,40 +18,75 @@ func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error
 	if raw.ID == "" {
 		return prompty.TemplateDescriptor{}, fmt.Errorf("%w: missing id", prompty.ErrInvalidManifest)
 	}
-	for i := range raw.Messages {
-		if raw.Messages[i].LegacySourceID != "" {
+	working := raw
+	var owned RawManifest
+	//nolint:nestif // compose-aware descriptor mirrors BuildFromRaw expansion
+	if len(raw.Layers) > 0 || len(raw.Imports) > 0 {
+		composeCtx := ComposeContext{Ctx: nil, Capabilities: nil, Loader: nil}
+		if po != nil && po.compose != nil {
+			composeCtx = *po.compose
+		}
+		if composeCtx.Loader == nil {
+			return prompty.TemplateDescriptor{}, fmt.Errorf(
+				"%w: imports/layers require compose loader (use manifest.WithCompose)",
+				prompty.ErrInvalidManifest,
+			)
+		}
+		cloned, cloneErr := cloneRawManifest(raw)
+		if cloneErr != nil {
+			return prompty.TemplateDescriptor{}, cloneErr
+		}
+		if len(raw.Imports) > 0 && composeCtx.Capabilities == nil {
+			lctx := composeLoaderCtx(composeCtx)
+			effective, schemaErr := ResolveEffectiveInputSchema(lctx, cloned, composeCtx.Loader)
+			if schemaErr != nil {
+				return prompty.TemplateDescriptor{}, schemaErr
+			}
+			cloned.InputSchema = effective
+		}
+		if expandErr := ExpandRawManifest(cloned, composeCtx); expandErr != nil {
+			return prompty.TemplateDescriptor{}, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, expandErr)
+		}
+		owned = *cloned
+		working = &owned
+	}
+	for i := range working.Messages {
+		if working.Messages[i].LegacySourceID != "" {
 			return prompty.TemplateDescriptor{}, fmt.Errorf(
 				"%w: use layer_id instead of source_id",
 				prompty.ErrLegacyManifestVersion,
 			)
 		}
 	}
-	meta := metadataToPromptMetadata(raw)
+	meta := metadataToPromptMetadata(working)
 	desc := prompty.TemplateDescriptor{
 		Metadata:          meta,
-		ModelOptions:      raw.ModelOptions,
-		Tools:             raw.Tools,
-		RequiredTools:     normalizeRequiredTools(raw.RequiredTools),
+		ModelOptions:      working.ModelOptions,
+		Tools:             working.Tools,
+		RequiredTools:     normalizeRequiredTools(working.RequiredTools),
 		RequiredInputVars: nil,
-		InputSchema:       raw.InputSchema,
-		ResponseFormat:    raw.ResponseFormat,
+		InputSchema:       working.InputSchema,
+		ResponseFormat:    working.ResponseFormat,
 		LayerIDs:          nil,
 		Tags:              append([]string(nil), meta.Tags...),
 		Capabilities:      append([]string(nil), meta.Capabilities...),
 	}
-	//nolint:nestif // required-input extraction is intentionally sequential.
-	if raw.InputSchema != nil && len(raw.InputSchema.Schema) > 0 {
-		schemaMap, err := prompty.JSONDocumentAsMap(raw.InputSchema.Schema)
-		if err == nil && schemaMap != nil {
-			if req, ok := schemaMap["required"]; ok {
-				if ss, err := cast.ToStringSlice(req); err == nil {
-					desc.RequiredInputVars = ss
-				}
+	if working.InputSchema != nil && len(working.InputSchema.Schema) > 0 {
+		schemaMap, err := prompty.JSONDocumentAsMap(working.InputSchema.Schema)
+		if err != nil {
+			return prompty.TemplateDescriptor{}, fmt.Errorf("descriptor schema: %w", err)
+		}
+		props, _ := schemaMap["properties"].(map[string]any)
+		if req, ok := schemaMap["required"]; ok {
+			ss, reqErr := cast.ToStringSlice(req)
+			if reqErr != nil {
+				return prompty.TemplateDescriptor{}, fmt.Errorf("descriptor schema required: %w", reqErr)
 			}
+			desc.RequiredInputVars = FilterEarlyRequired(ss, props)
 		}
 	}
 	seen := make(map[string]bool)
-	for _, rm := range raw.Messages {
+	for _, rm := range working.Messages {
 		if rm.LayerID == "" {
 			continue
 		}
@@ -64,7 +99,7 @@ func BuildDescriptorFromRaw(raw *RawManifest) (prompty.TemplateDescriptor, error
 }
 
 // ParseDescriptor unmarshals manifest bytes and returns descriptor without template AST compilation.
-func ParseDescriptor(data []byte, u Unmarshaler) (prompty.TemplateDescriptor, error) {
+func ParseDescriptor(data []byte, u Unmarshaler, opts ...ParseOption) (prompty.TemplateDescriptor, error) {
 	if u == nil {
 		return prompty.TemplateDescriptor{}, prompty.ErrNoParser
 	}
@@ -72,5 +107,9 @@ func ParseDescriptor(data []byte, u Unmarshaler) (prompty.TemplateDescriptor, er
 	if err := u.Unmarshal(data, &raw); err != nil {
 		return prompty.TemplateDescriptor{}, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
-	return BuildDescriptorFromRaw(&raw)
+	var po parseOpts
+	for _, opt := range opts {
+		opt(&po)
+	}
+	return BuildDescriptorFromRaw(&raw, &po)
 }

@@ -14,7 +14,10 @@ func executeTemplatePlan(tpl *prompty.ChatPromptTemplate, input any) (*prompty.P
 		return nil, prompty.ErrInvalidPayload
 	}
 	if m, ok := input.(map[string]any); ok {
-		return prompty.NewRenderPlanFromMap(tpl, m).Execute(context.Background())
+		if len(m) > 0 {
+			return nil, prompty.ErrInvalidPayload
+		}
+		return prompty.NewRenderPlan(tpl).Execute(context.Background())
 	}
 	plan, err := prompty.NewRenderPlanFromStruct(tpl, input)
 	if err != nil {

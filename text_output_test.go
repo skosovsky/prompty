@@ -54,8 +54,7 @@ func TestRenderPlan_ExecuteAsText(t *testing.T) {
 			return NewResponse([]ContentPart{TextPart{Text: "ok"}}), nil
 		},
 	}
-	plan, err := newRenderPlanFromMap(tpl, map[string]any{"q": "hi"})
-	require.NoError(t, err)
+	plan := newRenderPlanFromMap(tpl, map[string]any{"q": "hi"})
 	text, err := plan.ExecuteAsText(context.Background(), invoker)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", text)

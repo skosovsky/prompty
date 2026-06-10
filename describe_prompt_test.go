@@ -35,3 +35,19 @@ messages:
 	assert.Equal(t, []string{"routing"}, desc.Tags)
 	assert.Equal(t, []string{"text-only", "low-latency"}, desc.Capabilities)
 }
+
+func TestDescribePrompt_ComposedConservative(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join("fileregistry", "testdata", "prompts")
+	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	described, err := reg.DescribePrompt(ctx, "composed_conditional_main")
+	require.NoError(t, err)
+	assert.Contains(t, described.LayerIDs, "child_rules")
+
+	resolved, err := reg.ResolveManifest(ctx, "composed_conditional_main")
+	require.NoError(t, err)
+	assert.Equal(t, resolved.LayerIDs, described.LayerIDs)
+}

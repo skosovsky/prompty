@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
+
+	"github.com/skosovsky/prompty/internal/late"
 )
 
 type renderContext struct {
@@ -18,8 +19,6 @@ type RenderPlan struct {
 	template       *ChatPromptTemplate
 	typedInput     any
 	lateVars       map[string]any
-	replacements   map[string]*RenderPlan
-	appends        map[string]*RenderPlan
 	responseFormat *SchemaDefinition
 }
 
@@ -28,8 +27,6 @@ func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 		template:       CloneTemplate(tpl),
 		typedInput:     typedInput,
 		lateVars:       map[string]any{},
-		replacements:   map[string]*RenderPlan{},
-		appends:        map[string]*RenderPlan{},
 		responseFormat: nil,
 	}
 }
@@ -39,10 +36,10 @@ func NewRenderPlan(tpl *ChatPromptTemplate) *RenderPlan {
 	return newRenderPlan(tpl, nil)
 }
 
-// NewRenderPlanFromMap builds a render plan from pre-shaped template variable maps.
-// It does not run BindTemplateVars; use for tests or advanced callers that already
+// newRenderPlanFromMap builds a render plan from pre-shaped template variable maps.
+// It does not run BindTemplateVars; test-only helper for callers that already
 // have template keys shaped for .Input.
-func NewRenderPlanFromMap(tpl *ChatPromptTemplate, vars map[string]any) *RenderPlan {
+func newRenderPlanFromMap(tpl *ChatPromptTemplate, vars map[string]any) *RenderPlan {
 	if vars == nil {
 		return NewRenderPlan(tpl)
 	}
@@ -72,6 +69,9 @@ func NewRenderPlanFromPlanInput(tpl *ChatPromptTemplate, input RegistryPlanInput
 	if input.isEmpty() {
 		return newRenderPlan(tpl, nil), nil
 	}
+	if err := validateEarlyInputFields(tpl.InputSchema, input.boundVars); err != nil {
+		return nil, err
+	}
 	return newRenderPlan(tpl, &boundPlanInput{
 		vars:    cloneMapAny(input.boundVars),
 		history: cloneMessages(input.chatHistory),
@@ -86,73 +86,39 @@ func (p *RenderPlan) Template() *ChatPromptTemplate {
 	return CloneTemplate(p.template)
 }
 
-// WithLateVariablesJSON returns a copy of the plan with merged late variables from a JSON object.
-func (p *RenderPlan) WithLateVariablesJSON(doc JSONDocument) (*RenderPlan, error) {
+// WithLateInput returns a copy of the plan with typed late variables bound from a struct (prompt tags).
+func (p *RenderPlan) WithLateInput(input any) (*RenderPlan, error) {
 	if p == nil {
 		return nil, ErrNilRenderPlan
 	}
-	vars, err := JSONDocumentAsMap(doc)
+	if input == nil {
+		return nil, errors.New("late input: payload is required")
+	}
+	vars, history, err := bindTemplateVars(input)
 	if err != nil {
-		return nil, fmt.Errorf("late variables: %w", err)
+		return nil, fmt.Errorf("late input: %w", err)
 	}
-	out := &RenderPlan{
-		template:       CloneTemplate(p.template),
-		typedInput:     p.typedInput,
-		lateVars:       cloneMapAny(p.lateVars),
-		replacements:   cloneLayerReplacements(p.replacements),
-		appends:        cloneLayerAppends(p.appends),
-		responseFormat: cloneSchemaDefinition(p.responseFormat),
+	if len(history) > 0 {
+		return nil, errors.New("late input: chat history must not be bound as late variables")
 	}
-	maps.Copy(out.lateVars, vars)
-	return out, nil
-}
-
-// ReplaceLayer returns a copy of the plan with source layer replacement registered.
-func (p *RenderPlan) ReplaceLayer(layerID string, newLayer *RenderPlan) (*RenderPlan, error) {
-	if p == nil {
-		return nil, ErrNilRenderPlan
+	if _, _, ok := structTypeOf(input); ok {
+		if err := validateLateInputStruct(input); err != nil {
+			return nil, fmt.Errorf("late input: %w", err)
+		}
 	}
-	if layerID == "" {
-		return nil, errors.New("replace layer: layerID is required")
-	}
-	if newLayer == nil {
-		return nil, errors.New("replace layer: newLayer is required")
-	}
-	if err := validateReplacementCompatibility(p.template, layerID, newLayer.template); err != nil {
+	if err := validateLateInputFields(p.template.InputSchema, vars); err != nil {
 		return nil, err
 	}
 	out := &RenderPlan{
 		template:       CloneTemplate(p.template),
 		typedInput:     p.typedInput,
 		lateVars:       cloneMapAny(p.lateVars),
-		replacements:   cloneLayerReplacements(p.replacements),
-		appends:        cloneLayerAppends(p.appends),
 		responseFormat: cloneSchemaDefinition(p.responseFormat),
 	}
-	out.replacements[layerID] = cloneRenderPlan(newLayer)
-	return out, nil
-}
-
-// AppendToLayer registers messages to append after the contiguous segment for layerID.
-func (p *RenderPlan) AppendToLayer(layerID string, layerPlan *RenderPlan) (*RenderPlan, error) {
-	if p == nil {
-		return nil, ErrNilRenderPlan
+	if vars == nil {
+		vars = make(map[string]any)
 	}
-	if layerID == "" {
-		return nil, errors.New("append layer: layerID is required")
-	}
-	if layerPlan == nil {
-		return nil, errors.New("append layer: layerPlan is required")
-	}
-	out := &RenderPlan{
-		template:       CloneTemplate(p.template),
-		typedInput:     p.typedInput,
-		lateVars:       cloneMapAny(p.lateVars),
-		replacements:   cloneLayerReplacements(p.replacements),
-		appends:        cloneLayerAppends(p.appends),
-		responseFormat: cloneSchemaDefinition(p.responseFormat),
-	}
-	out.appends[layerID] = cloneRenderPlan(layerPlan)
+	maps.Copy(out.lateVars, vars)
 	return out, nil
 }
 
@@ -169,8 +135,6 @@ func (p *RenderPlan) WithResponseFormatDefinition(def *SchemaDefinition) (*Rende
 		template:       CloneTemplate(p.template),
 		typedInput:     p.typedInput,
 		lateVars:       cloneMapAny(p.lateVars),
-		replacements:   cloneLayerReplacements(p.replacements),
-		appends:        cloneLayerAppends(p.appends),
 		responseFormat: rf,
 	}
 	return out, nil
@@ -208,49 +172,34 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 			return nil, validateErr
 		}
 	}
+	templateID := ""
+	if p.template != nil {
+		templateID = p.template.Metadata.ID
+	}
+	lateVars := ensureOptionalLateDefaults(p.template.InputSchema, p.lateVars)
+	if lateErr := validateRequiredLateVars(p.template.InputSchema, lateVars, templateID); lateErr != nil {
+		return nil, lateErr
+	}
 	ctxData := renderContext{
 		Input:    prepared.templateInput(),
-		LateVars: cloneMapAny(p.lateVars),
+		LateVars: cloneMapAny(lateVars),
 	}
 	exec, err := p.template.formatContext(ctxData)
 	if err != nil {
 		return nil, err
 	}
-	exec.Messages = spliceHistory(exec.Messages, cloneMessages(prepared.history))
-	if compErr := p.applyComposition(ctx, exec); compErr != nil {
-		return nil, compErr
-	}
-	applyManifestProvenance(exec, p.template.Metadata.ID)
+	rendered := exec.Messages
+	applyManifestProvenanceOnMessages(rendered, p.template.Metadata.ID)
+	exec.Messages = spliceHistory(rendered, cloneMessages(prepared.history))
+	p.applyRuntimeOverrides(exec)
 	return exec, nil
 }
 
-func (p *RenderPlan) applyComposition(ctx context.Context, exec *PromptExecution) error {
-	if len(p.replacements) > 0 {
-		replacementMessages := make(map[string][]ChatMessage, len(p.replacements))
-		for layerID, replacementPlan := range p.replacements {
-			replacementExec, execErr := replacementPlan.Execute(ctx)
-			if execErr != nil {
-				return execErr
-			}
-			replacementMessages[layerID] = cloneMessages(replacementExec.Messages)
-		}
-		exec.Messages = applyLayerReplacements(exec.Messages, replacementMessages)
+func (p *RenderPlan) applyRuntimeOverrides(exec *PromptExecution) {
+	if p == nil || exec == nil || p.responseFormat == nil {
+		return
 	}
-	if len(p.appends) > 0 {
-		appendMessages := make(map[string][]ChatMessage, len(p.appends))
-		for layerID, appendPlan := range p.appends {
-			appendExec, appendErr := appendPlan.Execute(ctx)
-			if appendErr != nil {
-				return appendErr
-			}
-			appendMessages[layerID] = cloneMessages(appendExec.Messages)
-		}
-		exec.Messages = applyLayerAppends(exec.Messages, appendMessages)
-	}
-	if p.responseFormat != nil {
-		exec.ResponseFormat = cloneSchemaDefinition(p.responseFormat)
-	}
-	return nil
+	exec.ResponseFormat = cloneSchemaDefinition(p.responseFormat)
 }
 
 type preparedInput struct {
@@ -312,6 +261,14 @@ func validateRequiredInputVars(tpl *ChatPromptTemplate, input map[string]any) er
 	}
 	maps.Copy(merged, input)
 	required := mergeRequiredVars(tpl.RequiredVars, tpl.requiredFromAST)
+	if tpl.InputSchema != nil {
+		doc, err := JSONDocumentAsMap(tpl.InputSchema.Schema)
+		if err != nil {
+			return fmt.Errorf("validate required input vars: %w", err)
+		}
+		props, _ := doc["properties"].(map[string]any)
+		required = late.FilterEarlyRequired(required, props)
+	}
 	for _, name := range required {
 		if _, ok := merged[name]; ok {
 			continue
@@ -325,162 +282,17 @@ func validateRequiredInputVars(tpl *ChatPromptTemplate, input map[string]any) er
 	return nil
 }
 
-func cloneLayerReplacements(in map[string]*RenderPlan) map[string]*RenderPlan {
-	if in == nil {
-		return map[string]*RenderPlan{}
-	}
-	out := make(map[string]*RenderPlan, len(in))
-	for key, replacementPlan := range in {
-		out[key] = cloneRenderPlan(replacementPlan)
-	}
-	return out
-}
-
-func cloneLayerAppends(in map[string]*RenderPlan) map[string]*RenderPlan {
-	if in == nil {
-		return map[string]*RenderPlan{}
-	}
-	out := make(map[string]*RenderPlan, len(in))
-	for key, appendPlan := range in {
-		out[key] = cloneRenderPlan(appendPlan)
-	}
-	return out
-}
-
-func cloneRenderPlan(in *RenderPlan) *RenderPlan {
-	if in == nil {
-		return nil
-	}
-	return &RenderPlan{
-		template:       CloneTemplate(in.template),
-		typedInput:     in.typedInput,
-		lateVars:       cloneMapAny(in.lateVars),
-		replacements:   cloneLayerReplacements(in.replacements),
-		appends:        cloneLayerAppends(in.appends),
-		responseFormat: cloneSchemaDefinition(in.responseFormat),
-	}
-}
-
-func applyLayerAppends(messages []ChatMessage, appends map[string][]ChatMessage) []ChatMessage {
-	if len(appends) == 0 {
-		return messages
-	}
-	out := make([]ChatMessage, 0, len(messages))
-	for i := 0; i < len(messages); {
-		msg := messages[i]
-		layerID := msg.LayerID
-		if layerID == "" {
-			out = append(out, cloneChatMessage(msg))
-			i++
-			continue
-		}
-		segment := []ChatMessage{cloneChatMessage(msg)}
-		i++
-		for i < len(messages) && messages[i].LayerID == layerID {
-			segment = append(segment, cloneChatMessage(messages[i]))
-			i++
-		}
-		out = append(out, segment...)
-		if extra, ok := appends[layerID]; ok {
-			out = append(out, cloneMessages(extra)...)
-		}
-	}
-	return out
-}
-
-func applyManifestProvenance(exec *PromptExecution, manifestID string) {
-	if exec == nil || manifestID == "" {
+func applyManifestProvenanceOnMessages(messages []ChatMessage, manifestID string) {
+	if manifestID == "" {
 		return
 	}
-	for i := range exec.Messages {
-		if exec.Messages[i].ManifestID == "" {
-			exec.Messages[i].ManifestID = manifestID
-		}
-		if exec.Messages[i].LayerRef.ManifestID == "" {
-			exec.Messages[i].LayerRef.ManifestID = manifestID
-		}
-		if exec.Messages[i].LayerID != "" && exec.Messages[i].LayerRef.LayerID == "" {
-			exec.Messages[i].LayerRef.LayerID = exec.Messages[i].LayerID
-		}
-	}
-}
-
-func applyLayerReplacements(
-	messages []ChatMessage,
-	replacements map[string][]ChatMessage,
-) []ChatMessage {
-	if len(replacements) == 0 {
-		return messages
-	}
-	out := make([]ChatMessage, 0, len(messages))
-	for i := 0; i < len(messages); {
-		msg := messages[i]
-		layerID := msg.LayerID
-		if layerID == "" {
-			out = append(out, cloneChatMessage(msg))
-			i++
+	for i := range messages {
+		if messages[i].Provenance == nil {
+			messages[i].Provenance = &MessageProvenance{ManifestID: manifestID, LayerID: ""}
 			continue
 		}
-		repl, ok := replacements[layerID]
-		if !ok {
-			out = append(out, cloneChatMessage(msg))
-			i++
-			continue
-		}
-		// Replace each contiguous source segment exactly once.
-		out = append(out, cloneMessages(repl)...)
-		i++
-		for i < len(messages) && messages[i].LayerID == layerID {
-			i++
+		if messages[i].Provenance.ManifestID == "" {
+			messages[i].Provenance.ManifestID = manifestID
 		}
 	}
-	return out
-}
-
-func validateReplacementCompatibility(
-	base *ChatPromptTemplate,
-	layerID string,
-	replacement *ChatPromptTemplate,
-) error {
-	if base == nil || replacement == nil {
-		return errors.New("replace layer: both base and replacement templates are required")
-	}
-
-	var baseKinds []LayerKind
-	for _, message := range base.Messages {
-		if message.LayerID == layerID {
-			baseKinds = append(baseKinds, message.LayerKind)
-		}
-	}
-	if len(baseKinds) == 0 {
-		return errors.New("replace layer: layerID was not found in base template")
-	}
-
-	var replacementKinds []LayerKind
-	for _, message := range replacement.Messages {
-		if message.LayerKind != "" {
-			replacementKinds = append(replacementKinds, message.LayerKind)
-		}
-	}
-	replacementKinds = slices.Compact(replacementKinds)
-
-	var requiredKinds []LayerKind
-	for _, kind := range baseKinds {
-		if kind != "" {
-			requiredKinds = append(requiredKinds, kind)
-		}
-	}
-	requiredKinds = slices.Compact(requiredKinds)
-	if len(requiredKinds) == 0 || len(replacementKinds) == 0 {
-		return nil
-	}
-
-	for _, replacementKind := range replacementKinds {
-		if !slices.Contains(requiredKinds, replacementKind) {
-			return errors.New(
-				"replace layer: replacement layer kind is incompatible with source layer",
-			)
-		}
-	}
-	return nil
 }

@@ -1,0 +1,11 @@
+id: late_binding_agent
+inputs:
+  user_query:
+    type: string
+    required: true
+  patient_dossier:
+    type: string
+    late: true
+messages:
+  - role: user
+    content: "{{ .Input.user_query }} {{ .LateVars.patient_dossier }}"

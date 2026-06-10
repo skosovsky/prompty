@@ -127,30 +127,103 @@ func (r *CachedRegistry) DescribePrompt(ctx context.Context, id string) (prompty
 	)
 }
 
+// RecommendManifestDescriptor delegates checkpoint recommendation to the base registry when supported.
+func (r *CachedRegistry) RecommendManifestDescriptor(
+	ctx context.Context,
+	id string,
+) (prompty.ManifestDescriptor, error) {
+	if reg, ok := r.base.(prompty.ManifestCheckpointRegistry); ok {
+		return reg.RecommendManifestDescriptor(ctx, id)
+	}
+	return prompty.ManifestDescriptor{}, errors.New(
+		"remoteregistry: base registry does not support RecommendManifestDescriptor",
+	)
+}
+
+// VerifyManifestDescriptor delegates checkpoint verification to the base registry when supported.
+func (r *CachedRegistry) VerifyManifestDescriptor(
+	ctx context.Context,
+	desc prompty.ManifestDescriptor,
+) error {
+	if reg, ok := r.base.(prompty.ManifestCheckpointRegistry); ok {
+		return reg.VerifyManifestDescriptor(ctx, desc)
+	}
+	return errors.New("remoteregistry: base registry does not support VerifyManifestDescriptor")
+}
+
+var _ prompty.ManifestCheckpointRegistry = (*CachedRegistry)(nil)
+
 // ResolveManifest delegates metadata resolution to the base registry when supported.
 func (r *CachedRegistry) ResolveManifest(
 	ctx context.Context,
 	id string,
+	opts ...prompty.ResolveManifestOption,
 ) (prompty.TemplateDescriptor, error) {
 	if resolver, ok := r.base.(prompty.ManifestResolver); ok {
-		return resolver.ResolveManifest(ctx, id)
+		return resolver.ResolveManifest(ctx, id, opts...)
 	}
 	return prompty.TemplateDescriptor{}, errors.New(
 		"remoteregistry: base registry does not implement ManifestResolver",
 	)
 }
 
-// Plan returns a deferred render plan using cached template data.
+// Plan returns a deferred render plan. Compose manifests and explicit runtime caps bypass template cache.
 func (r *CachedRegistry) Plan(
 	ctx context.Context,
 	id string,
 	input prompty.RegistryPlanInput,
 ) (*prompty.RenderPlan, error) {
+	if r.shouldBypassTemplateCache(ctx, id, input) {
+		return r.base.Plan(ctx, id, input)
+	}
 	tpl, err := r.loadTemplate(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	return prompty.NewRenderPlanFromPlanInput(tpl, input)
+}
+
+type composeCacheHint interface {
+	KnownManifestUsesCompose(id string) (bool, bool)
+}
+
+func (r *CachedRegistry) shouldBypassTemplateCache(
+	ctx context.Context,
+	id string,
+	input prompty.RegistryPlanInput,
+) bool {
+	if input.ComposeCapabilities() != nil {
+		return true
+	}
+	if hint, ok := r.base.(composeCacheHint); ok {
+		if known, ok := hint.KnownManifestUsesCompose(id); ok && known {
+			return true
+		}
+	}
+	if checker, ok := r.base.(prompty.ManifestComposeChecker); ok {
+		uses, err := checker.ManifestUsesComposeE(ctx, id)
+		if err != nil {
+			return true // conservative bypass on corrupt peek
+		}
+		return uses
+	}
+	return false
+}
+
+func (r *CachedRegistry) manifestUsesCompose(ctx context.Context, id string) bool {
+	if hint, ok := r.base.(composeCacheHint); ok {
+		if known, ok := hint.KnownManifestUsesCompose(id); ok && known {
+			return true
+		}
+	}
+	if checker, ok := r.base.(prompty.ManifestComposeChecker); ok {
+		uses, err := checker.ManifestUsesComposeE(ctx, id)
+		if err != nil {
+			return true
+		}
+		return uses
+	}
+	return false
 }
 
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
@@ -167,10 +240,15 @@ func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	}
 	inFlight.err = err
 
+	skipCache := false
+	if inFlight.err == nil {
+		skipCache = r.manifestUsesCompose(inFlight.ctx, id)
+	}
+
 	r.mu.Lock()
 	if current, exists := r.inflight[id]; exists && current == inFlight {
 		delete(r.inflight, id)
-		if inFlight.err == nil {
+		if inFlight.err == nil && !skipCache {
 			stored := prompty.CloneTemplate(inFlight.tpl)
 			expiresAt := time.Now().Add(r.ttl)
 			if r.ttl <= 0 {

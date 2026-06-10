@@ -35,6 +35,8 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		Tools           []prompty.ToolDefinition  `json:"tools"`
 		ResponseFormat  *prompty.SchemaDefinition `json:"response_format"`
 		Messages        []RawMessage              `json:"messages"`
+		Imports         []RawImport               `json:"imports,omitempty"`
+		Layers          []RawLayer                `json:"layers,omitempty"`
 		LegacyModelRaw  map[string]any            `json:"model_config"`
 		LegacyInputs    *prompty.SchemaDefinition `json:"input_schema"`
 	}
@@ -61,6 +63,8 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 	raw.Tools = wire.Tools
 	raw.ResponseFormat = wire.ResponseFormat
 	raw.Messages = wire.Messages
+	raw.Imports = wire.Imports
+	raw.Layers = wire.Layers
 	raw.LegacyModelConfig = wire.LegacyModelRaw
 	raw.LegacyInputSchema = wire.LegacyInputs
 

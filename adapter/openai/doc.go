@@ -2,6 +2,7 @@
 // Translate returns *openai.ChatCompletionNewParams; ParseResponse expects *openai.ChatCompletion.
 //
 // MediaPart: routed by MIME type (image/audio/file). image URL parts use detail "auto".
-// CacheControl is accepted and ignored by this adapter in current OpenAI APIs.
+// CachePolicy is accepted and ignored by this adapter in current OpenAI APIs.
+// MessageProvenance is not mapped to the OpenAI provider API.
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 package openai

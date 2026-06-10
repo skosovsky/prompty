@@ -24,6 +24,38 @@ func TestDecodeInputs_EmptyMapReturnsEmptyObjectSchema(t *testing.T) {
 	assert.Empty(t, props)
 }
 
+func TestDecodeInputs_LateFlagPreservesMetadata(t *testing.T) {
+	t.Parallel()
+	schema, err := DecodeInputs(map[string]any{
+		"patient_dossier": map[string]any{
+			"type": "string",
+			"late": true,
+		},
+		"user_name": map[string]any{
+			"type":     "string",
+			"required": true,
+		},
+	})
+	require.NoError(t, err)
+	doc, err := prompty.JSONDocumentAsMap(schema.Schema)
+	require.NoError(t, err)
+	props, ok := doc["properties"].(map[string]any)
+	require.True(t, ok)
+	lateProp, ok := props["patient_dossier"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, lateProp["late"])
+	assert.Equal(t, true, lateProp["x-prompty-late"])
+}
+
+func TestDecodeInputs_LateMustBeBoolean(t *testing.T) {
+	t.Parallel()
+	_, err := DecodeInputs(map[string]any{
+		"bad": map[string]any{"type": "string", "late": "yes"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "late must be boolean")
+}
+
 func TestDecodeInputs_NilReturnsNilSchema(t *testing.T) {
 	t.Parallel()
 	schema, err := DecodeInputs(nil)

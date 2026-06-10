@@ -5,8 +5,9 @@
 // PDF document blocks (base64 or URL), and text/plain to plain-text document blocks
 // (base64 only). Data takes precedence over URL. MIMEType is required; adapter does not
 // synthesize default MIME values from MediaType.
-// CacheControl: message-level cache is the default for all generated blocks; part-level
+// CachePolicy: message-level cache is the default for all generated blocks; part-level
 // cache overrides message-level cache. Anthropic currently supports type "ephemeral".
+// MessageProvenance is not mapped to the Anthropic provider API (observability/wire only).
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 //
 // Tool schema: only "properties" and "required" from ToolDefinition.Parameters are mapped

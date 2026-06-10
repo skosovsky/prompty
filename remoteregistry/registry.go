@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
@@ -11,12 +12,13 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry            = (*Registry)(nil)
-	_ prompty.Lister              = (*Registry)(nil)
-	_ prompty.Statter             = (*Registry)(nil)
-	_ prompty.ManifestResolver    = (*Registry)(nil)
-	_ prompty.ManifestBytesReader = (*Registry)(nil)
-	_ prompty.PromptDescriber     = (*Registry)(nil)
+	_ prompty.Registry               = (*Registry)(nil)
+	_ prompty.Lister                 = (*Registry)(nil)
+	_ prompty.Statter                = (*Registry)(nil)
+	_ prompty.ManifestResolver       = (*Registry)(nil)
+	_ prompty.ManifestBytesReader    = (*Registry)(nil)
+	_ prompty.ManifestComposeChecker = (*Registry)(nil)
+	_ prompty.PromptDescriber        = (*Registry)(nil)
 )
 
 // Registry loads templates via Fetcher without internal cache/state.
@@ -26,6 +28,9 @@ type Registry struct {
 	fetcher Fetcher
 	env     string // e.g. "prod"; Fetch tries id.env first
 	parser  manifest.Unmarshaler
+
+	composeMu   sync.RWMutex
+	composeByID map[string]bool // last fetch: manifest declares imports/layers
 }
 
 // New creates a stateless Registry. Panics if fetcher is nil.
@@ -52,24 +57,6 @@ func fetchCandidateIDs(id, env string) []string {
 	return []string{id}
 }
 
-// loadTemplate returns a template by id (env-qualified when configured).
-func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
-	if err := ValidateID(id); err != nil {
-		return nil, err
-	}
-	candidates := fetchCandidateIDs(id, r.env)
-	for _, cid := range candidates {
-		tpl, err := r.getTemplateByID(ctx, cid)
-		if err == nil {
-			return tpl, nil
-		}
-		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
-}
-
 // ReadManifestBytes fetches raw manifest bytes for digest computation.
 func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
 	if err := ValidateID(id); err != nil {
@@ -78,6 +65,9 @@ func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, er
 	for _, cid := range fetchCandidateIDs(id, r.env) {
 		data, err := r.fetcher.Fetch(ctx, cid)
 		if err == nil {
+			if uses, peekErr := manifest.PeekComposeFieldsE(data, r.parser); peekErr == nil {
+				r.recordComposeFlag(id, uses)
+			}
 			return data, nil
 		}
 		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
@@ -87,15 +77,44 @@ func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, er
 	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+// LoadByID implements manifest.ManifestLoader for declarative composition.
+func (r *Registry) LoadByID(ctx context.Context, id string) (*manifest.RawManifest, error) {
+	data, err := r.ReadManifestBytes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var raw manifest.RawManifest
+	if unmarshalErr := r.parser.Unmarshal(data, &raw); unmarshalErr != nil {
+		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, unmarshalErr)
+	}
+	return &raw, nil
+}
+
 // ResolveManifest fetches manifest bytes and returns metadata without compiling template AST.
-func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+func (r *Registry) ResolveManifest(
+	ctx context.Context,
+	id string,
+	opts ...prompty.ResolveManifestOption,
+) (prompty.TemplateDescriptor, error) {
 	if err := ValidateID(id); err != nil {
 		return prompty.TemplateDescriptor{}, err
 	}
+	ro := prompty.ApplyResolveManifestOptions(opts)
 	for _, cid := range fetchCandidateIDs(id, r.env) {
 		data, err := r.fetcher.Fetch(ctx, cid)
 		if err == nil {
-			return manifest.ParseDescriptor(data, r.parser)
+			if uses, peekErr := manifest.PeekComposeFieldsE(data, r.parser); peekErr == nil {
+				r.recordComposeFlag(id, uses)
+			}
+			parseOpts := []manifest.ParseOption{manifest.WithCompose(manifest.ComposeContext{
+				Ctx:          ctx,
+				Capabilities: nil,
+				Loader:       r,
+			})}
+			if ro.ComposeCapsSet {
+				parseOpts = append(parseOpts, manifest.WithComposeCapabilities(ro.ComposeCapabilities))
+			}
+			return manifest.ParseDescriptor(data, r.parser, parseOpts...)
 		}
 		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
 			return prompty.TemplateDescriptor{}, err
@@ -105,38 +124,129 @@ func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.Temp
 }
 
 // DescribePrompt returns manifest metadata for routing and introspection.
+// It resolves without compose capabilities, so conditional imports/layers use conservative defaults.
+// Pass prompty.WithResolveComposeCapabilities to ResolveManifest when runtime caps are known.
 func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	return r.ResolveManifest(ctx, id)
 }
 
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.loadTemplate(ctx, id)
+	tpl, err := r.templateForPlan(ctx, id, input.ComposeCapabilities())
 	if err != nil {
 		return nil, err
 	}
 	return prompty.NewRenderPlanFromPlanInput(tpl, input)
 }
 
-func (r *Registry) getTemplateByID(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
+func (r *Registry) recordComposeFlag(logicalID string, usesCompose bool) {
+	r.composeMu.Lock()
+	defer r.composeMu.Unlock()
+	if r.composeByID == nil {
+		r.composeByID = make(map[string]bool)
+	}
+	r.composeByID[logicalID] = usesCompose
+}
+
+// ManifestUsesComposeE reports whether manifest bytes declare imports or layers.
+// Always fetches current bytes; does not use cached compose hints (avoids stale flags after remote changes).
+func (r *Registry) ManifestUsesComposeE(ctx context.Context, id string) (bool, error) {
+	if err := ValidateID(id); err != nil {
+		return false, err
+	}
+	return r.probeComposeFieldsE(ctx, id)
+}
+
+func (r *Registry) probeComposeFieldsE(ctx context.Context, id string) (bool, error) {
+	var lastErr error
+	for _, cid := range fetchCandidateIDs(id, r.env) {
+		data, err := r.fetcher.Fetch(ctx, cid)
+		if err == nil {
+			uses, peekErr := manifest.PeekComposeOrError(data, r.parser)
+			if peekErr != nil {
+				return false, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+			}
+			return uses, nil
+		}
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return false, lastErr
+	}
+	return false, nil
+}
+
+// KnownManifestUsesCompose returns a recorded compose flag without fetching.
+func (r *Registry) KnownManifestUsesCompose(id string) (bool, bool) {
+	r.composeMu.RLock()
+	defer r.composeMu.RUnlock()
+	if r.composeByID == nil {
+		return false, false
+	}
+	v, ok := r.composeByID[id]
+	return v, ok
+}
+
+func (r *Registry) getTemplateByIDWithCaps(
+	ctx context.Context,
+	fetchID string,
+	logicalID string,
+	caps map[string]any,
+) (*prompty.ChatPromptTemplate, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	data, err := r.fetcher.Fetch(ctx, id)
+	data, err := r.fetcher.Fetch(ctx, fetchID)
 	if err != nil {
 		return nil, err
 	}
-	tpl, err := manifest.Parse(data, r.parser)
+	usesCompose, peekErr := manifest.PeekComposeFieldsE(data, r.parser)
+	if peekErr != nil {
+		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+	}
+	r.recordComposeFlag(logicalID, usesCompose)
+	var opts []manifest.ParseOption
+	if usesCompose {
+		opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
+			Ctx:          ctx,
+			Loader:       r,
+			Capabilities: caps,
+		}))
+	}
+	tpl, err := manifest.Parse(data, r.parser, opts...)
 	if err != nil {
 		return nil, err
 	}
 	tpl.Metadata.Environment = ""
 	if statter, ok := r.fetcher.(Statter); ok {
-		if info, statErr := statter.Stat(ctx, id); statErr == nil && info.Version != "" && tpl.Metadata.Version == "" {
+		if info, statErr := statter.Stat(ctx, fetchID); statErr == nil &&
+			info.Version != "" && tpl.Metadata.Version == "" {
 			tpl.Metadata.Version = info.Version
 		}
 	}
 	return prompty.CloneTemplate(tpl), nil
+}
+
+func (r *Registry) templateForPlan(
+	ctx context.Context,
+	id string,
+	caps map[string]any,
+) (*prompty.ChatPromptTemplate, error) {
+	if err := ValidateID(id); err != nil {
+		return nil, err
+	}
+	for _, cid := range fetchCandidateIDs(id, r.env) {
+		tpl, err := r.getTemplateByIDWithCaps(ctx, cid, id, caps)
+		if err == nil {
+			return tpl, nil
+		}
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, prompty.ErrTemplateNotFound) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
 // List returns ids from Fetcher if it implements Lister.
@@ -171,3 +281,15 @@ func (r *Registry) Close() error {
 	}
 	return nil
 }
+
+// RecommendManifestDescriptor selects single-file or compose-closure checkpoint descriptor.
+func (r *Registry) RecommendManifestDescriptor(ctx context.Context, id string) (prompty.ManifestDescriptor, error) {
+	return manifest.CheckpointRecommend(ctx, id, r, r.parser)
+}
+
+// VerifyManifestDescriptor verifies a checkpoint descriptor against current manifest bytes.
+func (r *Registry) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
+	return manifest.CheckpointVerify(ctx, desc, r, r.parser)
+}
+
+var _ prompty.ManifestCheckpointRegistry = (*Registry)(nil)

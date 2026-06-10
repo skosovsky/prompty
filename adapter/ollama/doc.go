@@ -4,6 +4,8 @@
 // MediaPart: Ollama chat request uses an image-only field (Images), so only image/* user media
 // is accepted. For URL-only media (no Data), callers must resolve media before Translate.
 // Data takes precedence over URL.
+// CachePolicy is accepted and ignored by this adapter in current Ollama APIs.
+// MessageProvenance is not mapped to the Ollama provider API.
 // ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
 // ToolCall Index is assigned by the adapter from the order of ToolCallPart in the message Content.
 // Model options (temperature, max_tokens, top_p, stop) are set on the request's Options map.

@@ -87,11 +87,19 @@ func cloneSchemaDefinition(schema *SchemaDefinition) *SchemaDefinition {
 	}
 }
 
-func cloneCacheControl(cache *CacheControl) *CacheControl {
+func cloneCachePolicy(cache *CachePolicy) *CachePolicy {
 	if cache == nil {
 		return nil
 	}
 	out := *cache
+	return &out
+}
+
+func cloneMessageProvenance(p *MessageProvenance) *MessageProvenance {
+	if p == nil {
+		return nil
+	}
+	out := *p
 	return &out
 }
 
@@ -117,13 +125,13 @@ func cloneMessageTemplates(messages []MessageTemplate) []MessageTemplate {
 	out := make([]MessageTemplate, len(messages))
 	for i, msg := range messages {
 		out[i] = MessageTemplate{
-			Role:         msg.Role,
-			Content:      slicesCloneTemplateParts(msg.Content),
-			Optional:     msg.Optional,
-			CacheControl: cloneCacheControl(msg.CacheControl),
-			Metadata:     CloneJSONDocument(msg.Metadata),
-			LayerID:      msg.LayerID,
-			LayerKind:    msg.LayerKind,
+			Role:        msg.Role,
+			Content:     slicesCloneTemplateParts(msg.Content),
+			Optional:    msg.Optional,
+			CachePolicy: cloneCachePolicy(msg.CachePolicy),
+			Metadata:    CloneJSONDocument(msg.Metadata),
+			LayerID:     msg.LayerID,
+			LayerKind:   msg.LayerKind,
 		}
 	}
 	return out
@@ -136,7 +144,7 @@ func slicesCloneTemplateParts(parts []TemplatePart) []TemplatePart {
 	out := make([]TemplatePart, len(parts))
 	for i := range parts {
 		out[i] = parts[i]
-		out[i].CacheControl = cloneCacheControl(parts[i].CacheControl)
+		out[i].CachePolicy = cloneCachePolicy(parts[i].CachePolicy)
 	}
 	return out
 }
@@ -148,14 +156,12 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 	out := make([]ChatMessage, len(messages))
 	for i, msg := range messages {
 		out[i] = ChatMessage{
-			Role:         msg.Role,
-			Content:      cloneContentParts(msg.Content),
-			CacheControl: cloneCacheControl(msg.CacheControl),
-			Metadata:     CloneJSONDocument(msg.Metadata),
-			LayerID:      msg.LayerID,
-			LayerKind:    msg.LayerKind,
-			LayerRef:     msg.LayerRef,
-			ManifestID:   msg.ManifestID,
+			Role:        msg.Role,
+			Content:     cloneContentParts(msg.Content),
+			CachePolicy: cloneCachePolicy(msg.CachePolicy),
+			Provenance:  cloneMessageProvenance(msg.Provenance),
+			Metadata:    CloneJSONDocument(msg.Metadata),
+			LayerKind:   msg.LayerKind,
 		}
 	}
 	return out
@@ -179,18 +185,18 @@ func cloneContentParts(parts []ContentPart) []ContentPart {
 func cloneContentPart(part ContentPart) ContentPart {
 	switch x := part.(type) {
 	case TextPart:
-		x.CacheControl = cloneCacheControl(x.CacheControl)
+		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
 		return x
 	case *TextPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
-		cp.CacheControl = cloneCacheControl(cp.CacheControl)
+		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	case MediaPart:
 		x.Data = bytes.Clone(x.Data)
-		x.CacheControl = cloneCacheControl(x.CacheControl)
+		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
 		return x
 	case *MediaPart:
 		if x == nil {
@@ -198,31 +204,31 @@ func cloneContentPart(part ContentPart) ContentPart {
 		}
 		cp := *x
 		cp.Data = bytes.Clone(cp.Data)
-		cp.CacheControl = cloneCacheControl(cp.CacheControl)
+		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	case ReasoningPart:
-		x.CacheControl = cloneCacheControl(x.CacheControl)
+		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
 		return x
 	case *ReasoningPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
-		cp.CacheControl = cloneCacheControl(cp.CacheControl)
+		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	case ToolCallPart:
-		x.CacheControl = cloneCacheControl(x.CacheControl)
+		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
 		return x
 	case *ToolCallPart:
 		if x == nil {
 			return x
 		}
 		cp := *x
-		cp.CacheControl = cloneCacheControl(cp.CacheControl)
+		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	case ToolResultPart:
 		x.Content = cloneContentParts(x.Content)
-		x.CacheControl = cloneCacheControl(x.CacheControl)
+		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
 		return x
 	case *ToolResultPart:
 		if x == nil {
@@ -230,7 +236,7 @@ func cloneContentPart(part ContentPart) ContentPart {
 		}
 		cp := *x
 		cp.Content = cloneContentParts(cp.Content)
-		cp.CacheControl = cloneCacheControl(cp.CacheControl)
+		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	default:
 		return part

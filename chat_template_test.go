@@ -294,14 +294,14 @@ func TestValidateVariables_MediaPart(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	err = tpl.ValidateVariables(map[string]any{
+	err = tpl.validateVariables(map[string]any{
 		"kind": "image",
 		"mime": "image/png",
 		"url":  "https://example.com/img.png",
 	})
 	require.NoError(t, err)
 
-	err = tpl.ValidateVariables(map[string]any{
+	err = tpl.validateVariables(map[string]any{
 		"kind": "image",
 		"mime": "image/png",
 	})
@@ -320,7 +320,7 @@ func TestValidateVariables_MediaPart_MissingTypeAndUnknownMIME(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	err = tpl.ValidateVariables(map[string]any{
+	err = tpl.validateVariables(map[string]any{
 		"mime": "application/octet-stream",
 		"url":  "https://example.com/file.bin",
 	})
@@ -617,7 +617,7 @@ func TestValidateVariables_Ok(t *testing.T) {
 		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
-	err = tpl.ValidateVariables(map[string]any{"user_name": "Alice"})
+	err = tpl.validateVariables(map[string]any{"user_name": "Alice"})
 	require.NoError(t, err)
 }
 
@@ -627,7 +627,7 @@ func TestValidateVariables_MissingVar(t *testing.T) {
 		{Role: "system", Content: TextContent("Hello, {{ .Input.user_name }}!")},
 	})
 	require.NoError(t, err)
-	err = tpl.ValidateVariables(map[string]any{})
+	err = tpl.validateVariables(map[string]any{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTemplateRender)
 }
@@ -646,6 +646,28 @@ func TestRenderPlan_OptionalMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	assert.Equal(t, "System", exec.Messages[0].Content[0].(TextPart).Text)
+}
+
+func TestPlanInputFrom_FormatMessagesField_SplicesHistory(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleSystem, Content: TextContent("sys")},
+		{Role: RoleUser, Content: TextContent("{{ .Input.query }}")},
+	})
+	require.NoError(t, err)
+	history := []ChatMessage{{Role: RoleUser, Content: []ContentPart{TextPart{Text: "prior"}}}}
+	input, err := PlanInputFrom(struct {
+		Query       string        `prompt:"query"`
+		ChatHistory []ChatMessage `prompt:"chat_history"`
+	}{Query: "now", ChatHistory: history})
+	require.NoError(t, err)
+	plan, err := NewRenderPlanFromPlanInput(tpl, input)
+	require.NoError(t, err)
+	exec, err := plan.Execute(context.Background())
+	require.NoError(t, err)
+	require.Len(t, exec.Messages, 3)
+	assert.Equal(t, "prior", exec.Messages[1].Content[0].(TextPart).Text)
+	assert.Equal(t, "now", exec.Messages[2].Content[0].(TextPart).Text)
 }
 
 func TestRenderPlan_ChatHistory_Splice(t *testing.T) {
@@ -994,14 +1016,14 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
 			{
-				Role:         RoleSystem,
-				Content:      []ContentPart{TextPart{Text: "First system."}},
-				CacheControl: &CacheControl{Type: "ephemeral"},
+				Role:        RoleSystem,
+				Content:     []ContentPart{TextPart{Text: "First system."}},
+				CachePolicy: &CachePolicy{Type: "ephemeral"},
 			},
 			{
-				Role:         RoleSystem,
-				Content:      []ContentPart{TextPart{Text: "Second system."}},
-				CacheControl: &CacheControl{Type: "ephemeral"},
+				Role:        RoleSystem,
+				Content:     []ContentPart{TextPart{Text: "Second system."}},
+				CachePolicy: &CachePolicy{Type: "ephemeral"},
 			},
 			{Role: RoleUser, Content: []ContentPart{TextPart{Text: "User query"}}},
 		},
@@ -1014,12 +1036,12 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	assert.Equal(t, "First system.", out.Messages[0].Content[0].(TextPart).Text)
 	assert.Equal(t, "\n\n", out.Messages[0].Content[1].(TextPart).Text)
 	assert.Equal(t, "Second system.", out.Messages[0].Content[2].(TextPart).Text)
-	require.NotNil(t, out.Messages[0].CacheControl)
-	assert.Equal(t, "ephemeral", out.Messages[0].CacheControl.Type)
+	require.NotNil(t, out.Messages[0].CachePolicy)
+	assert.Equal(t, "ephemeral", out.Messages[0].CachePolicy.Type)
 	assert.Equal(t, "User query", out.Messages[1].Content[0].(TextPart).Text)
 }
 
-func TestPromptExecution_Normalize_CacheControlNilWins(t *testing.T) {
+func TestPromptExecution_Normalize_CachePolicyNilWins(t *testing.T) {
 	t.Parallel()
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
@@ -1028,20 +1050,20 @@ func TestPromptExecution_Normalize_CacheControlNilWins(t *testing.T) {
 				Content: []ContentPart{TextPart{Text: "First system."}},
 			},
 			{
-				Role:         RoleDeveloper,
-				Content:      []ContentPart{TextPart{Text: "Second system."}},
-				CacheControl: &CacheControl{Type: "ephemeral"},
+				Role:        RoleDeveloper,
+				Content:     []ContentPart{TextPart{Text: "Second system."}},
+				CachePolicy: &CachePolicy{Type: "ephemeral"},
 			},
 			{
-				Role:         RoleDeveloper,
-				Content:      []ContentPart{TextPart{Text: "Third system."}},
-				CacheControl: &CacheControl{Type: "ephemeral"},
+				Role:        RoleDeveloper,
+				Content:     []ContentPart{TextPart{Text: "Third system."}},
+				CachePolicy: &CachePolicy{Type: "ephemeral"},
 			},
 		},
 	}
 	out := exec.Normalize()
 	require.Len(t, out.Messages, 1)
-	assert.Nil(t, out.Messages[0].CacheControl)
+	assert.Nil(t, out.Messages[0].CachePolicy)
 }
 
 func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {

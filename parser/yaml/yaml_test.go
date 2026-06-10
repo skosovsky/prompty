@@ -288,7 +288,9 @@ messages:
 	assert.Equal(t, "image/png", tpl.Messages[0].Content[1].MIMEType)
 	assert.Equal(t, "{{ .Input.img }}", tpl.Messages[0].Content[1].URL)
 
-	exec, err := executeTemplatePlan(tpl, map[string]any{"img": "https://example.com/img.png"})
+	exec, err := executeTemplatePlan(tpl, struct {
+		Img string `prompt:"img"`
+	}{Img: "https://example.com/img.png"})
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
 	require.Len(t, exec.Messages[0].Content, 2)
@@ -298,19 +300,19 @@ messages:
 	assert.Equal(t, "https://example.com/img.png", media.URL)
 }
 
-func TestUnmarshal_CacheControl_MessageAndPart(t *testing.T) {
+func TestUnmarshal_CachePolicy_MessageAndPart(t *testing.T) {
 	t.Parallel()
 	yamlData := []byte(`
-id: yaml_cache_control
+id: yaml_cache_policy
 version: "1"
 messages:
   - role: system
-    cache_control:
+    cache_policy:
       type: ephemeral
     content:
       - type: text
         text: "Policy"
-        cache_control:
+        cache_policy:
           type: ephemeral
   - role: user
     content: "Hi"
@@ -319,11 +321,11 @@ messages:
 	err := New().Unmarshal(yamlData, &raw)
 	require.NoError(t, err)
 	require.Len(t, raw.Messages, 2)
-	require.NotNil(t, raw.Messages[0].CacheControl)
-	assert.Equal(t, "ephemeral", raw.Messages[0].CacheControl.Type)
+	require.NotNil(t, raw.Messages[0].CachePolicy)
+	assert.Equal(t, "ephemeral", raw.Messages[0].CachePolicy.Type)
 	require.Len(t, raw.Messages[0].Content, 1)
-	require.NotNil(t, raw.Messages[0].Content[0].CacheControl)
-	assert.Equal(t, "ephemeral", raw.Messages[0].Content[0].CacheControl.Type)
+	require.NotNil(t, raw.Messages[0].Content[0].CachePolicy)
+	assert.Equal(t, "ephemeral", raw.Messages[0].Content[0].CachePolicy.Type)
 }
 
 func TestUnmarshal_LegacyCacheFieldRejected(t *testing.T) {

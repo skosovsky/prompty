@@ -14,20 +14,50 @@ var validate = validator.New()
 
 type PromptCatalog interface {
 	Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error)
+	RenderComposedChild(ctx context.Context, input ComposedChildInput) (*prompty.RenderPlan, error)
+	RenderComposedConditionalMain(ctx context.Context, input ComposedConditionalMainInput) (*prompty.RenderPlan, error)
+	RenderComposedMain(ctx context.Context, input ComposedMainInput) (*prompty.RenderPlan, error)
+	RenderLateBindingAgent(ctx context.Context, input LateBindingAgentInput) (*prompty.RenderPlan, error)
+	RenderLateRequiredAgent(ctx context.Context, input LateRequiredAgentInput) (*prompty.RenderPlan, error)
 	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
 }
 
 type promptCatalog struct {
-	registry     prompty.DescribingRegistry
-	SupportAgent *SupportAgentPrompt
+	registry                prompty.DescribingRegistry
+	ComposedChild           *ComposedChildPrompt
+	ComposedConditionalMain *ComposedConditionalMainPrompt
+	ComposedMain            *ComposedMainPrompt
+	LateBindingAgent        *LateBindingAgentPrompt
+	LateRequiredAgent       *LateRequiredAgentPrompt
+	SupportAgent            *SupportAgentPrompt
 }
 
 func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog {
-	return &promptCatalog{registry: r, SupportAgent: &SupportAgentPrompt{registry: r}}
+	return &promptCatalog{registry: r, ComposedChild: &ComposedChildPrompt{registry: r}, ComposedConditionalMain: &ComposedConditionalMainPrompt{registry: r}, ComposedMain: &ComposedMainPrompt{registry: r}, LateBindingAgent: &LateBindingAgentPrompt{registry: r}, LateRequiredAgent: &LateRequiredAgentPrompt{registry: r}, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
 func (c *promptCatalog) Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error) {
 	return c.registry.DescribePrompt(ctx, string(id))
+}
+
+func (c *promptCatalog) RenderComposedChild(ctx context.Context, input ComposedChildInput) (*prompty.RenderPlan, error) {
+	return c.ComposedChild.Render(ctx, input)
+}
+
+func (c *promptCatalog) RenderComposedConditionalMain(ctx context.Context, input ComposedConditionalMainInput) (*prompty.RenderPlan, error) {
+	return c.ComposedConditionalMain.Render(ctx, input)
+}
+
+func (c *promptCatalog) RenderComposedMain(ctx context.Context, input ComposedMainInput) (*prompty.RenderPlan, error) {
+	return c.ComposedMain.Render(ctx, input)
+}
+
+func (c *promptCatalog) RenderLateBindingAgent(ctx context.Context, input LateBindingAgentInput) (*prompty.RenderPlan, error) {
+	return c.LateBindingAgent.Render(ctx, input)
+}
+
+func (c *promptCatalog) RenderLateRequiredAgent(ctx context.Context, input LateRequiredAgentInput) (*prompty.RenderPlan, error) {
+	return c.LateRequiredAgent.Render(ctx, input)
 }
 
 func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
@@ -35,5 +65,5 @@ func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAge
 }
 
 func AllPromptIDs() []PromptID {
-	return []PromptID{SupportAgent}
+	return []PromptID{ComposedChild, ComposedConditionalMain, ComposedMain, LateBindingAgent, LateRequiredAgent, SupportAgent}
 }

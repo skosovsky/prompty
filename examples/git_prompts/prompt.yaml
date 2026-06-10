@@ -1,5 +1,12 @@
 id: demo
 version: "1"
+inputs:
+  topic:
+    type: string
+    required: true
+  question:
+    type: string
+    required: true
 messages:
   - role: system
     content: "You answer briefly. Topic: {{ .Input.topic }}."

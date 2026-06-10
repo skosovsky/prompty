@@ -81,28 +81,28 @@ func TestTranslate_CacheControlIgnored(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:         prompty.RoleSystem,
-				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Role:        prompty.RoleSystem,
+				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
-						Text:         "System",
-						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+						Text:        "System",
+						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 					},
 				},
 			},
 			{
-				Role:         prompty.RoleUser,
-				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Role:        prompty.RoleUser,
+				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
-						Text:         "Look",
-						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+						Text:        "Look",
+						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 					},
 					prompty.MediaPart{
-						MediaType:    "image",
-						MIMEType:     "image/png",
-						Data:         []byte{0x89, 0x50, 0x4e, 0x47},
-						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+						MediaType:   "image",
+						MIMEType:    "image/png",
+						Data:        []byte{0x89, 0x50, 0x4e, 0x47},
+						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 					},
 				},
 			},

@@ -1,5 +1,12 @@
 id: support_agent
 version: "1"
+inputs:
+  user_name:
+    type: string
+    required: true
+  query:
+    type: string
+    required: true
 messages:
   - role: system
     content: "You are a support agent. Be concise. User: {{ .Input.user_name }}."

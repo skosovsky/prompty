@@ -126,10 +126,9 @@ if err != nil {
 	return err
 }
 
-lateVars, _ := prompty.MapToJSONDocument(map[string]any{
-	"allowed_tools": []string{"get_order_status"},
-})
-plan, err = plan.WithLateVariablesJSON(lateVars)
+plan, err = plan.WithLate(struct {
+	AllowedTools []string `prompt:"allowed_tools"`
+}{AllowedTools: []string{"get_order_status"}})
 if err != nil {
 	return err
 }
@@ -146,7 +145,7 @@ resp, err := invoker.Execute(ctx, exec)
 
 1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed `RenderXxx`.
 2. Runtime рендер: `catalog.RenderXxx(...)` -> `*prompty.RenderPlan`.
-3. Композиция (опционально): `WithLateVariablesJSON`, `ReplaceLayer`, `AppendToLayer`, `WithResponseFormatDefinition`.
+3. Композиция (опционально): декларативные `imports`/`layers` в манифесте; late — `WithLate` / `WithLateInput`; `WithResponseFormatDefinition`.
 4. Выполнение плана: `plan.Execute(ctx)` -> `*prompty.PromptExecution`.
 5. Вызов модели: `invoker.Execute(ctx, exec)`.
 
@@ -166,14 +165,15 @@ for _, id := range AllPromptIDs() {
 desc, err := catalog.Descriptor(ctx, prompts.SupportAgent)
 ```
 
-Скомпонуйте слои через `ReplaceLayer` или дополните хвост через `AppendToLayer`, затем выполните единый план:
+Композиция слоёв — в YAML/JSON манифесте (`imports`, `layers`, `import_ref`). Runtime capabilities для `condition.match` передавайте через `prompty.PlanInputWithCapabilities`:
 
 ```go
-basePlan, _ := catalog.RenderSalesPersona(ctx, SalesPersonaInput{Tone: "formal"})
-rulesPlan, _ := catalog.RenderClinicRules(ctx, ClinicRulesInput{})
-
-composed, _ := basePlan.ReplaceLayer("rules", rulesPlan)
-exec, _ := composed.Execute(ctx)
+input, _ := prompty.PlanInputFrom(MainAgentInput{Query: "hi"})
+input = prompty.PlanInputWithCapabilities(input, map[string]any{
+	"capabilities": map[string]any{"workspace_enabled": true},
+})
+plan, _ := reg.Plan(ctx, "main_agent", input)
+exec, _ := plan.Execute(ctx)
 resp, err := invoker.Execute(ctx, exec)
 ```
 
@@ -215,10 +215,22 @@ go get github.com/go-playground/validator/v10
 При изменении генератора обновите эталонные файлы в `testdata/`:
 
 ```bash
-go test ./cmd/prompty-gen/gen -run TestGenerate_Golden -args -golden=./cmd/prompty-gen/testdata
+cd cmd/prompty-gen/gen && go test -run TestGenerate_GoldenCompare -- -golden=../testdata
 ```
 
-Файлы `shared_gen.go.golden`, `support_agent_gen.go.golden`, `no_vars_gen.go.golden`, `consts_gen.go.golden` будут перезаписаны. Без `-golden` тест `TestGenerate_Golden` пропускается; `TestGenerate_GoldenCompare` проверяет соответствие сгенерированного кода golden-файлам.
+Golden files in `cmd/prompty-gen/testdata/`:
+
+- `shared_gen.go.golden`
+- `support_agent_gen.go.golden`
+- `consts_gen.go.golden`
+- `no_vars_gen.go.golden`
+- `late_binding_agent_gen.go.golden`
+- `late_required_agent_gen.go.golden`
+- `composed_main_gen.go.golden`
+- `composed_child_gen.go.golden`
+- `composed_conditional_main_gen.go.golden`
+
+Without `-golden`, `TestGenerate_GoldenCompare` verifies generated output against these files.
 
 ## External DoD validation (kosmify-prompts)
 

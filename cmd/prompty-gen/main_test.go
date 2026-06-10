@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,7 +13,23 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/cmd/prompty-gen/gen"
+	"github.com/skosovsky/prompty/manifest"
 )
+
+type manifestMemoryLoader struct {
+	byID map[string]*manifest.RawManifest
+}
+
+func (l *manifestMemoryLoader) LoadByID(_ context.Context, id string) (*manifest.RawManifest, error) {
+	if l == nil || l.byID == nil {
+		return nil, fmt.Errorf("compose: unknown manifest id %q", id)
+	}
+	raw, ok := l.byID[id]
+	if !ok || raw == nil {
+		return nil, fmt.Errorf("compose: unknown manifest id %q", id)
+	}
+	return raw, nil
+}
 
 const legacyClientTypeName = "LLM" + "Client"
 
@@ -162,7 +181,7 @@ packages:
 
 func TestLoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
 	manifestPath := "testdata/doctor_agent_required_tools.yaml"
-	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"}, nil)
 	if err != nil {
 		t.Fatalf("loadSpec: %v", err)
 	}
@@ -192,7 +211,7 @@ func TestLoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
 
 func TestLoadSpec_RequiredToolsAbsentReturnsEmptySlice(t *testing.T) {
 	manifestPath := "testdata/prompts/support_agent.yaml"
-	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"}, nil)
 	if err != nil {
 		t.Fatalf("loadSpec: %v", err)
 	}
@@ -204,9 +223,84 @@ func TestLoadSpec_RequiredToolsAbsentReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestLoadSpec_ComposedManifest_UnionSchema(t *testing.T) {
+	mainPath := "testdata/prompts/composed_main.yaml"
+	childPath := "testdata/prompts/composed_child.yaml"
+	loader := &manifestMemoryLoader{
+		byID: map[string]*manifest.RawManifest{},
+	}
+	for _, p := range []string{mainPath, childPath} {
+		raw, err := readRawManifestFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		loader.byID[raw.ID] = raw
+	}
+	spec, err := loadSpec(mainPath, ".", []string{"testdata/prompts"}, loader)
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	doc, err := prompty.JSONDocumentAsMap(spec.InputSchema.Schema)
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	if _, ok := props["query"]; !ok {
+		t.Fatal("expected query in merged schema")
+	}
+	if _, ok := props["clinic_name"]; !ok {
+		t.Fatal("expected clinic_name from composed_child import")
+	}
+}
+
+func TestLoadSpec_LateRequired_FromYAML(t *testing.T) {
+	manifestPath := "testdata/prompts/late_required_agent.yaml"
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata/prompts"}, nil)
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	doc, err := prompty.JSONDocumentAsMap(spec.InputSchema.Schema)
+	if err != nil {
+		t.Fatalf("schema map: %v", err)
+	}
+	required, _ := doc["required"].([]any)
+	hasPatient := false
+	for _, r := range required {
+		if s, ok := r.(string); ok && s == "patient_dossier" {
+			hasPatient = true
+		}
+	}
+	if !hasPatient {
+		t.Fatalf("patient_dossier must be required in schema: %#v", required)
+	}
+}
+
+func TestLoadSpec_LateBinding_FromYAML(t *testing.T) {
+	manifestPath := "testdata/prompts/late_binding_agent.yaml"
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata/prompts"}, nil)
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	if spec.InputSchema == nil {
+		t.Fatal("expected input schema")
+	}
+	doc, err := prompty.JSONDocumentAsMap(spec.InputSchema.Schema)
+	if err != nil {
+		t.Fatalf("schema map: %v", err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	lateProp, _ := props["patient_dossier"].(map[string]any)
+	if lateProp["x-prompty-late"] != true {
+		t.Fatalf("patient_dossier must be late: %#v", lateProp)
+	}
+	if _, ok := props["user_query"]; !ok {
+		t.Fatal("expected user_query in schema")
+	}
+}
+
 func TestLoadSpec_DualSchemaFixture(t *testing.T) {
 	manifestPath := "testdata/dual_schema_manifest.yaml"
-	spec, err := loadSpec(manifestPath, ".", []string{"testdata"})
+	spec, err := loadSpec(manifestPath, ".", []string{"testdata"}, nil)
 	if err != nil {
 		t.Fatalf("loadSpec: %v", err)
 	}
@@ -564,5 +658,43 @@ packages:
 	}
 	if !strings.Contains(err.Error(), "reserved") && !strings.Contains(err.Error(), "Prompts") {
 		t.Errorf("expected reserved/prompts error, got: %v", err)
+	}
+}
+
+func TestReadRawManifestFile_CorruptYAML(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte("id: bad\nlayers: [unclosed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readRawManifestFile(path)
+	if err == nil {
+		t.Fatal("expected corrupt manifest error")
+	}
+	if !errors.Is(err, prompty.ErrInvalidManifest) {
+		t.Fatalf("expected ErrInvalidManifest, got %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("expected path in error, got %v", err)
+	}
+}
+
+func TestReadRawManifestFile_EmptyFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.yaml")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readRawManifestFile(path)
+	if err == nil {
+		t.Fatal("expected empty manifest error")
+	}
+	if !errors.Is(err, prompty.ErrInvalidManifest) {
+		t.Fatalf("expected ErrInvalidManifest, got %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("expected path in error, got %v", err)
 	}
 }

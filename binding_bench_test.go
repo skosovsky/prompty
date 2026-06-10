@@ -19,7 +19,7 @@ func BenchmarkStructBindingCacheHit(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		vars, _, err := BindTemplateVars(&input)
+		vars, _, err := bindTemplateVars(&input)
 		if err != nil {
 			b.Fatal(err)
 		}

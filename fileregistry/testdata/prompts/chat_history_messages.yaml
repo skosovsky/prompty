@@ -1,0 +1,13 @@
+id: chat_history_messages
+inputs:
+  query:
+    type: string
+    required: true
+  chat_history:
+    type: array
+    format: messages
+messages:
+  - role: system
+    content: "sys"
+  - role: user
+    content: "{{ .Input.query }}"

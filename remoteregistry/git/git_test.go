@@ -409,7 +409,7 @@ func TestFetcher_ListIDs_IncludesJson(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, ids, "json_only")
 	require.Contains(t, ids, "mixed")
-	// Fetch and List should be consistent: GetTemplate works for listed ids
+	// Fetch and List should be consistent: Plan works for listed ids
 	reg, err := remoteregistry.New(g, remoteregistry.WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	plan, err := reg.Plan(ctx, "json_only", prompty.RegistryPlanInput{})

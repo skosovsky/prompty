@@ -85,13 +85,97 @@ func TestTypePurity_RenderPlanTypedConstructorsCompile(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTypePurity_ChatMessageUsesTypedProvenanceAndCachePolicy(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeFor[ChatMessage]()
+	_, hasProvenance := typ.FieldByName("Provenance")
+	assert.True(t, hasProvenance)
+	provField, _ := typ.FieldByName("Provenance")
+	assert.Equal(t, reflect.Pointer, provField.Type.Kind())
+	elem := provField.Type.Elem()
+	assert.Equal(t, "MessageProvenance", elem.Name())
+
+	_, hasCachePolicy := typ.FieldByName("CachePolicy")
+	assert.True(t, hasCachePolicy)
+
+	for _, removed := range []string{"LayerID", "ManifestID", "LayerRef", "CacheControl"} {
+		_, ok := typ.FieldByName(removed)
+		assert.False(t, ok, "ChatMessage must not expose %s after Task33", removed)
+	}
+}
+
+func TestTypePurity_BindTemplateVarsNotExported(t *testing.T) {
+	t.Parallel()
+	_, ok := reflect.TypeFor[struct{}]().MethodByName("BindTemplateVars")
+	assert.False(t, ok)
+	rt := reflect.TypeFor[func(v any) (map[string]any, []ChatMessage, error)]()
+	assert.Equal(t, reflect.Func, rt.Kind())
+	assert.Empty(t, rt.Name(), "bindTemplateVars must remain unexported")
+}
+
+func TestTypePurity_NoCompiledPromptInRootPackage(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "github.com/skosovsky/prompty", reflect.TypeFor[Registry]().PkgPath())
+	for _, rt := range []reflect.Type{
+		reflect.TypeFor[Registry](),
+		reflect.TypeFor[ManifestDescriptor](),
+		reflect.TypeFor[*RenderPlan](),
+		reflect.TypeFor[PromptExecution](),
+	} {
+		assert.NotEqual(t, "CompiledPrompt", rt.Name())
+	}
+	_, hasCompiledPromptType := reflect.TypeFor[Registry]().MethodByName("CompiledPrompt")
+	assert.False(t, hasCompiledPromptType)
+}
+
 func TestTypePurity_RenderPlanStrictMethodsOnly(t *testing.T) {
 	t.Parallel()
 	rt := reflect.TypeFor[*RenderPlan]()
 	_, ok := rt.MethodByName("WithLateVariables")
-	assert.False(t, ok, "WithLateVariables(map) removed; use WithLateVariablesJSON")
+	assert.False(t, ok, "WithLateVariables(map) removed; use WithLateInput")
+	_, ok = rt.MethodByName("WithLateVariablesJSON")
+	assert.False(t, ok, "WithLateVariablesJSON removed; use WithLateInput")
+	_, ok = rt.MethodByName("WithLateInput")
+	assert.True(t, ok, "WithLateInput must be available for typed late binding")
+	_, ok = rt.MethodByName("AppendToLayer")
+	assert.False(t, ok, "AppendToLayer removed; use manifest layers/imports")
+	_, ok = rt.MethodByName("ReplaceLayer")
+	assert.False(t, ok, "ReplaceLayer removed; use manifest layers/imports")
+	_, ok = rt.MethodByName("Compile")
+	assert.False(t, ok, "Compile removed from public API; use RenderPlan.Execute + ManifestDescriptor")
 	_, ok = rt.MethodByName("WithResponseFormat")
 	assert.False(t, ok, "WithResponseFormat(any) removed; use WithResponseFormatDefinition/FromStruct")
+}
+
+func TestTypePurity_ManifestCheckpointRegistryEmbedsRegistryAndBytesReader(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeFor[ManifestCheckpointRegistry]()
+	require.Equal(t, reflect.Interface, typ.Kind())
+
+	methods := map[string]bool{
+		"Plan":                        false,
+		"ReadManifestBytes":           false,
+		"RecommendManifestDescriptor": false,
+		"VerifyManifestDescriptor":    false,
+	}
+	for m := range typ.Methods() {
+		methods[m.Name] = true
+	}
+	for name, found := range methods {
+		assert.True(t, found, "ManifestCheckpointRegistry must declare %s", name)
+	}
+	assert.Equal(t, 4, typ.NumMethod())
+}
+
+func TestTypePurity_HistoryProvenanceContractSmoke(t *testing.T) {
+	t.Parallel()
+	prov := &MessageProvenance{
+		ManifestID: "prior-session",
+		LayerID:    "user_turn",
+	}
+	require.NotNil(t, prov)
+	assert.Equal(t, "prior-session", prov.ManifestID)
+	assert.Equal(t, "user_turn", prov.LayerID)
 }
 
 func mustTemplate(t *testing.T, body string) *ChatPromptTemplate {

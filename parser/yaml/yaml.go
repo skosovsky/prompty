@@ -14,23 +14,23 @@ import (
 )
 
 type rawContentPart struct {
-	Type         string                `yaml:"type"`
-	Text         string                `yaml:"text,omitempty"`
-	MediaType    string                `yaml:"media_type,omitempty"`
-	MIMEType     string                `yaml:"mime_type,omitempty"`
-	URL          string                `yaml:"url,omitempty"`
-	CacheControl *prompty.CacheControl `yaml:"cache_control,omitempty"`
+	Type        string               `yaml:"type"`
+	Text        string               `yaml:"text,omitempty"`
+	MediaType   string               `yaml:"media_type,omitempty"`
+	MIMEType    string               `yaml:"mime_type,omitempty"`
+	URL         string               `yaml:"url,omitempty"`
+	CachePolicy *prompty.CachePolicy `yaml:"cache_policy,omitempty"`
 }
 
 type rawContentSlice []rawContentPart
 
 var rawContentPartAllowedFields = map[string]struct{}{
-	"type":          {},
-	"text":          {},
-	"media_type":    {},
-	"mime_type":     {},
-	"url":           {},
-	"cache_control": {},
+	"type":         {},
+	"text":         {},
+	"media_type":   {},
+	"mime_type":    {},
+	"url":          {},
+	"cache_policy": {},
 }
 
 func (r *rawContentSlice) UnmarshalYAML(value *yaml.Node) error {
@@ -71,19 +71,39 @@ func validateRawContentPartFields(node *yaml.Node) error {
 }
 
 type rawMessage struct {
-	Role         string                `yaml:"role"`
-	LayerKind    prompty.LayerKind     `yaml:"layer_kind,omitempty"`
-	LayerID      string                `yaml:"layer_id,omitempty"`
-	Content      rawContentSlice       `yaml:"content"`
-	Optional     bool                  `yaml:"optional"`
-	CacheControl *prompty.CacheControl `yaml:"cache_control,omitempty"`
-	Metadata     map[string]any        `yaml:"metadata,omitempty"`
+	Role        string               `yaml:"role"`
+	LayerKind   prompty.LayerKind    `yaml:"layer_kind,omitempty"`
+	LayerID     string               `yaml:"layer_id,omitempty"`
+	Content     rawContentSlice      `yaml:"content"`
+	Optional    bool                 `yaml:"optional"`
+	CachePolicy *prompty.CachePolicy `yaml:"cache_policy,omitempty"`
+	Metadata    map[string]any       `yaml:"metadata,omitempty"`
 }
 
 type rawTool struct {
 	Name        string         `yaml:"name"`
 	Description string         `yaml:"description"`
 	Parameters  map[string]any `yaml:"parameters"`
+}
+
+type rawCondition struct {
+	Match map[string]any `yaml:"match,omitempty"`
+}
+
+type rawImport struct {
+	ID        string        `yaml:"id"`
+	Condition *rawCondition `yaml:"condition,omitempty"`
+}
+
+type rawLayer struct {
+	ID          string               `yaml:"id"`
+	Role        string               `yaml:"role,omitempty"`
+	LayerKind   prompty.LayerKind    `yaml:"layer_kind,omitempty"`
+	ImportRef   string               `yaml:"import_ref,omitempty"`
+	Content     rawContentSlice      `yaml:"content,omitempty"`
+	Optional    bool                 `yaml:"optional,omitempty"`
+	CachePolicy *prompty.CachePolicy `yaml:"cache_policy,omitempty"`
+	Metadata    map[string]any       `yaml:"metadata,omitempty"`
 }
 
 type fileManifest struct {
@@ -98,6 +118,8 @@ type fileManifest struct {
 	Tools           []rawTool         `yaml:"tools"`
 	ResponseFormat  map[string]any    `yaml:"response_format"`
 	Messages        []rawMessage      `yaml:"messages"`
+	Imports         []rawImport       `yaml:"imports,omitempty"`
+	Layers          []rawLayer        `yaml:"layers,omitempty"`
 	LegacyModelRaw  map[string]any    `yaml:"model_config"`
 	LegacyInputsRaw map[string]any    `yaml:"input_schema"`
 }
@@ -173,6 +195,8 @@ func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
 }
 
 // Unmarshal parses YAML into manifest.RawManifest.
+//
+//nolint:gocognit,funlen // maps fileManifest wire fields into RawManifest
 func (p *Parser) Unmarshal(in []byte, out any) error {
 	var fm fileManifest
 	dec := yaml.NewDecoder(bytes.NewReader(in))
@@ -231,34 +255,63 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	if fm.LegacyInputsRaw != nil {
 		raw.LegacyInputSchema = rawToSchemaDefinition(fm.LegacyInputsRaw)
 	}
+	raw.Imports = make([]manifest.RawImport, len(fm.Imports))
+	for i := range fm.Imports {
+		imp := &fm.Imports[i]
+		entry := manifest.RawImport{ID: imp.ID, Condition: nil}
+		if imp.Condition != nil {
+			entry.Condition = &manifest.RawCondition{Match: normalizeMap(imp.Condition.Match)}
+		}
+		raw.Imports[i] = entry
+	}
+	raw.Layers = make([]manifest.RawLayer, len(fm.Layers))
+	for i := range fm.Layers {
+		layer := &fm.Layers[i]
+		raw.Layers[i] = manifest.RawLayer{
+			ID: layer.ID, Role: layer.Role, LayerKind: layer.LayerKind, ImportRef: layer.ImportRef,
+			Content: make([]manifest.RawContentPart, len(layer.Content)), Optional: layer.Optional,
+			CachePolicy: copyCachePolicy(layer.CachePolicy), Metadata: normalizeMap(layer.Metadata),
+		}
+		for j := range layer.Content {
+			c := &layer.Content[j]
+			raw.Layers[i].Content[j] = manifest.RawContentPart{
+				Type:        c.Type,
+				Text:        c.Text,
+				MediaType:   c.MediaType,
+				MIMEType:    c.MIMEType,
+				URL:         c.URL,
+				CachePolicy: copyCachePolicy(c.CachePolicy),
+			}
+		}
+	}
 	raw.Messages = make([]manifest.RawMessage, len(fm.Messages))
 	for i := range fm.Messages {
 		m := &fm.Messages[i]
 		raw.Messages[i] = manifest.RawMessage{
-			Role:         m.Role,
-			LayerKind:    m.LayerKind,
-			LayerID:      m.LayerID,
-			Optional:     m.Optional,
-			CacheControl: copyCacheControl(m.CacheControl),
-			Metadata:     m.Metadata,
+			Role:        m.Role,
+			LayerKind:   m.LayerKind,
+			LayerID:     m.LayerID,
+			Optional:    m.Optional,
+			CachePolicy: copyCachePolicy(m.CachePolicy),
+			Metadata:    m.Metadata,
 		}
 		raw.Messages[i].Content = make([]manifest.RawContentPart, len(m.Content))
 		for j := range m.Content {
 			c := &m.Content[j]
 			raw.Messages[i].Content[j] = manifest.RawContentPart{
-				Type:         c.Type,
-				Text:         c.Text,
-				MediaType:    c.MediaType,
-				MIMEType:     c.MIMEType,
-				URL:          c.URL,
-				CacheControl: copyCacheControl(c.CacheControl),
+				Type:        c.Type,
+				Text:        c.Text,
+				MediaType:   c.MediaType,
+				MIMEType:    c.MIMEType,
+				URL:         c.URL,
+				CachePolicy: copyCachePolicy(c.CachePolicy),
 			}
 		}
 	}
 	return nil
 }
 
-func copyCacheControl(in *prompty.CacheControl) *prompty.CacheControl {
+func copyCachePolicy(in *prompty.CachePolicy) *prompty.CachePolicy {
 	if in == nil {
 		return nil
 	}

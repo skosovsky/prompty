@@ -1,6 +1,13 @@
 id: prompt
 version: "1"
 description: "Data isolation example: escapeXML + randomHex"
+inputs:
+  UserInput:
+    type: string
+    required: true
+  query:
+    type: string
+    required: true
 messages:
   - role: system
     content: |

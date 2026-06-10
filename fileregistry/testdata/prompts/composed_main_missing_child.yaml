@@ -1,0 +1,16 @@
+id: composed_main_missing_child
+inputs:
+  query:
+    type: string
+    required: true
+imports:
+  - id: missing_child
+layers:
+  - id: base_system
+    role: system
+    content: "Base assistant."
+  - id: child_layer
+    import_ref: missing_child
+  - id: user_turn
+    role: user
+    content: "{{ .Input.query }}"

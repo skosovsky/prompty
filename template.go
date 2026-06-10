@@ -56,14 +56,14 @@ type parsedPart struct {
 	mediaTypeTpl *template.Template
 	mimeTypeTpl  *template.Template
 	urlTpl       *template.Template
-	cacheControl *CacheControl
+	cacheControl *CachePolicy
 }
 
 type parsedMessage struct {
 	parts        []parsedPart
 	role         Role
 	optional     bool
-	cacheControl *CacheControl
+	cacheControl *CachePolicy
 	metadata     map[string]any // provider-specific; copied to ChatMessage on render
 	vars         []string       // pre-computed from all parts for optional-skip check
 	layerID      string
@@ -151,7 +151,7 @@ func NewChatPromptTemplate(
 					mediaTypeTpl: nil,
 					mimeTypeTpl:  nil,
 					urlTpl:       nil,
-					cacheControl: cloneCacheControl(part.CacheControl),
+					cacheControl: cloneCachePolicy(part.CachePolicy),
 				})
 				allVars = append(allVars, extractVarsFromTree(textTpl.Tree)...)
 			case partKindMedia:
@@ -195,7 +195,7 @@ func NewChatPromptTemplate(
 					mediaTypeTpl: mediaTypeTpl,
 					mimeTypeTpl:  mimeTypeTpl,
 					urlTpl:       urlTpl,
-					cacheControl: cloneCacheControl(part.CacheControl),
+					cacheControl: cloneCachePolicy(part.CachePolicy),
 				})
 				allVars = append(allVars, extractVarsFromTree(mediaTypeTpl.Tree)...)
 				allVars = append(allVars, extractVarsFromTree(mimeTypeTpl.Tree)...)
@@ -222,7 +222,7 @@ func NewChatPromptTemplate(
 			parts:        parsedParts,
 			role:         m.Role,
 			optional:     m.Optional,
-			cacheControl: cloneCacheControl(m.CacheControl),
+			cacheControl: cloneCachePolicy(m.CachePolicy),
 			metadata:     meta,
 			vars:         allVars,
 			layerID:      m.LayerID,
@@ -262,10 +262,7 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 	return out
 }
 
-func (c *ChatPromptTemplate) renderTemplates(
-	mergedVars map[string]any,
-	history []ChatMessage,
-) (*PromptExecution, error) {
+func (c *ChatPromptTemplate) renderTemplates(mergedVars map[string]any) (*PromptExecution, error) {
 	var out []ChatMessage
 	for i, pm := range c.parsedTemplates {
 		optionalSkip := pm.optional && allVarsZeroForMessage(mergedVars, pm.vars)
@@ -287,8 +284,8 @@ func (c *ChatPromptTemplate) renderTemplates(
 					)
 				}
 				contentParts = append(contentParts, TextPart{
-					Text:         rendered,
-					CacheControl: cloneCacheControl(part.cacheControl),
+					Text:        rendered,
+					CachePolicy: cloneCachePolicy(part.cacheControl),
 				})
 			case partKindMedia:
 				mediaType, err := executeTemplateString(part.mediaTypeTpl, mergedVars)
@@ -332,10 +329,10 @@ func (c *ChatPromptTemplate) renderTemplates(
 					)
 				}
 				contentParts = append(contentParts, MediaPart{
-					MediaType:    mediaType,
-					MIMEType:     mimeType,
-					URL:          url,
-					CacheControl: cloneCacheControl(part.cacheControl),
+					MediaType:   mediaType,
+					MIMEType:    mimeType,
+					URL:         url,
+					CachePolicy: cloneCachePolicy(part.cacheControl),
 				})
 			default:
 				return nil, fmt.Errorf(
@@ -351,21 +348,19 @@ func (c *ChatPromptTemplate) renderTemplates(
 		if metaErr != nil {
 			return nil, fmt.Errorf("%w: message %d metadata: %w", ErrTemplateRender, i, metaErr)
 		}
+		var prov *MessageProvenance
+		if pm.layerID != "" || c.Metadata.ID != "" {
+			prov = &MessageProvenance{LayerID: pm.layerID, ManifestID: c.Metadata.ID}
+		}
 		out = append(out, ChatMessage{
-			Role:         pm.role,
-			Content:      contentParts,
-			CacheControl: cloneCacheControl(pm.cacheControl),
-			Metadata:     msgMeta,
-			LayerID:      pm.layerID,
-			LayerKind:    pm.layerKind,
-			LayerRef: LayerRef{
-				LayerID:    pm.layerID,
-				ManifestID: c.Metadata.ID,
-			},
-			ManifestID: c.Metadata.ID,
+			Role:        pm.role,
+			Content:     contentParts,
+			CachePolicy: cloneCachePolicy(pm.cacheControl),
+			Provenance:  prov,
+			Metadata:    msgMeta,
+			LayerKind:   pm.layerKind,
 		})
 	}
-	out = spliceHistory(out, cloneMessages(history))
 	return &PromptExecution{
 		Messages:       out,
 		Tools:          cloneToolDefinitions(c.Tools),
@@ -396,13 +391,12 @@ func (c *ChatPromptTemplate) formatContext(data renderContext) (*PromptExecution
 	}
 	merged["LateVars"] = cloneMapAny(data.LateVars)
 	merged["Tools"] = c.Tools
-	return c.renderTemplates(merged, nil)
+	return c.renderTemplates(merged)
 }
 
-// ValidateVariables runs a dry-run execute with the given map-shaped data (PartialVariables + data + Tools).
+// validateVariables runs a dry-run execute with the given map-shaped data (PartialVariables + data + Tools).
 // It does not run BindTemplateVars; callers must pass template keys already shaped for .Input.
-// Returns an error with role/message index context if any template references a missing or invalid input field.
-func (c *ChatPromptTemplate) ValidateVariables(data map[string]any) error {
+func (c *ChatPromptTemplate) validateVariables(data map[string]any) error {
 	input := maps.Clone(c.PartialVariables)
 	if input == nil {
 		input = make(map[string]any)

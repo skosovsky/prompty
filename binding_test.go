@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBindTemplateVars_MergesPartialsWhenNeeded(t *testing.T) {
+func Test_bindTemplateVars_MergesPartialsWhenNeeded(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("{{ .Input.bot_name }}: {{ .Input.msg }}")},
@@ -27,12 +27,12 @@ func TestBindTemplateVars_MergesPartialsWhenNeeded(t *testing.T) {
 	assert.Contains(t, text, "override")
 }
 
-func TestBindTemplateVars_RequiresPromptTag(t *testing.T) {
+func Test_bindTemplateVars_RequiresPromptTag(t *testing.T) {
 	t.Parallel()
 	type Payload struct {
 		UserName string
 	}
-	_, _, err := BindTemplateVars(&Payload{UserName: "Ada"})
+	_, _, err := bindTemplateVars(&Payload{UserName: "Ada"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidPayload)
 }

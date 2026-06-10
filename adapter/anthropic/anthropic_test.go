@@ -187,9 +187,9 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:         prompty.RoleSystem,
-				Content:      []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
-				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Role:        prompty.RoleSystem,
+				Content:     []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
+				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
@@ -198,7 +198,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, params.System, 1)
 	assert.Equal(t, "You are a helper.", params.System[0].Text)
-	// CacheControl on message must set cache control on system block.
+	// CachePolicy on message must set cache control on system block.
 	assert.Equal(t, "ephemeral", string(params.System[0].CacheControl.Type))
 	require.Len(t, params.Messages, 1)
 }
@@ -487,8 +487,8 @@ func TestTranslate_PDFPartData_WithMessageCacheControlSetsCacheControl(t *testin
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:         prompty.RoleUser,
-				CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+				Role:        prompty.RoleUser,
+				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 				Content: []prompty.ContentPart{
 					prompty.MediaPart{
 						MediaType: "document",
@@ -515,14 +515,14 @@ func TestTranslate_PDFPartData_WithPartCacheControlOverridesMessage(t *testing.T
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:         prompty.RoleUser,
-				CacheControl: &prompty.CacheControl{Type: "persistent"},
+				Role:        prompty.RoleUser,
+				CachePolicy: &prompty.CachePolicy{Type: "persistent"},
 				Content: []prompty.ContentPart{
 					prompty.MediaPart{
-						MediaType:    "document",
-						Data:         []byte("%PDF-1.7"),
-						MIMEType:     "application/pdf",
-						CacheControl: &prompty.CacheControl{Type: "ephemeral"},
+						MediaType:   "document",
+						Data:        []byte("%PDF-1.7"),
+						MIMEType:    "application/pdf",
+						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
 					},
 				},
 			},
@@ -649,8 +649,8 @@ func TestTranslate_UnsupportedCacheControlType_ReturnsError(t *testing.T) {
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
-				Role:         prompty.RoleUser,
-				CacheControl: &prompty.CacheControl{Type: "persistent"},
+				Role:        prompty.RoleUser,
+				CachePolicy: &prompty.CachePolicy{Type: "persistent"},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{Text: "Hello"},
 				},
@@ -659,7 +659,7 @@ func TestTranslate_UnsupportedCacheControlType_ReturnsError(t *testing.T) {
 	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported cache_control.type")
+	assert.Contains(t, err.Error(), "unsupported cache_policy.type")
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {

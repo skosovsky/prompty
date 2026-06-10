@@ -18,12 +18,13 @@ import (
 
 // Ensures Registry implements prompty.Registry, Lister, and Statter.
 var (
-	_ prompty.Registry            = (*Registry)(nil)
-	_ prompty.Lister              = (*Registry)(nil)
-	_ prompty.Statter             = (*Registry)(nil)
-	_ prompty.ManifestResolver    = (*Registry)(nil)
-	_ prompty.ManifestBytesReader = (*Registry)(nil)
-	_ prompty.PromptDescriber     = (*Registry)(nil)
+	_ prompty.Registry               = (*Registry)(nil)
+	_ prompty.Lister                 = (*Registry)(nil)
+	_ prompty.Statter                = (*Registry)(nil)
+	_ prompty.ManifestResolver       = (*Registry)(nil)
+	_ prompty.ManifestBytesReader    = (*Registry)(nil)
+	_ prompty.ManifestComposeChecker = (*Registry)(nil)
+	_ prompty.PromptDescriber        = (*Registry)(nil)
 )
 
 // Registry loads prompt templates from the filesystem (lazy, cached).
@@ -97,7 +98,10 @@ func idToPaths(dir, id, env string) []string {
 	return out
 }
 
-func (r *Registry) readManifestBytes(_ context.Context, id string) ([]byte, error) {
+func (r *Registry) readManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
 	}
@@ -118,16 +122,45 @@ func (r *Registry) ReadManifestBytes(ctx context.Context, id string) ([]byte, er
 	return r.readManifestBytes(ctx, id)
 }
 
+// LoadByID implements manifest.ManifestLoader for declarative composition.
+func (r *Registry) LoadByID(ctx context.Context, id string) (*manifest.RawManifest, error) {
+	data, err := r.readManifestBytes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var raw manifest.RawManifest
+	if unmarshalErr := r.parser.Unmarshal(data, &raw); unmarshalErr != nil {
+		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, unmarshalErr)
+	}
+	return &raw, nil
+}
+
 // ResolveManifest returns manifest metadata without compiling template AST.
-func (r *Registry) ResolveManifest(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+// Without ResolveManifestOption values, composed manifests use a conservative union of imports.
+func (r *Registry) ResolveManifest(
+	ctx context.Context,
+	id string,
+	opts ...prompty.ResolveManifestOption,
+) (prompty.TemplateDescriptor, error) {
 	data, err := r.readManifestBytes(ctx, id)
 	if err != nil {
 		return prompty.TemplateDescriptor{}, err
 	}
-	return manifest.ParseDescriptor(data, r.parser)
+	ro := prompty.ApplyResolveManifestOptions(opts)
+	parseOpts := []manifest.ParseOption{manifest.WithCompose(manifest.ComposeContext{
+		Ctx:          ctx,
+		Capabilities: nil,
+		Loader:       r,
+	})}
+	if ro.ComposeCapsSet {
+		parseOpts = append(parseOpts, manifest.WithComposeCapabilities(ro.ComposeCapabilities))
+	}
+	return manifest.ParseDescriptor(data, r.parser, parseOpts...)
 }
 
 // DescribePrompt returns manifest metadata for routing and introspection.
+// It resolves without compose capabilities, so conditional imports/layers use conservative defaults.
+// Pass prompty.WithResolveComposeCapabilities to ResolveManifest when runtime caps are known.
 func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	return r.ResolveManifest(ctx, id)
 }
@@ -153,11 +186,8 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 		return nil, ctx.Err()
 	}
 	parseFile := func(path string) (*prompty.ChatPromptTemplate, error) {
-		if r.partialsPattern != "" {
-			glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
-			return manifest.ParseFile(path, r.parser, manifest.WithPartialsGlob(glob))
-		}
-		return manifest.ParseFile(path, r.parser)
+		opts := r.parseOptionsForPath(ctx, path, nil)
+		return manifest.ParseFile(path, r.parser, opts...)
 	}
 	for _, path := range idToPaths(r.dir, id, r.env) {
 		tpl, err := parseFile(path)
@@ -167,7 +197,9 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 				tpl.Metadata.Version = info.Version
 			}
 			tpl.Metadata.Environment = "" // id-based; env expressed via id (e.g. doctor.prod)
-			r.cache[id] = tpl
+			if !r.pathUsesCompose(path) {
+				r.cache[id] = tpl
+			}
 			return prompty.CloneTemplate(tpl), nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -179,11 +211,87 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.loadTemplate(ctx, id)
+	tpl, err := r.templateForPlan(ctx, id, input.ComposeCapabilities())
 	if err != nil {
 		return nil, err
 	}
 	return prompty.NewRenderPlanFromPlanInput(tpl, input)
+}
+
+func (r *Registry) pathUsesCompose(path string) bool {
+	data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
+	if err != nil {
+		return false
+	}
+	uses, peekErr := manifest.PeekComposeOrError(data, r.parser)
+	if peekErr != nil {
+		return true // skip cache when peek is ambiguous
+	}
+	return uses
+}
+
+// ManifestUsesComposeE reports whether raw manifest bytes declare imports or layers.
+func (r *Registry) ManifestUsesComposeE(ctx context.Context, id string) (bool, error) {
+	data, err := r.ReadManifestBytes(ctx, id)
+	if err != nil {
+		if errors.Is(err, prompty.ErrTemplateNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	uses, peekErr := manifest.PeekComposeOrError(data, r.parser)
+	if peekErr != nil {
+		return false, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+	}
+	return uses, nil
+}
+
+func (r *Registry) parseOptionsForPath(ctx context.Context, path string, caps map[string]any) []manifest.ParseOption {
+	var opts []manifest.ParseOption
+	if r.partialsPattern != "" {
+		glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
+		opts = append(opts, manifest.WithPartialsGlob(glob))
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
+	if err == nil {
+		usesCompose, peekErr := manifest.PeekComposeOrError(data, r.parser)
+		if peekErr == nil && usesCompose {
+			opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
+				Ctx:          ctx,
+				Loader:       r,
+				Capabilities: caps,
+			}))
+		}
+	}
+	return opts
+}
+
+func (r *Registry) templateForPlan(
+	ctx context.Context,
+	id string,
+	caps map[string]any,
+) (*prompty.ChatPromptTemplate, error) {
+	if err := prompty.ValidateID(id); err != nil {
+		return nil, err
+	}
+	for _, path := range idToPaths(r.dir, id, r.env) {
+		data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		usesCompose, peekErr := manifest.PeekComposeFieldsE(data, r.parser)
+		if peekErr != nil {
+			return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+		}
+		if usesCompose {
+			return manifest.Parse(data, r.parser, r.parseOptionsForPath(ctx, path, caps)...)
+		}
+		break
+	}
+	return r.loadTemplate(ctx, id)
 }
 
 // baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).
@@ -284,9 +392,21 @@ func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, err
 	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
+// RecommendManifestDescriptor selects single-file or compose-closure checkpoint descriptor.
+func (r *Registry) RecommendManifestDescriptor(ctx context.Context, id string) (prompty.ManifestDescriptor, error) {
+	return manifest.CheckpointRecommend(ctx, id, r, r.parser)
+}
+
+// VerifyManifestDescriptor verifies a checkpoint descriptor against current manifest bytes.
+func (r *Registry) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
+	return manifest.CheckpointVerify(ctx, desc, r, r.parser)
+}
+
 // Reload clears the cache (for hot-reload in development).
 func (r *Registry) Reload() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cache = make(map[string]*prompty.ChatPromptTemplate)
 }
+
+var _ prompty.ManifestCheckpointRegistry = (*Registry)(nil)

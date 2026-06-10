@@ -3,6 +3,7 @@ package fileregistry
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,6 +82,83 @@ messages:
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, desc.Metadata.ID, exec.Metadata.ID)
+}
+
+func TestRegistry_RecommendManifestDescriptor_MissingImport(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join("testdata", "prompts")
+	reg, err := New(dir, WithParser(yaml.New()))
+	require.NoError(t, err)
+	_, err = reg.RecommendManifestDescriptor(context.Background(), "composed_main_missing_child")
+	require.Error(t, err)
+	require.ErrorIs(t, err, prompty.ErrTemplateNotFound)
+	require.Contains(t, err.Error(), "read import")
+}
+
+func TestRegistry_RecommendManifestDescriptor_Corrupt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "bad.yaml"),
+		[]byte("id: bad\nlayers: [unclosed"),
+		0600,
+	))
+	reg, err := New(dir, WithParser(yaml.New()))
+	require.NoError(t, err)
+	_, err = reg.RecommendManifestDescriptor(context.Background(), "bad")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
+}
+
+func TestRegistry_Checkpoint_FlatManifest(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join("testdata", "prompts")
+	reg, err := New(dir, WithParser(yaml.New()))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	desc, err := reg.RecommendManifestDescriptor(ctx, "support_agent")
+	require.NoError(t, err)
+	assert.Equal(t, "support_agent", desc.ID)
+	assert.NotEmpty(t, desc.Digest)
+	require.NoError(t, reg.VerifyManifestDescriptor(ctx, desc))
+}
+
+func TestRegistry_Checkpoint_FlatManifest_TamperFails(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join("testdata", "prompts")
+	reg, err := New(dir, WithParser(yaml.New()))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	desc, err := reg.RecommendManifestDescriptor(ctx, "support_agent")
+	require.NoError(t, err)
+
+	tamperReader := &flatTamperReader{
+		base: reg,
+		overrides: map[string][]byte{
+			"support_agent": []byte(`{"id":"support_agent","messages":[{"role":"system","content":"TAMPERED"}]}`),
+		},
+	}
+	err = tamperReader.VerifyManifestDescriptor(ctx, desc)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
+}
+
+type flatTamperReader struct {
+	base      prompty.ManifestBytesReader
+	overrides map[string][]byte
+}
+
+func (r *flatTamperReader) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if b, ok := r.overrides[id]; ok {
+		return b, nil
+	}
+	return r.base.ReadManifestBytes(ctx, id)
+}
+
+func (r *flatTamperReader) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
+	return manifest.CheckpointVerify(ctx, desc, r, yaml.New())
 }
 
 var _ prompty.ManifestResolver = (*Registry)(nil)

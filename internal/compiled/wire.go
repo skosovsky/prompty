@@ -1,4 +1,4 @@
-package prompty
+package compiled
 
 import (
 	"bytes"
@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+
+	"github.com/skosovsky/prompty"
 )
 
-const compiledPromptFormatVersion = 1
+const formatVersion = 2
 
-type compiledPromptWire struct {
+type promptWire struct {
 	FormatVersion  int           `json:"format_version"`
 	ManifestID     string        `json:"manifest_id"`
 	ManifestDigest string        `json:"manifest_digest"`
@@ -19,85 +22,83 @@ type compiledPromptWire struct {
 }
 
 type executionWire struct {
-	Messages       []messageWire     `json:"messages"`
-	Tools          []ToolDefinition  `json:"tools,omitempty"`
-	RequiredTools  []string          `json:"required_tools,omitempty"`
-	ForcedTool     string            `json:"forced_tool,omitempty"`
-	ModelOptions   *ModelOptions     `json:"model_options,omitempty"`
-	Metadata       PromptMetadata    `json:"metadata"`
-	ResponseFormat *SchemaDefinition `json:"response_format,omitempty"`
+	Messages       []messageWire             `json:"messages"`
+	Tools          []prompty.ToolDefinition  `json:"tools,omitempty"`
+	RequiredTools  []string                  `json:"required_tools,omitempty"`
+	ForcedTool     string                    `json:"forced_tool,omitempty"`
+	ModelOptions   *prompty.ModelOptions     `json:"model_options,omitempty"`
+	Metadata       prompty.PromptMetadata    `json:"metadata"`
+	ResponseFormat *prompty.SchemaDefinition `json:"response_format,omitempty"`
 }
 
 type messageWire struct {
-	Role         Role              `json:"role"`
-	Content      []contentPartWire `json:"content"`
-	CacheControl *CacheControl     `json:"cache_control,omitempty"`
-	Metadata     map[string]any    `json:"metadata,omitempty"`
-	LayerID      string            `json:"layer_id,omitempty"`
-	LayerKind    LayerKind         `json:"layer_kind,omitempty"`
-	LayerRef     LayerRef          `json:"layer_ref,omitzero"`
-	ManifestID   string            `json:"manifest_id,omitempty"`
+	Role        prompty.Role               `json:"role"`
+	Content     []contentPartWire          `json:"content"`
+	CachePolicy *prompty.CachePolicy       `json:"cache_policy,omitempty"`
+	Provenance  *prompty.MessageProvenance `json:"provenance,omitempty"`
+	Metadata    map[string]any             `json:"metadata,omitempty"`
+	LayerKind   prompty.LayerKind          `json:"layer_kind,omitempty"`
 }
 
 type contentPartWire struct {
-	Type         string            `json:"type"`
-	Text         string            `json:"text,omitempty"`
-	MediaType    string            `json:"media_type,omitempty"`
-	MIMEType     string            `json:"mime_type,omitempty"`
-	URL          string            `json:"url,omitempty"`
-	Data         string            `json:"data,omitempty"` // base64
-	ID           string            `json:"id,omitempty"`
-	Name         string            `json:"name,omitempty"`
-	Args         string            `json:"args,omitempty"`
-	ArgsChunk    string            `json:"args_chunk,omitempty"`
-	ToolCallID   string            `json:"tool_call_id,omitempty"`
-	IsError      bool              `json:"is_error,omitempty"`
-	Nested       []contentPartWire `json:"nested,omitempty"`
-	CacheControl *CacheControl     `json:"cache_control,omitempty"`
+	Type        string               `json:"type"`
+	Text        string               `json:"text,omitempty"`
+	MediaType   string               `json:"media_type,omitempty"`
+	MIMEType    string               `json:"mime_type,omitempty"`
+	URL         string               `json:"url,omitempty"`
+	Data        string               `json:"data,omitempty"`
+	ID          string               `json:"id,omitempty"`
+	Name        string               `json:"name,omitempty"`
+	Args        string               `json:"args,omitempty"`
+	ArgsChunk   string               `json:"args_chunk,omitempty"`
+	ToolCallID  string               `json:"tool_call_id,omitempty"`
+	IsError     bool                 `json:"is_error,omitempty"`
+	Nested      []contentPartWire    `json:"nested,omitempty"`
+	CachePolicy *prompty.CachePolicy `json:"cache_policy,omitempty"`
 }
 
 //nolint:exhaustruct,gocognit // wire encoding uses partial field sets per content part type
-func encodeContentPart(p ContentPart) (contentPartWire, error) {
+func encodeContentPart(p prompty.ContentPart) (contentPartWire, error) {
 	switch x := p.(type) {
-	case TextPart:
-		return contentPartWire{Type: "text", Text: x.Text, CacheControl: x.CacheControl}, nil
-	case *TextPart:
+	case prompty.TextPart:
+		return contentPartWire{Type: "text", Text: x.Text, CachePolicy: x.CachePolicy}, nil
+	case *prompty.TextPart:
 		if x == nil {
 			return contentPartWire{}, errors.New("compiled prompt: nil text content part")
 		}
 		return encodeContentPart(*x)
-	case MediaPart:
+	case prompty.MediaPart:
 		w := contentPartWire{
 			Type: "media", MediaType: x.MediaType, MIMEType: x.MIMEType, URL: x.URL,
-			CacheControl: x.CacheControl,
+			CachePolicy: x.CachePolicy,
 		}
 		if len(x.Data) > 0 {
 			w.Data = base64.StdEncoding.EncodeToString(x.Data)
 		}
 		return w, nil
-	case *MediaPart:
+	case *prompty.MediaPart:
 		if x == nil {
 			return contentPartWire{}, errors.New("compiled prompt: nil media content part")
 		}
 		return encodeContentPart(*x)
-	case ReasoningPart:
-		return contentPartWire{Type: "reasoning", Text: x.Text, CacheControl: x.CacheControl}, nil
-	case *ReasoningPart:
+	case prompty.ReasoningPart:
+		return contentPartWire{Type: "reasoning", Text: x.Text, CachePolicy: x.CachePolicy}, nil
+	case *prompty.ReasoningPart:
 		if x == nil {
 			return contentPartWire{}, errors.New("compiled prompt: nil reasoning content part")
 		}
 		return encodeContentPart(*x)
-	case ToolCallPart:
+	case prompty.ToolCallPart:
 		return contentPartWire{
 			Type: "tool_call", ID: x.ID, Name: x.Name, Args: x.Args, ArgsChunk: x.ArgsChunk,
-			CacheControl: x.CacheControl,
+			CachePolicy: x.CachePolicy,
 		}, nil
-	case *ToolCallPart:
+	case *prompty.ToolCallPart:
 		if x == nil {
 			return contentPartWire{}, errors.New("compiled prompt: nil tool_call content part")
 		}
 		return encodeContentPart(*x)
-	case ToolResultPart:
+	case prompty.ToolResultPart:
 		nested := make([]contentPartWire, len(x.Content))
 		for i, c := range x.Content {
 			wire, err := encodeContentPart(c)
@@ -108,9 +109,9 @@ func encodeContentPart(p ContentPart) (contentPartWire, error) {
 		}
 		return contentPartWire{
 			Type: "tool_result", ToolCallID: x.ToolCallID, Name: x.Name, Nested: nested,
-			IsError: x.IsError, CacheControl: x.CacheControl,
+			IsError: x.IsError, CachePolicy: x.CachePolicy,
 		}, nil
-	case *ToolResultPart:
+	case *prompty.ToolResultPart:
 		if x == nil {
 			return contentPartWire{}, errors.New("compiled prompt: nil tool_result content part")
 		}
@@ -123,10 +124,10 @@ func encodeContentPart(p ContentPart) (contentPartWire, error) {
 	}
 }
 
-func decodeContentPart(w contentPartWire) (ContentPart, error) {
+func decodeContentPart(w contentPartWire) (prompty.ContentPart, error) {
 	switch w.Type {
 	case "text":
-		return TextPart{Text: w.Text, CacheControl: w.CacheControl}, nil
+		return prompty.TextPart{Text: w.Text, CachePolicy: w.CachePolicy}, nil
 	case "media":
 		var data []byte
 		if w.Data != "" {
@@ -136,18 +137,18 @@ func decodeContentPart(w contentPartWire) (ContentPart, error) {
 			}
 			data = decoded
 		}
-		return MediaPart{
+		return prompty.MediaPart{
 			MediaType: w.MediaType, MIMEType: w.MIMEType, URL: w.URL, Data: data,
-			CacheControl: w.CacheControl,
+			CachePolicy: w.CachePolicy,
 		}, nil
 	case "reasoning":
-		return ReasoningPart{Text: w.Text, CacheControl: w.CacheControl}, nil
+		return prompty.ReasoningPart{Text: w.Text, CachePolicy: w.CachePolicy}, nil
 	case "tool_call":
-		return ToolCallPart{
-			ID: w.ID, Name: w.Name, Args: w.Args, ArgsChunk: w.ArgsChunk, CacheControl: w.CacheControl,
+		return prompty.ToolCallPart{
+			ID: w.ID, Name: w.Name, Args: w.Args, ArgsChunk: w.ArgsChunk, CachePolicy: w.CachePolicy,
 		}, nil
 	case "tool_result":
-		nested := make([]ContentPart, len(w.Nested))
+		nested := make([]prompty.ContentPart, len(w.Nested))
 		for i, c := range w.Nested {
 			part, err := decodeContentPart(c)
 			if err != nil {
@@ -155,9 +156,9 @@ func decodeContentPart(w contentPartWire) (ContentPart, error) {
 			}
 			nested[i] = part
 		}
-		return ToolResultPart{
+		return prompty.ToolResultPart{
 			ToolCallID: w.ToolCallID, Name: w.Name, Content: nested, IsError: w.IsError,
-			CacheControl: w.CacheControl,
+			CachePolicy: w.CachePolicy,
 		}, nil
 	default:
 		if w.Type == "" {
@@ -167,33 +168,42 @@ func decodeContentPart(w contentPartWire) (ContentPart, error) {
 	}
 }
 
-func compiledPromptToWire(c *CompiledPrompt) (compiledPromptWire, error) {
+func cloneProvenance(p *prompty.MessageProvenance) *prompty.MessageProvenance {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	return &out
+}
+
+func promptToWire(c *Prompt) (promptWire, error) {
 	msgs := make([]messageWire, len(c.execution.Messages))
 	for i, m := range c.execution.Messages {
 		parts := make([]contentPartWire, len(m.Content))
 		for j, p := range m.Content {
 			wire, err := encodeContentPart(p)
 			if err != nil {
-				return compiledPromptWire{}, err
+				return promptWire{}, err
 			}
 			parts[j] = wire
 		}
-		msgMeta, err := JSONDocumentAsMap(m.Metadata)
+		msgMeta, err := prompty.JSONDocumentAsMap(m.Metadata)
 		if err != nil {
-			return compiledPromptWire{}, err
+			return promptWire{}, err
 		}
+		meta := maps.Clone(msgMeta)
 		msgs[i] = messageWire{
-			Role: m.Role, Content: parts, CacheControl: m.CacheControl, Metadata: cloneMapAny(msgMeta),
-			LayerID: m.LayerID, LayerKind: m.LayerKind, LayerRef: m.LayerRef, ManifestID: m.ManifestID,
+			Role: m.Role, Content: parts, CachePolicy: m.CachePolicy,
+			Provenance: cloneProvenance(m.Provenance), Metadata: meta, LayerKind: m.LayerKind,
 		}
 	}
-	return compiledPromptWire{
-		FormatVersion:  compiledPromptFormatVersion,
+	return promptWire{
+		FormatVersion:  formatVersion,
 		ManifestID:     c.manifestID,
 		ManifestDigest: c.manifestDigest,
 		DigestSource:   c.digestSource,
 		Execution: executionWire{
-			Messages: msgs, Tools: append([]ToolDefinition(nil), c.execution.Tools...),
+			Messages: msgs, Tools: append([]prompty.ToolDefinition(nil), c.execution.Tools...),
 			RequiredTools: append([]string(nil), c.execution.RequiredTools...),
 			ForcedTool:    c.execution.ForcedTool, ModelOptions: c.execution.ModelOptions,
 			Metadata: c.execution.Metadata, ResponseFormat: c.execution.ResponseFormat,
@@ -201,11 +211,11 @@ func compiledPromptToWire(c *CompiledPrompt) (compiledPromptWire, error) {
 	}, nil
 }
 
-func validateCompiledPromptWire(w compiledPromptWire) error {
-	if w.FormatVersion != compiledPromptFormatVersion {
+func validateWire(w promptWire) error {
+	if w.FormatVersion != formatVersion {
 		return fmt.Errorf(
 			"compiled prompt: unsupported format_version %d (supported: %d)",
-			w.FormatVersion, compiledPromptFormatVersion,
+			w.FormatVersion, formatVersion,
 		)
 	}
 	if w.ManifestDigest == "" {
@@ -219,13 +229,13 @@ func validateCompiledPromptWire(w compiledPromptWire) error {
 	return nil
 }
 
-func wireToCompiledPrompt(w compiledPromptWire) (*CompiledPrompt, error) {
-	if err := validateCompiledPromptWire(w); err != nil {
+func wireToPrompt(w promptWire) (*Prompt, error) {
+	if err := validateWire(w); err != nil {
 		return nil, err
 	}
-	msgs := make([]ChatMessage, len(w.Execution.Messages))
+	msgs := make([]prompty.ChatMessage, len(w.Execution.Messages))
 	for i, m := range w.Execution.Messages {
-		parts := make([]ContentPart, len(m.Content))
+		parts := make([]prompty.ContentPart, len(m.Content))
 		for j, p := range m.Content {
 			part, err := decodeContentPart(p)
 			if err != nil {
@@ -233,18 +243,18 @@ func wireToCompiledPrompt(w compiledPromptWire) (*CompiledPrompt, error) {
 			}
 			parts[j] = part
 		}
-		msgMeta, err := MapToJSONDocument(m.Metadata)
+		msgMeta, err := prompty.MapToJSONDocument(m.Metadata)
 		if err != nil {
 			return nil, err
 		}
-		msgs[i] = ChatMessage{
-			Role: m.Role, Content: parts, CacheControl: m.CacheControl, Metadata: msgMeta,
-			LayerID: m.LayerID, LayerKind: m.LayerKind, LayerRef: m.LayerRef, ManifestID: m.ManifestID,
+		msgs[i] = prompty.ChatMessage{
+			Role: m.Role, Content: parts, CachePolicy: m.CachePolicy,
+			Provenance: cloneProvenance(m.Provenance), Metadata: msgMeta, LayerKind: m.LayerKind,
 		}
 	}
-	return &CompiledPrompt{
+	return &Prompt{
 		manifestID: w.ManifestID, manifestDigest: w.ManifestDigest, digestSource: w.DigestSource,
-		execution: PromptExecution{
+		execution: prompty.PromptExecution{
 			Messages: msgs, Tools: w.Execution.Tools, RequiredTools: w.Execution.RequiredTools,
 			ForcedTool: w.Execution.ForcedTool, ModelOptions: w.Execution.ModelOptions,
 			Metadata: w.Execution.Metadata, ResponseFormat: w.Execution.ResponseFormat,
@@ -252,23 +262,23 @@ func wireToCompiledPrompt(w compiledPromptWire) (*CompiledPrompt, error) {
 	}, nil
 }
 
-func marshalCompiledPromptJSON(c *CompiledPrompt) ([]byte, error) {
-	wire, err := compiledPromptToWire(c)
+func marshalJSON(c *Prompt) ([]byte, error) {
+	wire, err := promptToWire(c)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(wire)
 }
 
-func unmarshalCompiledPromptJSON(data []byte) (*CompiledPrompt, error) {
+func unmarshalJSON(data []byte) (*Prompt, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var w compiledPromptWire
+	var w promptWire
 	if err := dec.Decode(&w); err != nil {
 		return nil, err
 	}
 	if dec.More() {
 		return nil, errors.New("compiled prompt: trailing JSON after document")
 	}
-	return wireToCompiledPrompt(w)
+	return wireToPrompt(w)
 }

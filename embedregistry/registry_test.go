@@ -274,3 +274,14 @@ func TestEmbedRegistry_Plan_WithPartials(t *testing.T) {
 	assert.Contains(t, textPart.Text, "Never give medical diagnoses.", "partial 'safety' must be rendered into message")
 	assert.Contains(t, textPart.Text, "You are a doctor assistant.")
 }
+
+func TestRegistry_Plan_InvalidManifest(t *testing.T) {
+	t.Parallel()
+	// embedregistry eagerly parses manifests at New; corrupt bytes fail initialization.
+	fsys := fstest.MapFS{
+		"prompts/bad.json": &fstest.MapFile{Data: []byte(`{"id":"bad","messages":[unclosed`)},
+	}
+	_, err := New(fsys, "prompts", WithParser(manifest.NewJSONParser()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad.json")
+}

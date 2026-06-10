@@ -12,12 +12,12 @@ go get github.com/skosovsky/prompty/adapter/anthropic
 
 - **API key:** set `ANTHROPIC_API_KEY` (or the env var used by the Anthropic SDK). This adapter produces `*anthropic.MessageNewParams`; you use the Anthropic SDK client to send requests.
 - **Default model:** `New()` uses a default Claude model. Override with `WithModel(anthropic.Model(...))`, or set per execution via `exec.ModelOptions.Model`.
-- **Prompt caching:** use `ChatMessage.CacheControl` and optional part-level `CacheControl`. Message-level cache is used by default; part-level cache overrides it. Anthropic currently supports `type: ephemeral`. Example in a manifest:
+- **Prompt caching:** use `ChatMessage.CachePolicy` and optional part-level `CachePolicy`. Message-level cache is used by default; part-level cache overrides it. Anthropic currently supports `type: ephemeral`. Example in a manifest:
 
 ```yaml
 messages:
   - role: system
-    cache_control:
+    cache_policy:
       type: ephemeral
     content: "You are a helpful assistant..."
 ```

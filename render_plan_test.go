@@ -18,9 +18,10 @@ func TestRenderPlan_Execute_UsesInputAndLateVars(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plan, err := newRenderPlanFromMap(tpl, map[string]any{"name": "Alice"})
-	require.NoError(t, err)
-	plan, err = plan.WithLateVariablesJSON(mustJSONDocument(map[string]any{"suffix": "!"}))
+	plan := newRenderPlanFromMap(tpl, map[string]any{"name": "Alice"})
+	plan, err = plan.WithLateInput(struct {
+		Suffix string `prompt:"suffix"`
+	}{Suffix: "!"})
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
@@ -29,37 +30,7 @@ func TestRenderPlan_Execute_UsesInputAndLateVars(t *testing.T) {
 	assert.Equal(t, "hello Alice !", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestRenderPlan_ReplaceLayer(t *testing.T) {
-	t.Parallel()
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{
-			Role:      RoleSystem,
-			LayerID:   "s1",
-			LayerKind: LayerKind("policy"),
-			Content:   TextContent("base"),
-		},
-		{
-			Role:    RoleUser,
-			Content: TextContent("u"),
-		},
-	})
-	require.NoError(t, err)
-
-	overrideTemplate, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, LayerKind: LayerKind("policy"), Content: TextContent("override")},
-	})
-	require.NoError(t, err)
-
-	plan, err := NewRenderPlan(tpl).ReplaceLayer("s1", NewRenderPlan(overrideTemplate))
-	require.NoError(t, err)
-	exec, err := plan.Execute(context.Background())
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2)
-	assert.Equal(t, "override", mustTextFromParts(t, exec.Messages[0].Content))
-	assert.Equal(t, RoleUser, exec.Messages[1].Role)
-}
-
-func TestRenderPlan_Execute_CollapsesConsecutiveSystemMessages(t *testing.T) {
+func TestRenderPlan_Execute_DoesNotCollapseConsecutiveSystemMessages(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleSystem, Content: TextContent("A")},
@@ -92,31 +63,156 @@ func TestRenderPlan_Execute_SetsProvenance(t *testing.T) {
 	exec, err := NewRenderPlan(tpl).Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, LayerRef{LayerID: "policy", ManifestID: "base-manifest"}, exec.Messages[0].LayerRef)
-	assert.Equal(t, "base-manifest", exec.Messages[0].ManifestID)
+	require.NotNil(t, exec.Messages[0].Provenance)
+	assert.Equal(t, "policy", exec.Messages[0].Provenance.LayerID)
+	assert.Equal(t, "base-manifest", exec.Messages[0].Provenance.ManifestID)
 	assert.Equal(t, "base-manifest", exec.Metadata.ID)
 }
 
-func TestRenderPlan_ReplaceLayer_ReplacesContiguousSegmentOnce(t *testing.T) {
+func TestRenderPlan_WithLateInput_RejectsEarlyField(t *testing.T) {
 	t.Parallel()
+	schema := &SchemaDefinition{
+		Schema: MustJSONDocumentFromMap(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user_query": map[string]any{"type": "string"},
+				"extra_ctx":  map[string]any{"type": "string"},
+			},
+		}),
+	}
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, LayerID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p1")},
-		{Role: RoleSystem, LayerID: "policy", LayerKind: LayerKind("policy"), Content: TextContent("p2")},
-		{Role: RoleUser, Content: TextContent("u")},
-	})
+		{Role: RoleUser, Content: TextContent("{{ .Input.user_query }} {{ .LateVars.extra_ctx }}")},
+	}, WithInputSchema(schema))
 	require.NoError(t, err)
 
-	overrideTemplate, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleSystem, LayerKind: LayerKind("policy"), Content: TextContent("override")},
-	})
+	plan := newRenderPlanFromMap(tpl, map[string]any{"user_query": "hi"})
+	_, err = plan.WithLateInput(struct {
+		ExtraCtx string `prompt:"extra_ctx"`
+	}{ExtraCtx: "late"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "early-bound")
+}
+
+func TestRenderPlan_WithLateInput_AcceptsLateField(t *testing.T) {
+	t.Parallel()
+	schema := &SchemaDefinition{
+		Schema: MustJSONDocumentFromMap(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user_query":      map[string]any{"type": "string"},
+				"patient_dossier": map[string]any{"type": "string", "x-prompty-late": true},
+			},
+		}),
+	}
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.user_query }} {{ .LateVars.patient_dossier }}")},
+	}, WithInputSchema(schema))
 	require.NoError(t, err)
 
-	plan, err := NewRenderPlan(tpl).ReplaceLayer("policy", NewRenderPlan(overrideTemplate))
+	plan := newRenderPlanFromMap(tpl, map[string]any{"user_query": "hi"})
+	plan, err = plan.WithLateInput(struct {
+		PatientDossier string `prompt:"patient_dossier"`
+	}{PatientDossier: "chart"})
 	require.NoError(t, err)
 
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2)
-	assert.Equal(t, "override", mustTextFromParts(t, exec.Messages[0].Content))
-	assert.Equal(t, RoleUser, exec.Messages[1].Role)
+	assert.Equal(t, "hi chart", mustTextFromParts(t, exec.Messages[0].Content))
+}
+
+func TestRenderPlan_WithLateInput_RejectsValidateTags(t *testing.T) {
+	t.Parallel()
+	schema := &SchemaDefinition{
+		Schema: MustJSONDocumentFromMap(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user_query": map[string]any{"type": "string"},
+				"patient_dossier": map[string]any{
+					"type":           "string",
+					"x-prompty-late": true,
+				},
+			},
+		}),
+	}
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.user_query }} {{ .LateVars.patient_dossier }}")},
+	}, WithInputSchema(schema))
+	require.NoError(t, err)
+
+	plan := newRenderPlanFromMap(tpl, map[string]any{"user_query": "hi"})
+	_, err = plan.WithLateInput(struct {
+		PatientDossier string `prompt:"patient_dossier" validate:"required"`
+	}{PatientDossier: ""})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "late input")
+}
+
+func TestRenderPlan_WithLateInput_RejectsValidateTagsPointer(t *testing.T) {
+	t.Parallel()
+	schema := &SchemaDefinition{
+		Schema: MustJSONDocumentFromMap(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user_query": map[string]any{"type": "string"},
+				"patient_dossier": map[string]any{
+					"type":           "string",
+					"x-prompty-late": true,
+				},
+			},
+		}),
+	}
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.user_query }} {{ .LateVars.patient_dossier }}")},
+	}, WithInputSchema(schema))
+	require.NoError(t, err)
+
+	plan := newRenderPlanFromMap(tpl, map[string]any{"user_query": "hi"})
+	type latePayload struct {
+		PatientDossier string `prompt:"patient_dossier" validate:"required"`
+	}
+	payload := latePayload{PatientDossier: ""}
+	_, err = plan.WithLateInput(&payload)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "late input")
+}
+
+func TestRenderPlan_WithLateInput_RejectsChatHistoryInLatePayload(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
+	})
+	require.NoError(t, err)
+
+	plan := newRenderPlanFromMap(tpl, map[string]any{"q": "hi"})
+	_, err = plan.WithLateInput(struct {
+		ChatHistory []ChatMessage `prompt:"chat_history"`
+	}{
+		ChatHistory: []ChatMessage{{
+			Role:    RoleUser,
+			Content: []ContentPart{TextPart{Text: "prior"}},
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chat history must not be bound as late variables")
+}
+
+func TestRenderPlan_WithResponseFormat_RuntimeOverride(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
+	})
+	require.NoError(t, err)
+
+	type Out struct {
+		Answer string `json:"answer"`
+	}
+
+	plan := newRenderPlanFromMap(tpl, map[string]any{"q": "x"})
+	plan, err = WithResponseFormatFromStruct[Out](plan)
+	require.NoError(t, err)
+
+	exec, err := plan.Execute(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, exec.ResponseFormat)
+	require.NotNil(t, exec.ResponseFormat.Schema)
 }

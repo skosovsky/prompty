@@ -93,25 +93,25 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	for _, msg := range working.Messages {
 		switch msg.Role {
 		case prompty.RoleSystem, prompty.RoleDeveloper:
-			blocks, err := a.systemMessageBlocks(msg.Content, msg.CacheControl)
+			blocks, err := a.systemMessageBlocks(msg.Content, msg.CachePolicy)
 			if err != nil {
 				return nil, err
 			}
 			systemBlocks = append(systemBlocks, blocks...)
 		case prompty.RoleUser:
-			m, err := a.userMessage(msg.Content, msg.CacheControl)
+			m, err := a.userMessage(msg.Content, msg.CachePolicy)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, m)
 		case prompty.RoleAssistant:
-			m, err := a.assistantMessage(msg.Content, msg.CacheControl)
+			m, err := a.assistantMessage(msg.Content, msg.CachePolicy)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, m)
 		case prompty.RoleTool:
-			m, err := a.toolResultMessage(msg.Content, msg.CacheControl)
+			m, err := a.toolResultMessage(msg.Content, msg.CachePolicy)
 			if err != nil {
 				return nil, err
 			}
@@ -244,7 +244,7 @@ func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaPa
 
 func (a *Adapter) systemMessageBlocks(
 	parts []prompty.ContentPart,
-	messageCache *prompty.CacheControl,
+	messageCache *prompty.CachePolicy,
 ) ([]anthropic.TextBlockParam, error) {
 	blocks := make([]anthropic.TextBlockParam, 0, len(parts))
 	for _, p := range parts {
@@ -260,7 +260,7 @@ func (a *Adapter) systemMessageBlocks(
 		default:
 			return nil, adapter.ErrUnsupportedContentType
 		}
-		cache, err := toAnthropicCacheControl(resolveCacheControl(messageCache, textPart.CacheControl))
+		cache, err := toAnthropicCacheControl(resolveCacheControl(messageCache, textPart.CachePolicy))
 		if err != nil {
 			return nil, err
 		}
@@ -275,14 +275,14 @@ func (a *Adapter) systemMessageBlocks(
 
 func (a *Adapter) userMessage(
 	parts []prompty.ContentPart,
-	messageCache *prompty.CacheControl,
+	messageCache *prompty.CachePolicy,
 ) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
 			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
@@ -292,13 +292,13 @@ func (a *Adapter) userMessage(
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
 			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
 			blocks = append(blocks, block)
 		case prompty.MediaPart:
-			cache := resolveCacheControl(messageCache, x.CacheControl)
+			cache := resolveCacheControl(messageCache, x.CachePolicy)
 			block, err := a.mediaBlock(x, cache)
 			if err != nil {
 				return anthropic.MessageParam{}, err
@@ -308,7 +308,7 @@ func (a *Adapter) userMessage(
 			if x == nil {
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
-			cache := resolveCacheControl(messageCache, x.CacheControl)
+			cache := resolveCacheControl(messageCache, x.CachePolicy)
 			block, err := a.mediaBlock(*x, cache)
 			if err != nil {
 				return anthropic.MessageParam{}, err
@@ -323,14 +323,14 @@ func (a *Adapter) userMessage(
 
 func (a *Adapter) assistantMessage(
 	parts []prompty.ContentPart,
-	messageCache *prompty.CacheControl,
+	messageCache *prompty.CachePolicy,
 ) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
 			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
@@ -340,7 +340,7 @@ func (a *Adapter) assistantMessage(
 				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
 			}
 			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
@@ -354,7 +354,7 @@ func (a *Adapter) assistantMessage(
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
 			}
 			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
@@ -371,7 +371,7 @@ func (a *Adapter) assistantMessage(
 				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
 			}
 			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CacheControl))
+			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
 			if err != nil {
 				return anthropic.MessageParam{}, err
 			}
@@ -385,7 +385,7 @@ func (a *Adapter) assistantMessage(
 
 func (a *Adapter) toolResultMessage(
 	parts []prompty.ContentPart,
-	messageCache *prompty.CacheControl,
+	messageCache *prompty.CachePolicy,
 ) (anthropic.MessageParam, error) {
 	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 	for _, p := range parts {
@@ -406,7 +406,7 @@ func (a *Adapter) toolResultMessage(
 			)
 		}
 		{
-			toolResultCache := resolveCacheControl(messageCache, tr.CacheControl)
+			toolResultCache := resolveCacheControl(messageCache, tr.CachePolicy)
 			content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(tr.Content))
 			for _, cp := range tr.Content {
 				block, err := a.toolResultContentBlock(cp, toolResultCache)
@@ -440,7 +440,7 @@ func (a *Adapter) toolResultMessage(
 
 func (a *Adapter) toolResultContentBlock(
 	part prompty.ContentPart,
-	inheritedCache *prompty.CacheControl,
+	inheritedCache *prompty.CachePolicy,
 ) (anthropic.ToolResultBlockParamContentUnion, error) {
 	cache := resolveCacheControl(inheritedCache, contentPartCacheControl(part))
 	switch x := part.(type) {
@@ -480,7 +480,7 @@ func (a *Adapter) toolResultContentBlock(
 
 func (a *Adapter) mediaBlock(
 	part prompty.MediaPart,
-	cache *prompty.CacheControl,
+	cache *prompty.CachePolicy,
 ) (anthropic.ContentBlockParamUnion, error) {
 	mime := strings.ToLower(strings.TrimSpace(part.MIMEType))
 	if mime == "" {
@@ -558,7 +558,7 @@ func mediaBlockFromURL(mime, url string) (anthropic.ContentBlockParamUnion, erro
 
 func (a *Adapter) applyCacheControl(
 	block anthropic.ContentBlockParamUnion,
-	cache *prompty.CacheControl,
+	cache *prompty.CachePolicy,
 ) (anthropic.ContentBlockParamUnion, error) {
 	c, err := toAnthropicCacheControl(cache)
 	if err != nil {
@@ -582,7 +582,7 @@ func (a *Adapter) applyCacheControl(
 	return block, nil
 }
 
-func toAnthropicCacheControl(cache *prompty.CacheControl) (*anthropic.CacheControlEphemeralParam, error) {
+func toAnthropicCacheControl(cache *prompty.CachePolicy) (*anthropic.CacheControlEphemeralParam, error) {
 	if cache == nil {
 		return nil, nil
 	}
@@ -591,56 +591,56 @@ func toAnthropicCacheControl(cache *prompty.CacheControl) (*anthropic.CacheContr
 		return nil, nil
 	}
 	if cacheType != "ephemeral" {
-		return nil, fmt.Errorf("anthropic adapter: unsupported cache_control.type %q", cache.Type)
+		return nil, fmt.Errorf("anthropic adapter: unsupported cache_policy.type %q", cache.Type)
 	}
 	c := anthropic.NewCacheControlEphemeralParam()
 	return &c, nil
 }
 
-func resolveCacheControl(messageCache, partCache *prompty.CacheControl) *prompty.CacheControl {
+func resolveCacheControl(messageCache, partCache *prompty.CachePolicy) *prompty.CachePolicy {
 	if partCache != nil {
 		return partCache
 	}
 	return messageCache
 }
 
-func contentPartCacheControl(part prompty.ContentPart) *prompty.CacheControl {
+func contentPartCacheControl(part prompty.ContentPart) *prompty.CachePolicy {
 	switch x := part.(type) {
 	case prompty.TextPart:
-		return x.CacheControl
+		return x.CachePolicy
 	case *prompty.TextPart:
 		if x == nil {
 			return nil
 		}
-		return x.CacheControl
+		return x.CachePolicy
 	case prompty.MediaPart:
-		return x.CacheControl
+		return x.CachePolicy
 	case *prompty.MediaPart:
 		if x == nil {
 			return nil
 		}
-		return x.CacheControl
+		return x.CachePolicy
 	case prompty.ReasoningPart:
-		return x.CacheControl
+		return x.CachePolicy
 	case *prompty.ReasoningPart:
 		if x == nil {
 			return nil
 		}
-		return x.CacheControl
+		return x.CachePolicy
 	case prompty.ToolCallPart:
-		return x.CacheControl
+		return x.CachePolicy
 	case *prompty.ToolCallPart:
 		if x == nil {
 			return nil
 		}
-		return x.CacheControl
+		return x.CachePolicy
 	case prompty.ToolResultPart:
-		return x.CacheControl
+		return x.CachePolicy
 	case *prompty.ToolResultPart:
 		if x == nil {
 			return nil
 		}
-		return x.CacheControl
+		return x.CachePolicy
 	default:
 		return nil
 	}

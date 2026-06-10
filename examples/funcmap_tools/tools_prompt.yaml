@@ -1,5 +1,9 @@
 id: tools_demo
 version: "1"
+inputs:
+  query:
+    type: string
+    required: true
 tools:
   - name: get_weather
     description: Get current weather for a city

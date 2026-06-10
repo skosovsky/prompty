@@ -18,7 +18,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-func TestFileRegistry_GetTemplate_Success(t *testing.T) {
+func TestFileRegistry_Plan_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "support_agent.json")
@@ -35,7 +35,7 @@ func TestFileRegistry_GetTemplate_Success(t *testing.T) {
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
 }
 
-func TestFileRegistry_GetTemplate_ById(t *testing.T) {
+func TestFileRegistry_Plan_ById(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "support_agent.json")
@@ -60,7 +60,7 @@ func TestFileRegistry_GetTemplate_ById(t *testing.T) {
 	assert.Contains(t, tpl.Messages[0].Content[0].Text, "Base")
 }
 
-func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
+func TestFileRegistry_Plan_EnvFallbackSlashId(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(
@@ -93,7 +93,7 @@ func TestFileRegistry_GetTemplate_EnvFallbackSlashId(t *testing.T) {
 	assert.Equal(t, "Production", tpl.Messages[0].Content[0].Text, "env variant should be preferred over base")
 }
 
-func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
+func TestFileRegistry_Plan_EnvSpecificInvalidJSON(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(
@@ -108,13 +108,13 @@ func TestFileRegistry_GetTemplate_EnvSpecificInvalidJSON(t *testing.T) {
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()), WithEnvironment("prod"))
 	require.NoError(t, err)
 	ctx := context.Background()
-	// With env "prod", GetTemplate("p") tries p.prod.json first; it has invalid JSON
+	// With env "prod", Plan("p") tries p.prod.json first; it has invalid JSON
 	_, err = templateFromPlan(ctx, reg, "p")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
 
-func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
+func TestFileRegistry_Plan_JsonExtension(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "agent.json")
@@ -133,7 +133,7 @@ func TestFileRegistry_GetTemplate_JsonExtension(t *testing.T) {
 	assert.Equal(t, "From .json file", tpl.Messages[0].Content[0].Text)
 }
 
-func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
+func TestFileRegistry_Plan_CacheSafety(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(
@@ -168,7 +168,7 @@ func TestFileRegistry_GetTemplate_CacheSafety(t *testing.T) {
 	assert.Equal(t, "only_tool", tpl2.Tools[0].Name)
 }
 
-func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T) {
+func TestFileRegistry_Plan_WithEnvironment_EnvFirstThenBase(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal"), 0755))
@@ -204,7 +204,7 @@ func TestFileRegistry_GetTemplate_WithEnvironment_EnvFirstThenBase(t *testing.T)
 	assert.Equal(t, "Prod router", tpl.Messages[0].Content[0].Text, "env variant should be preferred")
 }
 
-func TestFileRegistry_GetTemplate_WithEnvironment_RequiresEnvVariant(t *testing.T) {
+func TestFileRegistry_Plan_WithEnvironment_RequiresEnvVariant(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "agent.json")
@@ -226,7 +226,7 @@ func TestFileRegistry_GetTemplate_WithEnvironment_RequiresEnvVariant(t *testing.
 	assert.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 }
 
-func TestFileRegistry_GetTemplate_NotFound(t *testing.T) {
+func TestFileRegistry_Plan_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
@@ -532,7 +532,7 @@ func TestFileRegistry_Concurrent(t *testing.T) {
 	}
 }
 
-func TestFileRegistry_GetTemplate_WithPartials(t *testing.T) {
+func TestFileRegistry_Plan_WithPartials(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "partials"), 0755))
@@ -601,4 +601,52 @@ func TestFileRegistry_ConcurrentReloadAndGet(t *testing.T) {
 	for range 50 {
 		<-done
 	}
+}
+
+func TestRegistry_Plan_InvalidManifest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "bad.yaml"),
+		[]byte("id: bad\nmessages: [unclosed"),
+		0600,
+	))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = templateFromPlan(ctx, reg, "bad")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
+}
+
+func TestRegistry_Plan_ComposePeekInvalid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "compose_bad.yaml"),
+		[]byte("id: compose_bad\nimports:\n  - id: child\nlayers: [unclosed"),
+		0600,
+	))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = templateFromPlan(ctx, reg, "compose_bad")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
+}
+
+func TestRegistry_ManifestUsesComposeE_CorruptReturnsError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "bad.yaml"),
+		[]byte("id: bad\nlayers: [unclosed"),
+		0600,
+	))
+	reg, err := New(dir, WithParser(manifest.NewJSONParser()))
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = reg.ManifestUsesComposeE(ctx, "bad")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }

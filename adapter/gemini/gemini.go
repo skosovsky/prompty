@@ -133,7 +133,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	// CacheControl is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
+	// CachePolicy is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
 	if len(exec.Tools) > 0 {
 		config.Tools = []*genai.Tool{{
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),

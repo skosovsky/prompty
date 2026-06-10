@@ -206,7 +206,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		return nil, err
 	}
 	working := adapter.PrepareTranslateExecution(exec)
-	// CacheControl is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
+	// CachePolicy is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(working.Messages)),
 		Model:    a.defaultModel,

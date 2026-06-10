@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// BindTemplateVars maps a struct payload to template variables using prompt tags only.
+// bindTemplateVars maps a struct payload to template variables using prompt tags only.
 // Nested objects become map[string]any so text/template can address fields by prompt keys.
 // []ChatMessage history is returned separately and is not included in the vars map.
-func BindTemplateVars(v any) (map[string]any, []ChatMessage, error) {
+func bindTemplateVars(v any) (map[string]any, []ChatMessage, error) {
 	typ, val, ok := structTypeOf(v)
 	if !ok {
 		return nil, nil, ErrInvalidPayload

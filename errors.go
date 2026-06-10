@@ -37,6 +37,8 @@ var (
 	ErrManifestBytesUnavailable = errors.New("prompty: manifest bytes unavailable from registry")
 	// ErrManifestBytesRequired indicates compile requires raw manifest bytes (strict default).
 	ErrManifestBytesRequired = errors.New("prompty: manifest bytes required for compiled prompt digest")
+	// ErrManifestDigestMismatch indicates checkpoint digest does not match current manifest bytes.
+	ErrManifestDigestMismatch = errors.New("prompty: manifest digest mismatch")
 )
 
 // VariableError wraps a sentinel error with variable and template context.
@@ -107,7 +109,7 @@ var _ error = (*ValidationError)(nil)
 var _ error = (*ToolCallError)(nil)
 
 // ValidateName checks that name and env are safe for use in paths and cache keys.
-// Rejects empty name and names containing '/', '\\', "..", or ':'. Call before registry GetTemplate or path resolution.
+// Rejects empty name and names containing '/', '\\', "..", or ':'. Call before registry Plan or path resolution.
 func ValidateName(name, env string) error {
 	if name == "" {
 		return fmt.Errorf("%w: name must not be empty", ErrInvalidName)
