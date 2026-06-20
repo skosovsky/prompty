@@ -4,6 +4,7 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/skosovsky/prompty"
 )
@@ -19,32 +20,91 @@ type LateRequiredAgentLateInput struct {
 }
 
 type LateRequiredAgentPrompt struct {
-	registry prompty.Registry
+	registry prompty.PromptCatalogRegistry
 }
 
-func (p *LateRequiredAgentPrompt) Render(ctx context.Context, input LateRequiredAgentInput) (*prompty.RenderPlan, error) {
+type LateRequiredAgentRecipe struct {
+	inner prompty.PromptRecipe[LateRequiredAgentInput, LateRequiredAgentLateInput]
+}
+
+func NewLateRequiredAgentRecipeFromCheckpoint(checkpoint prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]) (LateRequiredAgentRecipe, error) {
+	if checkpoint.Descriptor.ID != string(LateRequiredAgent) {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(LateRequiredAgent), checkpoint.Descriptor.ID)
+	}
+	input := checkpoint.Input
 	if err := validate.Struct(&input); err != nil {
-		return nil, fmt.Errorf("validate input: %w", err)
+		return LateRequiredAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
-	planInput, err := prompty.PlanInputFrom(input)
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	checkpoint.Input = input
+	inner, err := prompty.PromptRecipeFromCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput](checkpoint)
 	if err != nil {
-		return nil, fmt.Errorf("bind render input: %w", err)
+		return LateRequiredAgentRecipe{}, err
 	}
-	plan, err := p.registry.Plan(ctx, string(LateRequiredAgent), planInput)
-	if err != nil {
-		return nil, fmt.Errorf("build render plan: %w", err)
-	}
-	return plan, nil
+	return LateRequiredAgentRecipe{inner: inner}, nil
 }
 
-func (p *LateRequiredAgentPrompt) WithLate(plan *prompty.RenderPlan, late LateRequiredAgentLateInput) (*prompty.RenderPlan, error) {
-	if plan == nil {
-		return nil, prompty.ErrNilRenderPlan
+func (r LateRequiredAgentRecipe) PromptID() PromptID {
+	return LateRequiredAgent
+}
+
+func (r LateRequiredAgentRecipe) Checkpoint() (prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput], error) {
+	return r.inner.Checkpoint()
+}
+
+func (r LateRequiredAgentRecipe) CheckpointJSON() ([]byte, error) {
+	checkpoint, err := r.Checkpoint()
+	if err != nil {
+		return nil, err
 	}
-	if err := validate.Struct(&late); err != nil {
-		return nil, fmt.Errorf("validate late input: %w", err)
+	return json.Marshal(checkpoint)
+}
+
+func (r LateRequiredAgentRecipe) Descriptor() prompty.ManifestDescriptor {
+	return r.inner.Descriptor
+}
+
+func (r LateRequiredAgentRecipe) BindLate(input LateRequiredAgentLateInput) (LateRequiredAgentRecipe, error) {
+	inner, err := r.inner.BindLate(input)
+	if err != nil {
+		return LateRequiredAgentRecipe{}, err
 	}
-	return plan.WithLateInput(late)
+	return LateRequiredAgentRecipe{inner: inner}, nil
+}
+
+func (r LateRequiredAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+	return r.inner.Execute(ctx, registry)
+}
+
+func (r LateRequiredAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+	return r.inner.ExecuteWithContract(ctx, registry, contract)
+}
+
+func (p *LateRequiredAgentPrompt) NewRecipe(ctx context.Context, input LateRequiredAgentInput) (LateRequiredAgentRecipe, error) {
+	return p.newRecipe(ctx, input)
+}
+
+func (p *LateRequiredAgentPrompt) newRecipe(ctx context.Context, input LateRequiredAgentInput, options ...prompty.PromptRuntimeOptions) (LateRequiredAgentRecipe, error) {
+	if p.registry == nil {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("%s recipe requires registry", string(LateRequiredAgent))
+	}
+	if err := validate.Struct(&input); err != nil {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("validate input: %w", err)
+	}
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(LateRequiredAgent))
+	if err != nil {
+		return LateRequiredAgentRecipe{}, fmt.Errorf("recommend manifest descriptor: %w", err)
+	}
+	inner, err := prompty.NewPromptRecipe[LateRequiredAgentInput, LateRequiredAgentLateInput](desc, input, options...)
+	if err != nil {
+		return LateRequiredAgentRecipe{}, err
+	}
+	return LateRequiredAgentRecipe{inner: inner}, nil
 }
 
 func (p *LateRequiredAgentPrompt) RequiredTools() []string {

@@ -167,7 +167,7 @@ func (r *CachedRegistry) ResolveManifest(
 	)
 }
 
-// Plan returns a deferred render plan. Compose manifests and explicit runtime caps bypass template cache.
+// Plan returns a deferred render plan. Compose manifests and explicit runtime compose values bypass template cache.
 func (r *CachedRegistry) Plan(
 	ctx context.Context,
 	id string,
@@ -192,7 +192,7 @@ func (r *CachedRegistry) shouldBypassTemplateCache(
 	id string,
 	input prompty.RegistryPlanInput,
 ) bool {
-	if input.ComposeCapabilities() != nil {
+	if input.ComposeValues().IsSet() {
 		return true
 	}
 	if hint, ok := r.base.(composeCacheHint); ok {

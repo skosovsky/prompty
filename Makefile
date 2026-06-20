@@ -22,6 +22,8 @@ test:
 		echo "test - $$dir"; \
 		(cd "$$dir" && $(GO) test -v -race ./...) || exit 1; \
 	done
+	@echo "test - ./cmd/prompty-gen/testdata/gen_out"
+	@$(GO) test -v -race ./cmd/prompty-gen/testdata/gen_out
 
 bench:
 	@for dir in $(MODULES); do \

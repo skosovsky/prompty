@@ -124,7 +124,7 @@ type SchemaDefinition struct {
 	Schema      JSONDocument `json:"schema"                yaml:"schema"` // JSON Schema
 }
 
-// PromptMetadata holds observability metadata (v2.0 DTO).
+// PromptMetadata holds observability metadata.
 // Known fields: ID, Version, Description, Tags, Environment.
 // Extras holds arbitrary keys from manifest metadata block for tracing/custom middleware.
 type PromptMetadata struct {
@@ -433,28 +433,45 @@ type TemplateDescriptor struct {
 	Tags              []string
 }
 
-// ResolveManifestOpts configures manifest metadata resolution (e.g. runtime compose capabilities).
+// ResolveManifestOpts configures manifest metadata resolution (e.g. runtime compose context).
 type ResolveManifestOpts struct {
-	ComposeCapabilities map[string]any
-	// ComposeCapsSet is true when WithResolveComposeCapabilities was called with a non-nil map
-	// (including an empty map for runtime strict evaluation).
-	ComposeCapsSet bool
+	composeValues ComposeValues
 }
 
 // ResolveManifestOption configures ResolveManifest. Without options, composed manifests use a
 // conservative view (union of all imports) suitable for codegen.
 type ResolveManifestOption func(*ResolveManifestOpts)
 
-// WithResolveComposeCapabilities sets capabilities for condition.match during descriptor expansion.
-// Pass a non-nil map (including map[string]any{}) for runtime strict evaluation; omit the option for conservative compose.
-func WithResolveComposeCapabilities(caps map[string]any) ResolveManifestOption {
+// WithResolveComposeValues sets typed runtime values for condition.match during descriptor expansion.
+// Passing an intentionally empty ComposeValues enables strict runtime compose evaluation.
+func WithResolveComposeValues(values ComposeValues) ResolveManifestOption {
 	return func(o *ResolveManifestOpts) {
-		if caps == nil {
+		if !values.IsSet() {
 			return
 		}
-		o.ComposeCapsSet = true
-		o.ComposeCapabilities = cloneCapabilitiesMap(caps)
+		o.composeValues = values
 	}
+}
+
+// WithResolveComposeContext sets typed runtime compose context during descriptor expansion.
+func WithResolveComposeContext(ctx ComposeContext) ResolveManifestOption {
+	return func(o *ResolveManifestOpts) {
+		if ctx == nil {
+			return
+		}
+		values := ctx.ComposeValues()
+		if values.IsSet() {
+			o.composeValues = values
+		}
+	}
+}
+
+// ComposeValues returns typed runtime compose values and whether they were set.
+func (o ResolveManifestOpts) ComposeValues() (ComposeValues, bool) {
+	if !o.composeValues.IsSet() {
+		return ComposeValues{}, false
+	}
+	return o.composeValues, true
 }
 
 // ApplyResolveManifestOptions merges resolve options.
@@ -493,6 +510,12 @@ type ManifestComposeChecker interface {
 type DescribingRegistry interface {
 	Registry
 	PromptDescriber
+}
+
+// PromptCatalogRegistry is required by prompty-gen recipe/index APIs.
+type PromptCatalogRegistry interface {
+	DescribingRegistry
+	ManifestCheckpointRegistry
 }
 
 // Registry returns a chat prompt template by id.

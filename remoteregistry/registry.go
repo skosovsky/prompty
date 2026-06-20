@@ -107,12 +107,13 @@ func (r *Registry) ResolveManifest(
 				r.recordComposeFlag(id, uses)
 			}
 			parseOpts := []manifest.ParseOption{manifest.WithCompose(manifest.ComposeContext{
-				Ctx:          ctx,
-				Capabilities: nil,
-				Loader:       r,
+				Ctx:                         ctx,
+				Values:                      prompty.ComposeValues{},
+				Loader:                      r,
+				AllowMissingConditionValues: true,
 			})}
-			if ro.ComposeCapsSet {
-				parseOpts = append(parseOpts, manifest.WithComposeCapabilities(ro.ComposeCapabilities))
+			if values, ok := ro.ComposeValues(); ok {
+				parseOpts = append(parseOpts, manifest.WithComposeValues(values))
 			}
 			return manifest.ParseDescriptor(data, r.parser, parseOpts...)
 		}
@@ -124,15 +125,15 @@ func (r *Registry) ResolveManifest(
 }
 
 // DescribePrompt returns manifest metadata for routing and introspection.
-// It resolves without compose capabilities, so conditional imports/layers use conservative defaults.
-// Pass prompty.WithResolveComposeCapabilities to ResolveManifest when runtime caps are known.
+// It resolves without compose values, so conditional imports/layers use conservative defaults.
+// Pass prompty.WithResolveComposeContext to ResolveManifest when runtime compose values are known.
 func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	return r.ResolveManifest(ctx, id)
 }
 
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.templateForPlan(ctx, id, input.ComposeCapabilities())
+	tpl, err := r.templateForPlan(ctx, id, input.ComposeValues())
 	if err != nil {
 		return nil, err
 	}
@@ -189,11 +190,11 @@ func (r *Registry) KnownManifestUsesCompose(id string) (bool, bool) {
 	return v, ok
 }
 
-func (r *Registry) getTemplateByIDWithCaps(
+func (r *Registry) getTemplateByIDWithComposeValues(
 	ctx context.Context,
 	fetchID string,
 	logicalID string,
-	caps map[string]any,
+	values prompty.ComposeValues,
 ) (*prompty.ChatPromptTemplate, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -210,9 +211,10 @@ func (r *Registry) getTemplateByIDWithCaps(
 	var opts []manifest.ParseOption
 	if usesCompose {
 		opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
-			Ctx:          ctx,
-			Loader:       r,
-			Capabilities: caps,
+			Ctx:                         ctx,
+			Values:                      values,
+			Loader:                      r,
+			AllowMissingConditionValues: false,
 		}))
 	}
 	tpl, err := manifest.Parse(data, r.parser, opts...)
@@ -232,13 +234,13 @@ func (r *Registry) getTemplateByIDWithCaps(
 func (r *Registry) templateForPlan(
 	ctx context.Context,
 	id string,
-	caps map[string]any,
+	values prompty.ComposeValues,
 ) (*prompty.ChatPromptTemplate, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
 	for _, cid := range fetchCandidateIDs(id, r.env) {
-		tpl, err := r.getTemplateByIDWithCaps(ctx, cid, id, caps)
+		tpl, err := r.getTemplateByIDWithComposeValues(ctx, cid, id, values)
 		if err == nil {
 			return tpl, nil
 		}

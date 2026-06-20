@@ -22,9 +22,17 @@ func BuildDescriptorFromRaw(raw *RawManifest, po *parseOpts) (prompty.TemplateDe
 	var owned RawManifest
 	//nolint:nestif // compose-aware descriptor mirrors BuildFromRaw expansion
 	if len(raw.Layers) > 0 || len(raw.Imports) > 0 {
-		composeCtx := ComposeContext{Ctx: nil, Capabilities: nil, Loader: nil}
+		composeCtx := ComposeContext{
+			Ctx:                         nil,
+			Values:                      prompty.ComposeValues{},
+			Loader:                      nil,
+			AllowMissingConditionValues: true,
+		}
 		if po != nil && po.compose != nil {
 			composeCtx = *po.compose
+			if !composeCtx.Values.IsSet() {
+				composeCtx.AllowMissingConditionValues = true
+			}
 		}
 		if composeCtx.Loader == nil {
 			return prompty.TemplateDescriptor{}, fmt.Errorf(
@@ -36,7 +44,7 @@ func BuildDescriptorFromRaw(raw *RawManifest, po *parseOpts) (prompty.TemplateDe
 		if cloneErr != nil {
 			return prompty.TemplateDescriptor{}, cloneErr
 		}
-		if len(raw.Imports) > 0 && composeCtx.Capabilities == nil {
+		if len(raw.Imports) > 0 && !composeCtx.Values.IsSet() {
 			lctx := composeLoaderCtx(composeCtx)
 			effective, schemaErr := ResolveEffectiveInputSchema(lctx, cloned, composeCtx.Loader)
 			if schemaErr != nil {

@@ -4,6 +4,7 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/skosovsky/prompty"
 )
@@ -13,19 +14,77 @@ const NoVars PromptID = "no_vars"
 type NoVarsInput struct{}
 
 type NoVarsPrompt struct {
-	registry prompty.Registry
+	registry prompty.PromptCatalogRegistry
 }
 
-func (p *NoVarsPrompt) Render(ctx context.Context, input NoVarsInput) (*prompty.RenderPlan, error) {
+type NoVarsRecipe struct {
+	inner prompty.PromptRecipeNoLate[NoVarsInput]
+}
+
+func NewNoVarsRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoint[NoVarsInput]) (NoVarsRecipe, error) {
+	if checkpoint.Descriptor.ID != string(NoVars) {
+		return NoVarsRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(NoVars), checkpoint.Descriptor.ID)
+	}
+	input := checkpoint.Input
 	if err := validate.Struct(&input); err != nil {
-		return nil, fmt.Errorf("validate input: %w", err)
+		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
-	planInput := prompty.RegistryPlanInput{}
-	plan, err := p.registry.Plan(ctx, string(NoVars), planInput)
+	checkpoint.Input = input
+	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[NoVarsInput](checkpoint)
 	if err != nil {
-		return nil, fmt.Errorf("build render plan: %w", err)
+		return NoVarsRecipe{}, err
 	}
-	return plan, nil
+	return NoVarsRecipe{inner: inner}, nil
+}
+
+func (r NoVarsRecipe) PromptID() PromptID {
+	return NoVars
+}
+
+func (r NoVarsRecipe) Checkpoint() (prompty.PromptRecipeNoLateCheckpoint[NoVarsInput], error) {
+	return r.inner.Checkpoint()
+}
+
+func (r NoVarsRecipe) CheckpointJSON() ([]byte, error) {
+	checkpoint, err := r.Checkpoint()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(checkpoint)
+}
+
+func (r NoVarsRecipe) Descriptor() prompty.ManifestDescriptor {
+	return r.inner.Descriptor
+}
+
+func (r NoVarsRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+	return r.inner.Execute(ctx, registry)
+}
+
+func (r NoVarsRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+	return r.inner.ExecuteWithContract(ctx, registry, contract)
+}
+
+func (p *NoVarsPrompt) NewRecipe(ctx context.Context, input NoVarsInput) (NoVarsRecipe, error) {
+	return p.newRecipe(ctx, input)
+}
+
+func (p *NoVarsPrompt) newRecipe(ctx context.Context, input NoVarsInput, options ...prompty.PromptRuntimeOptions) (NoVarsRecipe, error) {
+	if p.registry == nil {
+		return NoVarsRecipe{}, fmt.Errorf("%s recipe requires registry", string(NoVars))
+	}
+	if err := validate.Struct(&input); err != nil {
+		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
+	}
+	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(NoVars))
+	if err != nil {
+		return NoVarsRecipe{}, fmt.Errorf("recommend manifest descriptor: %w", err)
+	}
+	inner, err := prompty.NewPromptRecipeNoLate[NoVarsInput](desc, input, options...)
+	if err != nil {
+		return NoVarsRecipe{}, err
+	}
+	return NoVarsRecipe{inner: inner}, nil
 }
 
 func (p *NoVarsPrompt) RequiredTools() []string {

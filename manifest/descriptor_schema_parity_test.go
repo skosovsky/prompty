@@ -50,7 +50,7 @@ func TestDescriptorSchemaParity_ComposedConditional(t *testing.T) {
 	}}
 
 	conservativeDesc, err := BuildDescriptorFromRaw(main, &parseOpts{compose: &ComposeContext{
-		Ctx: context.Background(), Loader: loader, Capabilities: nil,
+		Ctx: context.Background(), Loader: loader, Values: prompty.ComposeValues{},
 	}})
 	require.NoError(t, err)
 	conservativeProps := schemaProps(t, conservativeDesc.InputSchema)
@@ -58,9 +58,9 @@ func TestDescriptorSchemaParity_ComposedConditional(t *testing.T) {
 	assert.Contains(t, conservativeProps, "clinic_name")
 
 	runtimeOffDesc, err := BuildDescriptorFromRaw(main, &parseOpts{compose: &ComposeContext{
-		Ctx: context.Background(), Loader: loader, Capabilities: map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": false},
-		},
+		Ctx:    context.Background(),
+		Loader: loader,
+		Values: prompty.NewComposeValuesFromPairs(prompty.ComposeBool("capabilities.workspace_enabled", false)),
 	}})
 	require.NoError(t, err)
 	runtimeProps := schemaProps(t, runtimeOffDesc.InputSchema)
@@ -105,7 +105,7 @@ func TestDescriptorSchemaParity_ComposedConditional(t *testing.T) {
 		"late_child": childLate,
 	}}
 	lateDesc, err := BuildDescriptorFromRaw(mainLate, &parseOpts{compose: &ComposeContext{
-		Ctx: context.Background(), Loader: lateLoader, Capabilities: nil,
+		Ctx: context.Background(), Loader: lateLoader, Values: prompty.ComposeValues{},
 	}})
 	require.NoError(t, err)
 	assert.Contains(t, lateDesc.RequiredInputVars, "query")
@@ -114,7 +114,7 @@ func TestDescriptorSchemaParity_ComposedConditional(t *testing.T) {
 	working, err := cloneRawManifest(mainLate)
 	require.NoError(t, err)
 	require.NoError(t, ExpandRawManifest(working, ComposeContext{
-		Ctx: context.Background(), Loader: lateLoader, Capabilities: nil,
+		Ctx: context.Background(), Loader: lateLoader, Values: prompty.ComposeValues{},
 	}))
 	tpl, err := BuildFromRaw(working, &parseOpts{})
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ import (
 	"github.com/skosovsky/prompty/remoteregistry"
 )
 
-func TestCachedRegistry_ConditionalCompose_PlanWithoutExplicitCaps(t *testing.T) {
+func TestCachedRegistry_ConditionalCompose_MissingContextThenStrict(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("testdata", "prompts")
 	base, err := New(dir, WithParser(yaml.New()))
@@ -27,19 +27,18 @@ func TestCachedRegistry_ConditionalCompose_PlanWithoutExplicitCaps(t *testing.T)
 	}{Query: "first"})
 	require.NoError(t, err)
 
-	plan, err := reg.Plan(ctx, "composed_conditional_main", input)
-	require.NoError(t, err)
-	exec, err := plan.Execute(ctx)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 3)
+	_, err = reg.Plan(ctx, "composed_conditional_main", input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires compose values")
 
 	input2, err := prompty.PlanInputFrom(struct {
 		Query string `prompt:"query"`
 	}{Query: "second"})
 	require.NoError(t, err)
-	input2 = prompty.PlanInputWithCapabilities(input2, map[string]any{
-		"capabilities": map[string]any{"workspace_enabled": false},
-	})
+	input2 = prompty.PlanInputWithComposeContext(
+		input2,
+		workspaceComposeContext{enabled: false},
+	)
 	plan2, err := reg.Plan(ctx, "composed_conditional_main", input2)
 	require.NoError(t, err)
 	exec2, err := plan2.Execute(ctx)

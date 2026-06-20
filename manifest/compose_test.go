@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,20 +13,39 @@ import (
 
 func TestMatchCondition_DotPathStrictEquality(t *testing.T) {
 	t.Parallel()
-	ctx := map[string]any{
-		"capabilities": map[string]any{
-			"workspace_enabled": true,
-		},
-	}
-	ok, err := MatchCondition(map[string]any{"capabilities.workspace_enabled": true}, ctx)
+	values := prompty.NewComposeValuesFromPairs(prompty.ComposeBool("capabilities.workspace_enabled", true))
+	ok, err := matchCondition(map[string]any{"capabilities.workspace_enabled": true}, values)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	ok, err = MatchCondition(map[string]any{"capabilities.workspace_enabled": 1}, ctx)
+	ok, err = matchCondition(map[string]any{"capabilities.workspace_enabled": 1}, values)
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	ok, err = MatchCondition(map[string]any{"capabilities.missing": true}, ctx)
+	ok, err = matchCondition(map[string]any{"capabilities.missing": true}, values)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestMatchCondition_NumericValuesCompareByValue(t *testing.T) {
+	t.Parallel()
+	values := prompty.NewComposeValuesFromPairs(
+		prompty.ComposeInt("tier", 1),
+		prompty.ComposeFloat("ratio", 1.5),
+	)
+
+	ok, err := matchCondition(map[string]any{"tier": 1}, values)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	var restored map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"tier":1,"ratio":1.5}`), &restored))
+
+	ok, err = matchCondition(restored, values)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	ok, err = matchCondition(map[string]any{"tier": 2}, values)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -109,10 +129,8 @@ func TestExpandRawManifest_LayersAndConditionalImport(t *testing.T) {
 		},
 	}
 	ctx := ComposeContext{
-		Ctx: context.Background(),
-		Capabilities: map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": true},
-		},
+		Ctx:    context.Background(),
+		Values: prompty.NewComposeValuesFromPairs(prompty.ComposeBool("capabilities.workspace_enabled", true)),
 		Loader: loader,
 	}
 	require.NoError(t, ExpandRawManifest(main, ctx))
@@ -165,12 +183,49 @@ func TestExpandRawManifest_SkipsInactiveImport(t *testing.T) {
 		},
 	}
 	require.NoError(t, ExpandRawManifest(main, ComposeContext{
-		Ctx:          context.Background(),
-		Capabilities: map[string]any{"capabilities": map[string]any{"workspace_enabled": false}},
-		Loader:       loader,
+		Ctx:    context.Background(),
+		Values: prompty.NewComposeValuesFromPairs(prompty.ComposeBool("capabilities.workspace_enabled", false)),
+		Loader: loader,
 	}))
 	require.Len(t, main.Messages, 1)
 	assert.Equal(t, "base", main.Messages[0].Content[0].Text)
+}
+
+func TestExpandRawManifest_ConditionalImportRequiresComposeValues(t *testing.T) {
+	t.Parallel()
+	loader := &MemoryLoader{ByID: map[string]*RawManifest{
+		"workspace_format": {
+			ID: "workspace_format",
+			Messages: []RawMessage{
+				{Role: "system", Content: []RawContentPart{{Type: "text", Text: "workspace"}}},
+			},
+		},
+	}}
+	main := &RawManifest{
+		ID: "main_agent",
+		Imports: []RawImport{{
+			ID: "workspace_format",
+			Condition: &RawCondition{Match: map[string]any{
+				"capabilities.workspace_enabled": true,
+			}},
+		}},
+		Layers: []RawLayer{
+			{ID: "base", Role: "system", Content: []RawContentPart{{Type: "text", Text: "base"}}},
+			{ID: "ws", ImportRef: "workspace_format"},
+		},
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{"type": "object", "properties": map[string]any{}}),
+		},
+	}
+
+	err := ExpandRawManifest(main, ComposeContext{
+		Ctx:    context.Background(),
+		Loader: loader,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires compose values")
+	assert.Empty(t, main.Messages)
 }
 
 func TestExpandRawManifest_UnknownImportRefErrors(t *testing.T) {
@@ -198,7 +253,7 @@ func TestCheckImportCycles_DetectsGraphCycle(t *testing.T) {
 		"a": {ID: "a", Imports: []RawImport{{ID: "b"}}},
 		"b": {ID: "b", Imports: []RawImport{{ID: "a"}}},
 	}}
-	err := checkImportCycles(context.Background(), []RawImport{{ID: "a"}}, loader, nil)
+	err := checkImportCycles(context.Background(), []RawImport{{ID: "a"}}, loader, prompty.ComposeValues{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cyclic import")
 }
@@ -222,9 +277,9 @@ func TestExpandRawManifest_InactiveImportMissingChild_OK(t *testing.T) {
 		},
 	}
 	require.NoError(t, ExpandRawManifest(main, ComposeContext{
-		Ctx:          context.Background(),
-		Capabilities: map[string]any{"capabilities": map[string]any{"workspace_enabled": false}},
-		Loader:       &MemoryLoader{ByID: map[string]*RawManifest{}},
+		Ctx:    context.Background(),
+		Values: prompty.NewComposeValuesFromPairs(prompty.ComposeBool("capabilities.workspace_enabled", false)),
+		Loader: &MemoryLoader{ByID: map[string]*RawManifest{}},
 	}))
 	require.Len(t, main.Messages, 1)
 	assert.Nil(t, main.Layers)

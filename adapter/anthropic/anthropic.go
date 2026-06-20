@@ -46,6 +46,13 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
+// RuntimeDescriptor exposes adapter runtime metadata.
+func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	return adapter.RuntimeDescriptor{
+		Name: "anthropic",
+	}
+}
+
 const outputFormatToolName = "output_format"
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.

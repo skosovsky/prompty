@@ -3,27 +3,40 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
+	"io"
 )
 
 type PromptID string
 
 var validate = validator.New()
 
+type Recipe interface {
+	PromptID() PromptID
+	Descriptor() prompty.ManifestDescriptor
+	CheckpointJSON() ([]byte, error)
+	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error)
+}
+
 type PromptCatalog interface {
+	Index() PromptIndex
 	Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error)
-	RenderComposedChild(ctx context.Context, input ComposedChildInput) (*prompty.RenderPlan, error)
-	RenderComposedConditionalMain(ctx context.Context, input ComposedConditionalMainInput) (*prompty.RenderPlan, error)
-	RenderComposedMain(ctx context.Context, input ComposedMainInput) (*prompty.RenderPlan, error)
-	RenderLateBindingAgent(ctx context.Context, input LateBindingAgentInput) (*prompty.RenderPlan, error)
-	RenderLateRequiredAgent(ctx context.Context, input LateRequiredAgentInput) (*prompty.RenderPlan, error)
-	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
+	NewComposedChildRecipe(ctx context.Context, input ComposedChildInput) (ComposedChildRecipe, error)
+	NewComposedConditionalMainRecipeWithComposeContext(ctx context.Context, input ComposedConditionalMainInput, compose ComposedConditionalMainComposeContext) (ComposedConditionalMainRecipe, error)
+	NewComposedMainRecipe(ctx context.Context, input ComposedMainInput) (ComposedMainRecipe, error)
+	NewLateBindingAgentRecipe(ctx context.Context, input LateBindingAgentInput) (LateBindingAgentRecipe, error)
+	NewLateRequiredAgentRecipe(ctx context.Context, input LateRequiredAgentInput) (LateRequiredAgentRecipe, error)
+	NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error)
 }
 
 type promptCatalog struct {
-	registry                prompty.DescribingRegistry
+	registry                prompty.PromptCatalogRegistry
 	ComposedChild           *ComposedChildPrompt
 	ComposedConditionalMain *ComposedConditionalMainPrompt
 	ComposedMain            *ComposedMainPrompt
@@ -32,36 +45,595 @@ type promptCatalog struct {
 	SupportAgent            *SupportAgentPrompt
 }
 
-func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog {
+func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog {
 	return &promptCatalog{registry: r, ComposedChild: &ComposedChildPrompt{registry: r}, ComposedConditionalMain: &ComposedConditionalMainPrompt{registry: r}, ComposedMain: &ComposedMainPrompt{registry: r}, LateBindingAgent: &LateBindingAgentPrompt{registry: r}, LateRequiredAgent: &LateRequiredAgentPrompt{registry: r}, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
+type PromptEntry struct {
+	ID                     PromptID
+	metadata               prompty.PromptMetadata
+	requiredTools          []string
+	descriptor             prompty.ManifestDescriptor
+	newRecipeFromJSON      func(context.Context, []byte) (Recipe, error)
+	decodeRecipeCheckpoint func([]byte) (Recipe, error)
+}
+
+func (e PromptEntry) Metadata() prompty.PromptMetadata {
+	metadata := e.metadata
+	metadata.Tags = append([]string{}, e.metadata.Tags...)
+	metadata.Capabilities = append([]string{}, e.metadata.Capabilities...)
+	metadata.Extras = prompty.CloneJSONDocument(e.metadata.Extras)
+	return metadata
+}
+
+func (e PromptEntry) RequiredTools() []string {
+	return append([]string{}, e.requiredTools...)
+}
+
+func (e PromptEntry) Descriptor() prompty.ManifestDescriptor {
+	return e.descriptor
+}
+
+func (e PromptEntry) NewRecipeFromJSON(ctx context.Context, payload []byte) (Recipe, error) {
+	if e.newRecipeFromJSON == nil {
+		return nil, fmt.Errorf("prompt index: no recipe decoder for %q", e.ID)
+	}
+	return e.newRecipeFromJSON(ctx, payload)
+}
+
+func (e PromptEntry) DecodeRecipeCheckpoint(payload []byte) (Recipe, error) {
+	if e.decodeRecipeCheckpoint == nil {
+		return nil, fmt.Errorf("prompt index: no checkpoint decoder for %q", e.ID)
+	}
+	return e.decodeRecipeCheckpoint(payload)
+}
+
+type PromptIndex struct {
+	registry prompty.PromptCatalogRegistry
+}
+
+func NewPromptIndex(r prompty.PromptCatalogRegistry) PromptIndex {
+	return PromptIndex{registry: r}
+}
+
+func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
+	var newRecipeFromJSON func(context.Context, []byte) (Recipe, error)
+	var decodeRecipeCheckpoint func([]byte) (Recipe, error)
+	var metadata prompty.PromptMetadata
+	var requiredTools []string
+	var descriptor prompty.ManifestDescriptor
+	switch id {
+	case ComposedChild:
+		metadata = prompty.PromptMetadata{ID: "composed_child"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_child", Digest: "85b01ac571ed133891a74581e931f2e8aa127c898e42be04190baf9ea6641fea"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_child")
+			}
+			var input ComposedChildInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "composed_child", err)
+			}
+			recipe, err := (&ComposedChildPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_child", err)
+			}
+			recipe, err := NewComposedChildRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	case ComposedConditionalMain:
+		metadata = prompty.PromptMetadata{ID: "composed_conditional_main"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_conditional_main", Digest: "f19613f98555e7e28a73f208fc6da91711b6ce0097bcdddbff0aa18c0f12a0a6"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_conditional_main")
+			}
+			var decoded ComposedConditionalMainRecipePayload
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&decoded); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe payload: %w", "composed_conditional_main", err)
+			}
+			if decoded.Compose == nil {
+				return nil, fmt.Errorf("decode %s recipe payload: compose context is required", "composed_conditional_main")
+			}
+			recipe, err := (&ComposedConditionalMainPrompt{registry: i.registry}).NewRecipeWithComposeContext(ctx, decoded.Input, *decoded.Compose)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_conditional_main", err)
+			}
+			recipe, err := NewComposedConditionalMainRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	case ComposedMain:
+		metadata = prompty.PromptMetadata{ID: "composed_main"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_main", Digest: "7f68061bc860d9c1413f3ae712eb391fb58cf8a3caacf6c9204a8d64b965626e"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_main")
+			}
+			var input ComposedMainInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "composed_main", err)
+			}
+			recipe, err := (&ComposedMainPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedMainInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_main", err)
+			}
+			recipe, err := NewComposedMainRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	case LateBindingAgent:
+		metadata = prompty.PromptMetadata{ID: "late_binding_agent"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "late_binding_agent", Digest: "30667b3ac6d891a5bf1e1e900179eb4fdb2d5642b78d6076812c154c8d0f0853"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "late_binding_agent")
+			}
+			var input LateBindingAgentInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "late_binding_agent", err)
+			}
+			recipe, err := (&LateBindingAgentPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[LateBindingAgentInput, LateBindingAgentLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "late_binding_agent", err)
+			}
+			recipe, err := NewLateBindingAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	case LateRequiredAgent:
+		metadata = prompty.PromptMetadata{ID: "late_required_agent"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "late_required_agent", Digest: "90d3a6b08dbea7e6eb1d6ed5d852f785279ca1ab119b06cdf20523816fc32bd6"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "late_required_agent")
+			}
+			var input LateRequiredAgentInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "late_required_agent", err)
+			}
+			recipe, err := (&LateRequiredAgentPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "late_required_agent", err)
+			}
+			recipe, err := NewLateRequiredAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	case SupportAgent:
+		metadata = prompty.PromptMetadata{ID: "support_agent", Version: "1.2", Description: "Customer support agent"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "4327cb446c7c0f176f3c6579ee390af085d9f7254b6fb85a495136e4de5566c0"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "support_agent")
+			}
+			var input SupportAgentInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "support_agent", err)
+			}
+			recipe, err := (&SupportAgentPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "support_agent", err)
+			}
+			recipe, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	default:
+		return PromptEntry{}, false
+	}
+	return PromptEntry{ID: id, metadata: metadata, requiredTools: requiredTools, descriptor: descriptor, newRecipeFromJSON: newRecipeFromJSON, decodeRecipeCheckpoint: decodeRecipeCheckpoint}, true
+}
+
+func (i PromptIndex) NewRecipeFromJSON(ctx context.Context, id PromptID, payload []byte) (Recipe, bool, error) {
+	entry, ok := i.Lookup(id)
+	if !ok {
+		return nil, false, nil
+	}
+	var err error
+	recipe, err := entry.NewRecipeFromJSON(ctx, payload)
+	return recipe, true, err
+}
+
+func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe, bool, error) {
+	switch id {
+	case ComposedChild:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_child", err)
+			}
+			recipe, err := NewComposedChildRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	case ComposedConditionalMain:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_conditional_main", err)
+			}
+			recipe, err := NewComposedConditionalMainRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	case ComposedMain:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedMainInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "composed_main", err)
+			}
+			recipe, err := NewComposedMainRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	case LateBindingAgent:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[LateBindingAgentInput, LateBindingAgentLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "late_binding_agent", err)
+			}
+			recipe, err := NewLateBindingAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	case LateRequiredAgent:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "late_required_agent", err)
+			}
+			recipe, err := NewLateRequiredAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	case SupportAgent:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "support_agent", err)
+			}
+			recipe, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	default:
+		return nil, false, nil
+	}
+	return nil, false, nil
+}
+
+func (c *promptCatalog) Index() PromptIndex {
+	return NewPromptIndex(c.registry)
+}
+
 func (c *promptCatalog) Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error) {
+	if c.registry == nil {
+		return prompty.TemplateDescriptor{}, fmt.Errorf("prompt catalog: registry is required for %q", id)
+	}
+	if _, ok := c.Index().Lookup(id); !ok {
+		return prompty.TemplateDescriptor{}, fmt.Errorf("prompt catalog: unknown prompt id %q", id)
+	}
 	return c.registry.DescribePrompt(ctx, string(id))
 }
 
-func (c *promptCatalog) RenderComposedChild(ctx context.Context, input ComposedChildInput) (*prompty.RenderPlan, error) {
-	return c.ComposedChild.Render(ctx, input)
+func (c *promptCatalog) NewComposedChildRecipe(ctx context.Context, input ComposedChildInput) (ComposedChildRecipe, error) {
+	return c.ComposedChild.NewRecipe(ctx, input)
 }
 
-func (c *promptCatalog) RenderComposedConditionalMain(ctx context.Context, input ComposedConditionalMainInput) (*prompty.RenderPlan, error) {
-	return c.ComposedConditionalMain.Render(ctx, input)
+func (c *promptCatalog) NewComposedConditionalMainRecipeWithComposeContext(ctx context.Context, input ComposedConditionalMainInput, compose ComposedConditionalMainComposeContext) (ComposedConditionalMainRecipe, error) {
+	return c.ComposedConditionalMain.NewRecipeWithComposeContext(ctx, input, compose)
 }
 
-func (c *promptCatalog) RenderComposedMain(ctx context.Context, input ComposedMainInput) (*prompty.RenderPlan, error) {
-	return c.ComposedMain.Render(ctx, input)
+func (c *promptCatalog) NewComposedMainRecipe(ctx context.Context, input ComposedMainInput) (ComposedMainRecipe, error) {
+	return c.ComposedMain.NewRecipe(ctx, input)
 }
 
-func (c *promptCatalog) RenderLateBindingAgent(ctx context.Context, input LateBindingAgentInput) (*prompty.RenderPlan, error) {
-	return c.LateBindingAgent.Render(ctx, input)
+func (c *promptCatalog) NewLateBindingAgentRecipe(ctx context.Context, input LateBindingAgentInput) (LateBindingAgentRecipe, error) {
+	return c.LateBindingAgent.NewRecipe(ctx, input)
 }
 
-func (c *promptCatalog) RenderLateRequiredAgent(ctx context.Context, input LateRequiredAgentInput) (*prompty.RenderPlan, error) {
-	return c.LateRequiredAgent.Render(ctx, input)
+func (c *promptCatalog) NewLateRequiredAgentRecipe(ctx context.Context, input LateRequiredAgentInput) (LateRequiredAgentRecipe, error) {
+	return c.LateRequiredAgent.NewRecipe(ctx, input)
 }
 
-func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
-	return c.SupportAgent.Render(ctx, input)
+func (c *promptCatalog) NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error) {
+	return c.SupportAgent.NewRecipe(ctx, input)
 }
 
 func AllPromptIDs() []PromptID {

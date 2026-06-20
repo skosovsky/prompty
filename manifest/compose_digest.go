@@ -12,7 +12,7 @@ import (
 )
 
 // ComposeClosureDigestSHA256 returns a composite digest covering the main manifest and all
-// transitive import manifest bytes (conservative closure with nil capabilities).
+// transitive import manifest bytes (conservative closure without runtime compose values).
 func ComposeClosureDigestSHA256(
 	mainID string,
 	readBytes func(id string) ([]byte, error),

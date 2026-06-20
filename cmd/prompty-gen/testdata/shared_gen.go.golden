@@ -3,35 +3,214 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
+	"io"
 )
 
 type PromptID string
 
 var validate = validator.New()
 
+type Recipe interface {
+	PromptID() PromptID
+	Descriptor() prompty.ManifestDescriptor
+	CheckpointJSON() ([]byte, error)
+	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error)
+}
+
 type PromptCatalog interface {
+	Index() PromptIndex
 	Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error)
-	RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error)
+	NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error)
 }
 
 type promptCatalog struct {
-	registry     prompty.DescribingRegistry
+	registry     prompty.PromptCatalogRegistry
 	SupportAgent *SupportAgentPrompt
 }
 
-func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog {
+func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog {
 	return &promptCatalog{registry: r, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
+type PromptEntry struct {
+	ID                     PromptID
+	metadata               prompty.PromptMetadata
+	requiredTools          []string
+	descriptor             prompty.ManifestDescriptor
+	newRecipeFromJSON      func(context.Context, []byte) (Recipe, error)
+	decodeRecipeCheckpoint func([]byte) (Recipe, error)
+}
+
+func (e PromptEntry) Metadata() prompty.PromptMetadata {
+	metadata := e.metadata
+	metadata.Tags = append([]string{}, e.metadata.Tags...)
+	metadata.Capabilities = append([]string{}, e.metadata.Capabilities...)
+	metadata.Extras = prompty.CloneJSONDocument(e.metadata.Extras)
+	return metadata
+}
+
+func (e PromptEntry) RequiredTools() []string {
+	return append([]string{}, e.requiredTools...)
+}
+
+func (e PromptEntry) Descriptor() prompty.ManifestDescriptor {
+	return e.descriptor
+}
+
+func (e PromptEntry) NewRecipeFromJSON(ctx context.Context, payload []byte) (Recipe, error) {
+	if e.newRecipeFromJSON == nil {
+		return nil, fmt.Errorf("prompt index: no recipe decoder for %q", e.ID)
+	}
+	return e.newRecipeFromJSON(ctx, payload)
+}
+
+func (e PromptEntry) DecodeRecipeCheckpoint(payload []byte) (Recipe, error) {
+	if e.decodeRecipeCheckpoint == nil {
+		return nil, fmt.Errorf("prompt index: no checkpoint decoder for %q", e.ID)
+	}
+	return e.decodeRecipeCheckpoint(payload)
+}
+
+type PromptIndex struct {
+	registry prompty.PromptCatalogRegistry
+}
+
+func NewPromptIndex(r prompty.PromptCatalogRegistry) PromptIndex {
+	return PromptIndex{registry: r}
+}
+
+func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
+	var newRecipeFromJSON func(context.Context, []byte) (Recipe, error)
+	var decodeRecipeCheckpoint func([]byte) (Recipe, error)
+	var metadata prompty.PromptMetadata
+	var requiredTools []string
+	var descriptor prompty.ManifestDescriptor
+	switch id {
+	case SupportAgent:
+		metadata = prompty.PromptMetadata{ID: "support_agent"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "sha256:test-support_agent"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "support_agent")
+			}
+			var input SupportAgentInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "support_agent", err)
+			}
+			recipe, err := (&SupportAgentPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "support_agent", err)
+			}
+			recipe, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+	default:
+		return PromptEntry{}, false
+	}
+	return PromptEntry{ID: id, metadata: metadata, requiredTools: requiredTools, descriptor: descriptor, newRecipeFromJSON: newRecipeFromJSON, decodeRecipeCheckpoint: decodeRecipeCheckpoint}, true
+}
+
+func (i PromptIndex) NewRecipeFromJSON(ctx context.Context, id PromptID, payload []byte) (Recipe, bool, error) {
+	entry, ok := i.Lookup(id)
+	if !ok {
+		return nil, false, nil
+	}
+	var err error
+	recipe, err := entry.NewRecipeFromJSON(ctx, payload)
+	return recipe, true, err
+}
+
+func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe, bool, error) {
+	switch id {
+	case SupportAgent:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "support_agent", err)
+			}
+			recipe, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
+	default:
+		return nil, false, nil
+	}
+	return nil, false, nil
+}
+
+func (c *promptCatalog) Index() PromptIndex {
+	return NewPromptIndex(c.registry)
+}
+
 func (c *promptCatalog) Descriptor(ctx context.Context, id PromptID) (prompty.TemplateDescriptor, error) {
+	if c.registry == nil {
+		return prompty.TemplateDescriptor{}, fmt.Errorf("prompt catalog: registry is required for %q", id)
+	}
+	if _, ok := c.Index().Lookup(id); !ok {
+		return prompty.TemplateDescriptor{}, fmt.Errorf("prompt catalog: unknown prompt id %q", id)
+	}
 	return c.registry.DescribePrompt(ctx, string(id))
 }
 
-func (c *promptCatalog) RenderSupportAgent(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
-	return c.SupportAgent.Render(ctx, input)
+func (c *promptCatalog) NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error) {
+	return c.SupportAgent.NewRecipe(ctx, input)
 }
 
 func AllPromptIDs() []PromptID {

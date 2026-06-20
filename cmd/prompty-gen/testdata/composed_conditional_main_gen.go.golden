@@ -4,8 +4,10 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/skosovsky/prompty"
+	"strings"
 )
 
 const ComposedConditionalMain PromptID = "composed_conditional_main"
@@ -15,23 +17,159 @@ type ComposedConditionalMainInput struct {
 	Query      string  `json:"query" prompt:"query" validate:"required"`
 }
 
-type ComposedConditionalMainPrompt struct {
-	registry prompty.Registry
+type ComposedConditionalMainComposeContext struct {
+	CapabilitiesWorkspaceEnabled *bool `json:"capabilities_workspace_enabled"`
 }
 
-func (p *ComposedConditionalMainPrompt) Render(ctx context.Context, input ComposedConditionalMainInput) (*prompty.RenderPlan, error) {
+func NewComposedConditionalMainComposeContext(capabilitiesWorkspaceEnabled bool) ComposedConditionalMainComposeContext {
+	return ComposedConditionalMainComposeContext{CapabilitiesWorkspaceEnabled: &capabilitiesWorkspaceEnabled}
+}
+
+func (c ComposedConditionalMainComposeContext) ValidateComposeContext() error {
+	if c.CapabilitiesWorkspaceEnabled == nil {
+		return fmt.Errorf("%s compose context requires %q", string(ComposedConditionalMain), "capabilities.workspace_enabled")
+	}
+	return nil
+}
+
+func (c ComposedConditionalMainComposeContext) ComposeValues() prompty.ComposeValues {
+	pairs := make([]prompty.ComposeValue, 0, 1)
+	if c.CapabilitiesWorkspaceEnabled != nil {
+		pairs = append(pairs, prompty.ComposeBool("capabilities.workspace_enabled", *c.CapabilitiesWorkspaceEnabled))
+	}
+	return prompty.NewComposeValuesFromPairs(pairs...)
+}
+
+func composedConditionalMainComposeValue(values map[string]interface{}, path string) (interface{}, bool) {
+	if path == "" {
+		return nil, false
+	}
+	var cur interface{} = values
+	for _, part := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		next, ok := m[part]
+		if !ok {
+			return nil, false
+		}
+		cur = next
+	}
+	return cur, true
+}
+
+type ComposedConditionalMainRecipePayload struct {
+	Input   ComposedConditionalMainInput           `json:"input"`
+	Compose *ComposedConditionalMainComposeContext `json:"compose"`
+}
+
+type ComposedConditionalMainPrompt struct {
+	registry prompty.PromptCatalogRegistry
+}
+
+type ComposedConditionalMainRecipe struct {
+	inner prompty.PromptRecipeNoLate[ComposedConditionalMainInput]
+}
+
+func NewComposedConditionalMainRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]) (ComposedConditionalMainRecipe, error) {
+	if checkpoint.Descriptor.ID != string(ComposedConditionalMain) {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(ComposedConditionalMain), checkpoint.Descriptor.ID)
+	}
+	input := checkpoint.Input
 	if err := validate.Struct(&input); err != nil {
-		return nil, fmt.Errorf("validate input: %w", err)
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
-	planInput, err := prompty.PlanInputFrom(input)
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	checkpoint.Input = input
+	{
+		if len(checkpoint.RuntimeOptions.ComposeValues) == 0 {
+			return ComposedConditionalMainRecipe{}, fmt.Errorf("%s checkpoint requires compose context", string(ComposedConditionalMain))
+		}
+		composeValues, err := prompty.JSONDocumentAsMap(checkpoint.RuntimeOptions.ComposeValues)
+		if err != nil {
+			return ComposedConditionalMainRecipe{}, fmt.Errorf("%s checkpoint compose context: %w", string(ComposedConditionalMain), err)
+		}
+		valueCapabilitiesWorkspaceEnabled, okCapabilitiesWorkspaceEnabled := composedConditionalMainComposeValue(composeValues, "capabilities.workspace_enabled")
+		if !okCapabilitiesWorkspaceEnabled {
+			return ComposedConditionalMainRecipe{}, fmt.Errorf("%s checkpoint compose context requires %q", string(ComposedConditionalMain), "capabilities.workspace_enabled")
+		}
+		if _, typeOKCapabilitiesWorkspaceEnabled := valueCapabilitiesWorkspaceEnabled.(bool); !typeOKCapabilitiesWorkspaceEnabled {
+			return ComposedConditionalMainRecipe{}, fmt.Errorf("%s checkpoint compose context %q must be bool", string(ComposedConditionalMain), "capabilities.workspace_enabled")
+		}
+	}
+	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[ComposedConditionalMainInput](checkpoint)
 	if err != nil {
-		return nil, fmt.Errorf("bind render input: %w", err)
+		return ComposedConditionalMainRecipe{}, err
 	}
-	plan, err := p.registry.Plan(ctx, string(ComposedConditionalMain), planInput)
+	return ComposedConditionalMainRecipe{inner: inner}, nil
+}
+
+func (r ComposedConditionalMainRecipe) PromptID() PromptID {
+	return ComposedConditionalMain
+}
+
+func (r ComposedConditionalMainRecipe) Checkpoint() (prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput], error) {
+	return r.inner.Checkpoint()
+}
+
+func (r ComposedConditionalMainRecipe) CheckpointJSON() ([]byte, error) {
+	checkpoint, err := r.Checkpoint()
 	if err != nil {
-		return nil, fmt.Errorf("build render plan: %w", err)
+		return nil, err
 	}
-	return plan, nil
+	return json.Marshal(checkpoint)
+}
+
+func (r ComposedConditionalMainRecipe) Descriptor() prompty.ManifestDescriptor {
+	return r.inner.Descriptor
+}
+
+func (r ComposedConditionalMainRecipe) WithComposeContext(ctx ComposedConditionalMainComposeContext) (ComposedConditionalMainRecipe, error) {
+	inner, err := r.inner.WithComposeContext(ctx)
+	if err != nil {
+		return ComposedConditionalMainRecipe{}, err
+	}
+	return ComposedConditionalMainRecipe{inner: inner}, nil
+}
+
+func (r ComposedConditionalMainRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+	return r.inner.Execute(ctx, registry)
+}
+
+func (r ComposedConditionalMainRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+	return r.inner.ExecuteWithContract(ctx, registry, contract)
+}
+
+func (p *ComposedConditionalMainPrompt) newRecipe(ctx context.Context, input ComposedConditionalMainInput, options ...prompty.PromptRuntimeOptions) (ComposedConditionalMainRecipe, error) {
+	if p.registry == nil {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("%s recipe requires registry", string(ComposedConditionalMain))
+	}
+	if err := validate.Struct(&input); err != nil {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("validate input: %w", err)
+	}
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(ComposedConditionalMain))
+	if err != nil {
+		return ComposedConditionalMainRecipe{}, fmt.Errorf("recommend manifest descriptor: %w", err)
+	}
+	inner, err := prompty.NewPromptRecipeNoLate[ComposedConditionalMainInput](desc, input, options...)
+	if err != nil {
+		return ComposedConditionalMainRecipe{}, err
+	}
+	return ComposedConditionalMainRecipe{inner: inner}, nil
+}
+
+func (p *ComposedConditionalMainPrompt) NewRecipeWithComposeContext(ctx context.Context, input ComposedConditionalMainInput, compose ComposedConditionalMainComposeContext) (ComposedConditionalMainRecipe, error) {
+	options, err := prompty.PromptRuntimeOptionsFromComposeContext(compose)
+	if err != nil {
+		return ComposedConditionalMainRecipe{}, err
+	}
+	return p.newRecipe(ctx, input, options)
 }
 
 func (p *ComposedConditionalMainPrompt) RequiredTools() []string {

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
+	"math/big"
 	"reflect"
 	"sort"
-	"strings"
+	"strconv"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/internal/late"
@@ -62,11 +64,12 @@ func (l *MemoryLoader) LoadByID(_ context.Context, id string) (*RawManifest, err
 	return raw, nil
 }
 
-// ComposeContext carries capabilities for conditional imports.
+// ComposeContext carries typed runtime values for conditional imports.
 type ComposeContext struct {
-	Ctx          context.Context
-	Capabilities map[string]any
-	Loader       ManifestLoader
+	Ctx                         context.Context
+	Values                      prompty.ComposeValues
+	Loader                      ManifestLoader
+	AllowMissingConditionValues bool
 }
 
 func composeLoaderCtx(ctx ComposeContext) context.Context {
@@ -76,14 +79,14 @@ func composeLoaderCtx(ctx ComposeContext) context.Context {
 	return context.Background()
 }
 
-// MatchCondition evaluates structured condition.match against a capabilities context.
+// matchCondition evaluates structured condition.match against typed compose values.
 // Missing dot-path keys yield false; comparison is strict (type-sensitive).
-func MatchCondition(match map[string]any, ctx map[string]any) (bool, error) {
+func matchCondition(match map[string]any, values prompty.ComposeValues) (bool, error) {
 	if len(match) == 0 {
 		return true, nil
 	}
 	for key, want := range match {
-		got, ok := lookupDotPath(ctx, key)
+		got, ok := values.Lookup(key)
 		if !ok {
 			return false, nil
 		}
@@ -94,28 +97,54 @@ func MatchCondition(match map[string]any, ctx map[string]any) (bool, error) {
 	return true, nil
 }
 
-func lookupDotPath(ctx map[string]any, path string) (any, bool) {
-	if path == "" {
-		return nil, false
+func strictEqual(a, b any) bool {
+	if ar, ok := numericRat(a); ok {
+		br, bok := numericRat(b)
+		return bok && ar.Cmp(br) == 0
 	}
-	parts := strings.Split(path, ".")
-	var cur any = ctx
-	for _, part := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		v, ok := m[part]
-		if !ok {
-			return nil, false
-		}
-		cur = v
-	}
-	return cur, true
+	return reflect.DeepEqual(a, b)
 }
 
-func strictEqual(a, b any) bool {
-	return reflect.DeepEqual(a, b)
+func numericRat(v any) (*big.Rat, bool) {
+	switch n := v.(type) {
+	case int:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int64:
+		return new(big.Rat).SetInt64(n), true
+	case uint:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint8:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint16:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint32:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint64:
+		return new(big.Rat).SetUint64(n), true
+	case float32:
+		return finiteFloatRat(float64(n))
+	case float64:
+		return finiteFloatRat(n)
+	case json.Number:
+		r, ok := new(big.Rat).SetString(n.String())
+		return r, ok
+	default:
+		return nil, false
+	}
+}
+
+func finiteFloatRat(n float64) (*big.Rat, bool) {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return nil, false
+	}
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(n, 'g', -1, 64))
+	return r, ok
 }
 
 // PeekComposeOrError reports whether manifest bytes declare imports or layers.
@@ -137,15 +166,17 @@ func PeekComposeFieldsE(data []byte, u Unmarshaler) (bool, error) {
 	return len(raw.Imports) > 0 || len(raw.Layers) > 0, nil
 }
 
-func importActive(imp RawImport, caps map[string]any) (bool, error) {
+func importActive(imp RawImport, values prompty.ComposeValues, allowMissingValues bool) (bool, error) {
 	if imp.Condition == nil || len(imp.Condition.Match) == 0 {
 		return true, nil
 	}
-	// nil caps: conservative compose/codegen — conditional imports are included.
-	if caps == nil {
-		return true, nil
+	if !values.IsSet() {
+		if allowMissingValues {
+			return true, nil
+		}
+		return false, fmt.Errorf("compose: import %q condition.match requires compose values", imp.ID)
 	}
-	return MatchCondition(imp.Condition.Match, caps)
+	return matchCondition(imp.Condition.Match, values)
 }
 
 // MergeInputSchemas unions local and import input schemas (codegen uses conservative union).
@@ -319,8 +350,14 @@ func cloneRawManifest(src *RawManifest) (*RawManifest, error) {
 	return &dst, nil
 }
 
-// checkImportCycles detects cycles among imports. When caps is non-nil, only active imports are traversed.
-func checkImportCycles(ctx context.Context, imports []RawImport, loader ManifestLoader, caps map[string]any) error {
+// checkImportCycles detects cycles among imports. With runtime values set, only active imports are traversed.
+func checkImportCycles(
+	ctx context.Context,
+	imports []RawImport,
+	loader ManifestLoader,
+	values prompty.ComposeValues,
+	allowMissingValues bool,
+) error {
 	if loader == nil || len(imports) == 0 {
 		return nil
 	}
@@ -330,14 +367,14 @@ func checkImportCycles(ctx context.Context, imports []RawImport, loader Manifest
 		if imp.ID == "" {
 			continue
 		}
-		active, err := importActive(imp, caps)
+		active, err := importActive(imp, values, allowMissingValues)
 		if err != nil {
 			return err
 		}
-		if caps != nil && !active {
+		if !active {
 			continue
 		}
-		if err := visitImportGraph(ctx, imp.ID, loader, caps, visiting, stack); err != nil {
+		if err := visitImportGraph(ctx, imp.ID, loader, values, allowMissingValues, visiting, stack); err != nil {
 			return err
 		}
 	}
@@ -357,7 +394,8 @@ func visitImportGraph(
 	ctx context.Context,
 	id string,
 	loader ManifestLoader,
-	caps map[string]any,
+	values prompty.ComposeValues,
+	allowMissingValues bool,
 	visiting, stack map[string]bool,
 ) error {
 	if stack[id] {
@@ -376,14 +414,14 @@ func visitImportGraph(
 		if imp.ID == "" {
 			return errors.New("compose: import id is required")
 		}
-		active, activeErr := importActive(imp, caps)
+		active, activeErr := importActive(imp, values, allowMissingValues)
 		if activeErr != nil {
 			return activeErr
 		}
-		if caps != nil && !active {
+		if !active {
 			continue
 		}
-		if err := visitImportGraph(ctx, imp.ID, loader, caps, visiting, stack); err != nil {
+		if err := visitImportGraph(ctx, imp.ID, loader, values, allowMissingValues, visiting, stack); err != nil {
 			return err
 		}
 	}
@@ -396,7 +434,8 @@ func collectTransitiveImports(
 	ctx context.Context,
 	raw *RawManifest,
 	loader ManifestLoader,
-	caps map[string]any,
+	values prompty.ComposeValues,
+	allowMissingValues bool,
 ) ([]*RawManifest, error) {
 	if raw == nil || loader == nil || len(raw.Imports) == 0 {
 		return nil, nil
@@ -409,11 +448,11 @@ func collectTransitiveImports(
 			if imp.ID == "" {
 				return errors.New("compose: import id is required")
 			}
-			active, activeErr := importActive(imp, caps)
+			active, activeErr := importActive(imp, values, allowMissingValues)
 			if activeErr != nil {
 				return activeErr
 			}
-			if caps != nil && !active {
+			if !active {
 				continue
 			}
 			if visited[imp.ID] {
@@ -454,10 +493,10 @@ func ResolveEffectiveInputSchema(
 	if loader == nil {
 		return nil, errors.New("compose: manifest loader is required for imports")
 	}
-	if err := checkImportCycles(ctx, raw.Imports, loader, nil); err != nil {
+	if err := checkImportCycles(ctx, raw.Imports, loader, prompty.ComposeValues{}, true); err != nil {
 		return nil, err
 	}
-	imports, err := collectTransitiveImports(ctx, raw, loader, nil)
+	imports, err := collectTransitiveImports(ctx, raw, loader, prompty.ComposeValues{}, true)
 	if err != nil {
 		return nil, err
 	}
@@ -499,10 +538,22 @@ func ExpandRawManifest(raw *RawManifest, ctx ComposeContext) error {
 		return err
 	}
 	lctx := composeLoaderCtx(ctx)
-	if cycleErr := checkImportCycles(lctx, working.Imports, ctx.Loader, ctx.Capabilities); cycleErr != nil {
+	if cycleErr := checkImportCycles(
+		lctx,
+		working.Imports,
+		ctx.Loader,
+		ctx.Values,
+		ctx.AllowMissingConditionValues,
+	); cycleErr != nil {
 		return cycleErr
 	}
-	activeImports, err := resolveActiveImports(lctx, working.Imports, ctx.Capabilities, ctx.Loader)
+	activeImports, err := resolveActiveImports(
+		lctx,
+		working.Imports,
+		ctx.Values,
+		ctx.AllowMissingConditionValues,
+		ctx.Loader,
+	)
 	if err != nil {
 		return err
 	}
@@ -540,19 +591,25 @@ func ExpandRawManifest(raw *RawManifest, ctx ComposeContext) error {
 func resolveActiveImports(
 	lctx context.Context,
 	imports []RawImport,
-	caps map[string]any,
+	values prompty.ComposeValues,
+	allowMissingValues bool,
 	loader ManifestLoader,
 ) (map[string]*RawManifest, error) {
 	out := make(map[string]*RawManifest, len(imports))
 	if loader == nil {
 		return out, nil
 	}
-	composeCtx := ComposeContext{Ctx: lctx, Capabilities: caps, Loader: loader}
+	composeCtx := ComposeContext{
+		Ctx:                         lctx,
+		Values:                      values,
+		Loader:                      loader,
+		AllowMissingConditionValues: allowMissingValues,
+	}
 	for _, imp := range imports {
 		if imp.ID == "" {
 			return nil, errors.New("compose: import id is required")
 		}
-		active, err := importActive(imp, caps)
+		active, err := importActive(imp, values, allowMissingValues)
 		if err != nil {
 			return nil, err
 		}

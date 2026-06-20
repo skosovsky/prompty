@@ -48,7 +48,7 @@ func TestEstimateTokens_AnthropicAdapter(t *testing.T) {
 	t.Parallel()
 	n, err := adapter.EstimateTokens(anthropicadapter.New(), sampleExecution(t))
 	require.NoError(t, err)
-	assert.Equal(t, 4, n) // 11 runes / 3 chars-per-token (anthropic heuristic)
+	assert.Equal(t, 4, n)
 }
 
 func TestEstimateTokens_GeminiAdapter(t *testing.T) {
@@ -102,17 +102,17 @@ func TestEstimateTokens_ProviderRatiosDiffer(t *testing.T) {
 	assert.Greater(t, anthropicN, openaiN)
 }
 
-func TestClientWithEstimator_DispatchesToAdapter(t *testing.T) {
+func TestRuntimeClient_EstimateTokensDispatchesToAdapter(t *testing.T) {
 	t.Parallel()
-	client := adapter.NewClientWithEstimator(nil, openaiadapter.New())
+	client := adapter.NewRuntimeClient(openaiadapter.New())
 	n, err := client.EstimateTokens(sampleExecution(t))
 	require.NoError(t, err)
 	assert.Equal(t, 3, n)
 }
 
-func TestClientWithEstimator_NilExecution(t *testing.T) {
+func TestRuntimeClient_EstimateTokensNilExecution(t *testing.T) {
 	t.Parallel()
-	client := adapter.NewClientWithEstimator(nil, openaiadapter.New())
+	client := adapter.NewRuntimeClient(openaiadapter.New())
 	_, err := client.EstimateTokens(nil)
 	require.ErrorIs(t, err, adapter.ErrNilExecution)
 }

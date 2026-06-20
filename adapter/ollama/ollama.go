@@ -42,6 +42,13 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
+// RuntimeDescriptor exposes adapter runtime metadata.
+func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	return adapter.RuntimeDescriptor{
+		Name: "ollama",
+	}
+}
+
 // Translate converts PromptExecution into *api.ChatRequest.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {

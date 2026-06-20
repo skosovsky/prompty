@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Generated Go must not contain the any type (task31 strict DTO contract).
+// Generated Go must not contain the any type.
 func TestGoldenGeneratedOutput_NoAnyType(t *testing.T) {
 	t.Parallel()
 	anyWord := regexp.MustCompile(`\bany\b`)

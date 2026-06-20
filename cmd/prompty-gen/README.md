@@ -1,12 +1,12 @@
 # prompty-gen
 
-prompty-gen — генератор Go-кода для prompty-манифестов в стиле SQLC. Генерирует контракты (типы Input/Output) и методы Render для рендеринга промптов. **Выполнение (Execute) — ответственность runtime: вы компонуете Render + `prompty.Invoker.Execute` по своему усмотрению.**
+prompty-gen — генератор Go-кода для prompty-манифестов. Генерирует typed contracts, recipe/checkpoint API и index по prompt id. **Вызов модели остается ответственностью runtime: generated recipe материализует `prompty.PromptExecution`, а дальше вы передаете его в invoker, middleware или streaming path.**
 
 ## Философия
 
-- **SRP:** генератор = контракт + Render; runtime = композиция + Execute.
-- Генератор не внедряет LLM-клиент и не генерирует Execute — только типы и Render.
-- Исполнение промптов: `plan, _ := prompts.Xxx.Render(ctx, input)` → `exec, _ := plan.Execute(ctx)` → `invoker.Execute(ctx, exec)`.
+- **SRP:** генератор = typed prompt contract + recipe/checkpoint/index; runtime = registry + invoker.
+- Генератор не внедряет LLM-клиент и не генерирует provider call — только typed API для создания и восстановления prompt execution.
+- Исполнение промптов: `recipe, _ := catalog.NewXxxRecipe(ctx, input)` → `exec, _ := recipe.ExecuteWithContract(ctx, registry, contract)` → `invoker.Execute(ctx, exec)`.
 
 ## Установка
 
@@ -51,10 +51,10 @@ packages:
 
 | Режим      | Описание                                                                                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **consts** | Только `PromptID` const и `AllPromptIDs()`. Манифесты должны быть v2.0 (`messages` + `inputs`). Вывод: `<package>_consts_gen.go`.                            |
-| **types**  | Полная модель: shared-файл (`PromptCatalog`, `NewPromptCatalog`, `validate`) + per-manifest файлы (Input/Output, per-prompt type с Render/RequiredTools/ID). |
+| **consts** | Только `PromptID` const и `AllPromptIDs()`. Манифесты должны использовать формат `messages` + `inputs`. Вывод: `<package>_consts_gen.go`.                     |
+| **types**  | Полная модель: shared-файл (`PromptCatalog`, `NewPromptCatalog`, `validate`, `PromptIndex`) + per-manifest файлы (Input/Output, typed compose context при `condition.match`, recipe/checkpoint API, RequiredTools/ID). |
 
-**Примечание:** Режимы `lite` и `full` удалены (breaking change).
+**Примечание:** Режимы `lite` и `full` удалены.
 
 ## Использование
 
@@ -81,10 +81,10 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type PromptCatalog` (интерфейс), `func NewPromptCatalog(r prompty.DescribingRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
-- **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, методы `Render`, `RequiredTools()`, `ID()`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Recipe` с `CheckpointJSON()`, `type PromptCatalog` (интерфейс), `PromptIndex` с static `Lookup(id)` entry metadata/required tools/descriptor, `NewRecipeFromJSON`, `DecodeRecipeCheckpoint`, `func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
+- **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, typed `XxxRecipe`, `NewXxxRecipeFromCheckpoint`, `RequiredTools()`, `ID()`. Для prompt без compose conditions генерируется `NewRecipe`; для prompt с `condition.match` генерируются `XxxComposeContext`, `XxxRecipePayload` и `NewRecipeWithComposeContext`.
 
-Render выполняет: validate input → bind plan input → `registry.Plan(ctx, id, planInput)` и возвращает `*prompty.RenderPlan`. Для манифестов с полями в `inputs` bind — `PlanInputFrom(input)`; для пустого input (без `properties`) — `prompty.RegistryPlanInput{}`. `RequiredTools()` возвращает литерал из `required_tools` манифеста.
+`NewRecipe` / `NewRecipeWithComposeContext` выполняют: defaults → validate input → fail-fast bind check → `registry.RecommendManifestDescriptor(ctx, id)` → typed recipe. `Checkpoint()` возвращает JSON-safe DTO, `CheckpointJSON()` сериализует DTO для generic `Recipe`, `NewXxxRecipeFromCheckpoint` повторно применяет defaults/validation/bind checks и восстанавливает typed recipe без ручного switch. `RequiredTools()` и `PromptIndex.Lookup(id)` возвращают generated literals без registry IO.
 
 ## Mapping JSON Schema → Go
 
@@ -99,7 +99,7 @@ Render выполняет: validate input → bind plan input → `registry.Plan
 ### Семантика полей
 
 - **required bool:** генерируется как `*bool` + `validate:"required"`. Presence проверяется через non-nil: `nil` = отсутствует (ошибка), `false` и `true` = валидны.
-- **default:** применяется для optional pointer-полей в сгенерированном `Render(...)` до валидации и вызова `registry.Plan(...)`.
+- **default:** применяется для optional pointer-полей в сгенерированном `NewRecipe(...)` до валидации и checkpoint creation.
 - Supported defaults: `string`, `integer`, `number`, `boolean` (optional поля).
 - Defaults для неподдерживаемых типов (например `array`, вложенный `object`) приводят к fail-fast ошибке генерации.
 - `minItems` / `maxItems` → validate-теги `min` / `max` для длины массива.
@@ -108,31 +108,36 @@ Render выполняет: validate input → bind plan input → `registry.Plan
 
 - Генератор всегда эмитит `prompt:"<field>"` для полей, участвующих в шаблонизации (ключи `.Input` в манифесте).
 - Теги `json` (включая `omitempty`) нужны только для transport/API; на рендеринг шаблона они **не влияют**.
-- `Render*` с непустым input schema: `prompty.PlanInputFrom(input)` → `registry.Plan(ctx, id, planInput)`; nil-указатели и пустые слайсы сохраняют ключи в `.Input`.
-- Пустой manifest input (без `properties` / без payload): `prompty.RegistryPlanInput{}`, не `PlanInputFrom` и не `nil`.
+- `NewRecipe*` с непустым input schema: `prompty.PlanInputFrom(input)` используется как fail-fast bind check; nil-указатели и пустые слайсы сохраняют ключи в `.Input` при execution.
+- Пустой manifest input (без `properties` / без payload): generated recipe не вызывает `PlanInputFrom`.
 
-## Tutorial: композиция Render + Execute
+## Tutorial: recipe + checkpoint + execute
 
 ```go
 reg, _ := fileregistry.New("./prompts", fileregistry.WithParser(yaml.New()))
 catalog := NewPromptCatalog(reg)
 var invoker prompty.Invoker // e.g. adapter.NewClient(openaiAdapter)
 
-// 1. RenderPlan промпта
-plan, err := catalog.RenderSupportAgent(ctx, SupportAgentInput{
+// 1. Typed recipe промпта
+recipe, err := catalog.NewSupportAgentRecipe(ctx, SupportAgentInput{
 	UserQuery: "Where is my order?",
 })
 if err != nil {
 	return err
 }
 
-plan, err = plan.WithLate(struct {
-	AllowedTools []string `prompt:"allowed_tools"`
-}{AllowedTools: []string{"get_order_status"}})
+checkpoint, err := recipe.Checkpoint()
 if err != nil {
 	return err
 }
-exec, err := plan.Execute(ctx)
+restored, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
+if err != nil {
+	return err
+}
+contract := prompty.ToolContractFunc(func(name string) bool {
+	return runtimeHasTool(name)
+})
+exec, err := restored.ExecuteWithContract(ctx, reg, contract)
 if err != nil {
 	return err
 }
@@ -141,39 +146,56 @@ if err != nil {
 resp, err := invoker.Execute(ctx, exec)
 ```
 
-### Full v2 flow checklist
+### Full flow checklist
 
-1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed `RenderXxx`.
-2. Runtime рендер: `catalog.RenderXxx(...)` -> `*prompty.RenderPlan`.
-3. Композиция (опционально): декларативные `imports`/`layers` в манифесте; late — `WithLate` / `WithLateInput`; `WithResponseFormatDefinition`.
-4. Выполнение плана: `plan.Execute(ctx)` -> `*prompty.PromptExecution`.
-5. Вызов модели: `invoker.Execute(ctx, exec)`.
+1. Генерация: `prompty-gen generate` -> `PromptCatalog` + typed recipes + `PromptIndex`.
+2. Runtime handle: `catalog.NewXxxRecipe(...)`, `catalog.NewXxxRecipeWithComposeContext(...)` или `PromptIndex.NewRecipeFromJSON(...)` -> generated `Recipe`.
+3. JSON decode: обычные prompts принимают JSON input; prompts с `condition.match` принимают generated `XxxRecipePayload{Input, Compose}` и требуют непустой `Compose`; unknown JSON fields отклоняются.
+4. Checkpoint: `recipe.Checkpoint()` -> JSON DTO + error; restore через `NewXxxRecipeFromCheckpoint(...)` или `PromptIndex.DecodeRecipeCheckpoint(...)`.
+5. Композиция: декларативные `imports`/`layers` в манифесте; runtime `condition.match` — через generated `XxxComposeContext`.
+6. Late input: `recipe.BindLate(XxxLateInput{...})` для манифестов с late-полями.
+7. Required tools: `recipe.ExecuteWithContract(ctx, reg, contract)` для preflight, когда runtime должен проверить доступные tools.
+8. Выполнение без required-tool preflight: `recipe.Execute(ctx, reg)` -> `*prompty.PromptExecution`; основной runtime path должен использовать `ExecuteWithContract`.
+9. Вызов модели: `invoker.Execute(ctx, exec)`.
 
-Для prewarm кэша registry по всем ID:
+Для static metadata/descriptor lookup по всем ID:
 
 ```go
+index := NewPromptIndex(nil)
 for _, id := range AllPromptIDs() {
-    _, _ = reg.Plan(ctx, string(id), prompty.RegistryPlanInput{})
+	entry, ok := index.Lookup(id)
+	if !ok {
+		continue
+	}
+	_ = entry.Metadata()
+	_ = entry.RequiredTools()
+	_ = entry.Descriptor()
 }
 ```
 
-### Композиция нескольких планов перед Execute
+### Static metadata and composition
 
-Метаданные без рендера (если registry реализует `prompty.PromptDescriber`):
+Метаданные без registry IO:
 
 ```go
-desc, err := catalog.Descriptor(ctx, prompts.SupportAgent)
+entry, ok := catalog.Index().Lookup(prompts.SupportAgent)
+if !ok {
+	return errUnknownPrompt
+}
+metadata := entry.Metadata()
+tools := entry.RequiredTools()
+descriptor := entry.Descriptor()
 ```
 
-Композиция слоёв — в YAML/JSON манифесте (`imports`, `layers`, `import_ref`). Runtime capabilities для `condition.match` передавайте через `prompty.PlanInputWithCapabilities`:
+Композиция слоёв — в YAML/JSON манифесте (`imports`, `layers`, `import_ref`). Runtime values для `condition.match` передавайте через generated typed compose context:
 
 ```go
-input, _ := prompty.PlanInputFrom(MainAgentInput{Query: "hi"})
-input = prompty.PlanInputWithCapabilities(input, map[string]any{
-	"capabilities": map[string]any{"workspace_enabled": true},
-})
-plan, _ := reg.Plan(ctx, "main_agent", input)
-exec, _ := plan.Execute(ctx)
+recipe, _ := catalog.NewMainAgentRecipeWithComposeContext(
+	ctx,
+	MainAgentInput{Query: "hi"},
+	NewMainAgentComposeContext(true),
+)
+exec, _ := recipe.ExecuteWithContract(ctx, reg, contract)
 resp, err := invoker.Execute(ctx, exec)
 ```
 
@@ -191,16 +213,6 @@ gen-check: generate
 
 В CI вызывайте `make gen-check` перед сборкой.
 
-## Зависимости целевого проекта
-
-- `github.com/skosovsky/prompty`
-- `github.com/go-playground/validator/v10` (для types mode)
-
-```bash
-go get github.com/skosovsky/prompty
-go get github.com/go-playground/validator/v10
-```
-
 ## Интеграция в CI
 
 ```yaml
@@ -215,7 +227,7 @@ go get github.com/go-playground/validator/v10
 При изменении генератора обновите эталонные файлы в `testdata/`:
 
 ```bash
-cd cmd/prompty-gen/gen && go test -run TestGenerate_GoldenCompare -- -golden=../testdata
+cd cmd/prompty-gen/gen && go test -run TestGenerate_GoldenCompare -args -- -golden=../testdata
 ```
 
 Golden files in `cmd/prompty-gen/testdata/`:
@@ -231,13 +243,3 @@ Golden files in `cmd/prompty-gen/testdata/`:
 - `composed_conditional_main_gen.go.golden`
 
 Without `-golden`, `TestGenerate_GoldenCompare` verifies generated output against these files.
-
-## External DoD validation (kosmify-prompts)
-
-**Manual validation step** — cannot be run in this repo; perform in the consuming project after local tests pass.
-
-After changing prompty or prompty-gen (e.g. YAML normalization in task17-1), run external validation in a consuming project (e.g. kosmify-prompts):
-
-1. `go install ./cmd/prompty-gen` (from prompty repo)
-2. `make generate` (in kosmify-prompts)
-3. **DoD check:** Generated Input structs (e.g. `PromptsInternalRouterInput`) must contain expected fields (`CurrentDoctorTime`, `Timezone`, `ChatHistory`, etc.), not be empty — это проверяет корректный разбор contract-style `inputs.<field>` в типы.

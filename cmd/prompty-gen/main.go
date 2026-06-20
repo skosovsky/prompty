@@ -156,8 +156,47 @@ func indexManifests(files []string, configDir string, queries []string) (manifes
 	})
 }
 
+type manifestPathIndex map[string]string
+
+func indexManifestPaths(files []string, configDir string, queries []string) (manifestPathIndex, error) {
+	byID := make(manifestPathIndex, len(files))
+	for _, fpath := range files {
+		raw, err := readRawManifestFile(fpath)
+		if err != nil {
+			return nil, err
+		}
+		id := raw.ID
+		if id == "" {
+			id = manifest.PathIDFromFile(fpath, configDir, queries)
+		}
+		if id == "" {
+			return nil, fmt.Errorf("%s: manifest has no id field and could not derive id from path", fpath)
+		}
+		if prev, ok := byID[id]; ok {
+			return nil, fmt.Errorf("duplicate id %q in %s and %s", id, prev, fpath)
+		}
+		byID[id] = fpath
+	}
+	return byID, nil
+}
+
+func (i manifestPathIndex) ReadManifestBytes(_ context.Context, id string) ([]byte, error) {
+	if i == nil {
+		return nil, errors.New("manifest path index is required")
+	}
+	fpath, ok := i[id]
+	if !ok || fpath == "" {
+		return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+	}
+	return os.ReadFile(fpath)
+}
+
 func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
 	loader, err := indexManifests(files, configDir, pkg.Queries)
+	if err != nil {
+		return err
+	}
+	pathIndex, err := indexManifestPaths(files, configDir, pkg.Queries)
 	if err != nil {
 		return err
 	}
@@ -178,6 +217,11 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 			return fmt.Errorf("duplicate id %q in %s and %s", spec.ID, prev, fpath)
 		}
 		seenIDs[spec.ID] = fpath
+		desc, descErr := manifest.CheckpointRecommend(context.Background(), spec.ID, pathIndex, yaml.New())
+		if descErr != nil {
+			return fmt.Errorf("manifest %s descriptor: %w", fpath, descErr)
+		}
+		spec.Descriptor = desc
 		specs = append(specs, spec)
 	}
 
@@ -192,7 +236,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", sharedPath)
 
-	// Per-manifest files: const, Input/Output, per-prompt type (Render, RequiredTools, ID)
+	// Per-manifest files: const, Input/Output, prompt type, recipe API, RequiredTools, ID.
 	for i, fpath := range files {
 		manifestFile, err := gen.GenerateManifestTypes(specs[i], pkg.PackageName)
 		if err != nil {
@@ -296,10 +340,14 @@ func loadSpec(
 		}
 	}
 	if raw.InputSchema == nil {
-		return nil, errors.New("manifest missing inputs block (v2.0 required)")
+		return nil, errors.New("manifest missing inputs block")
 	}
 	if len(raw.Messages) == 0 && len(raw.Layers) == 0 {
-		return nil, errors.New("manifest missing messages or layers block (v2.0 required)")
+		return nil, errors.New("manifest missing messages or layers block")
+	}
+	composeConditions, err := gen.ComposeConditionsFromRawManifest(context.Background(), raw, loader)
+	if err != nil {
+		return nil, err
 	}
 	effectiveSchema, err := manifest.ResolveEffectiveInputSchema(context.Background(), raw, loader)
 	if err != nil {
@@ -307,7 +355,10 @@ func loadSpec(
 	}
 	raw.InputSchema = effectiveSchema
 	if expandErr := manifest.ExpandRawManifest(raw, manifest.ComposeContext{
-		Ctx: context.Background(), Loader: loader, Capabilities: nil,
+		Ctx:                         context.Background(),
+		Loader:                      loader,
+		Values:                      prompty.ComposeValues{},
+		AllowMissingConditionValues: true,
 	}); expandErr != nil {
 		return nil, expandErr
 	}
@@ -325,14 +376,17 @@ func loadSpec(
 		requiredTools = []string{}
 	}
 	return &gen.PromptSpec{
-		ID:             tpl.Metadata.ID,
-		RequiredTools:  requiredTools,
-		InputSchema:    tpl.InputSchema,
-		ResponseFormat: tpl.ResponseFormat,
+		ID:                tpl.Metadata.ID,
+		Metadata:          tpl.Metadata,
+		Descriptor:        prompty.ManifestDescriptor{ID: tpl.Metadata.ID, Digest: ""},
+		RequiredTools:     requiredTools,
+		InputSchema:       tpl.InputSchema,
+		ResponseFormat:    tpl.ResponseFormat,
+		ComposeConditions: composeConditions,
 	}, nil
 }
 
-// loadManifestID reads the manifest id field and validates v2.0 clean-break (messages, inputs).
+// loadManifestID reads the manifest id field and validates the current manifest shape.
 // Priority 1: explicit id from YAML/JSON. Priority 2: fallback from relative path.
 // Consts flow rejects manifests missing messages or inputs.
 func loadManifestID(fpath string, configDir string, queries []string) (string, error) {
@@ -340,32 +394,31 @@ func loadManifestID(fpath string, configDir string, queries []string) (string, e
 	if err != nil {
 		return "", err
 	}
-	var v2Check struct {
+	var manifestShape struct {
 		ID       string `json:"id"       yaml:"id"`
 		Messages []any  `json:"messages" yaml:"messages"`
 		Inputs   any    `json:"inputs"   yaml:"inputs"`
 	}
 	switch strings.ToLower(filepath.Ext(fpath)) {
 	case extYAML, extYML:
-		if err := yamlv3.Unmarshal(data, &v2Check); err != nil {
+		if err := yamlv3.Unmarshal(data, &manifestShape); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
 	case extJSON:
-		if err := json.Unmarshal(data, &v2Check); err != nil {
+		if err := json.Unmarshal(data, &manifestShape); err != nil {
 			return "", fmt.Errorf("parse manifest: %w", err)
 		}
 	default:
 		return "", errors.New("unsupported manifest format")
 	}
-	// Clean Break v2.0: consts mode requires messages and inputs
-	if len(v2Check.Messages) == 0 {
-		return "", errors.New("manifest missing messages block (v2.0 required)")
+	if len(manifestShape.Messages) == 0 {
+		return "", errors.New("manifest missing messages block")
 	}
-	if v2Check.Inputs == nil {
-		return "", errors.New("manifest missing inputs block (v2.0 required)")
+	if manifestShape.Inputs == nil {
+		return "", errors.New("manifest missing inputs block")
 	}
-	if v2Check.ID != "" {
-		return v2Check.ID, nil
+	if manifestShape.ID != "" {
+		return manifestShape.ID, nil
 	}
 	id := idFromRelativePath(fpath, configDir, queries)
 	if id == "" {

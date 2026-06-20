@@ -55,6 +55,13 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
+// RuntimeDescriptor exposes adapter runtime metadata.
+func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	return adapter.RuntimeDescriptor{
+		Name: "gemini",
+	}
+}
+
 // Translate converts PromptExecution into *Request (Contents + Config).
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {

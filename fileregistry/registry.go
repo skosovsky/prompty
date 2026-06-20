@@ -148,19 +148,20 @@ func (r *Registry) ResolveManifest(
 	}
 	ro := prompty.ApplyResolveManifestOptions(opts)
 	parseOpts := []manifest.ParseOption{manifest.WithCompose(manifest.ComposeContext{
-		Ctx:          ctx,
-		Capabilities: nil,
-		Loader:       r,
+		Ctx:                         ctx,
+		Values:                      prompty.ComposeValues{},
+		Loader:                      r,
+		AllowMissingConditionValues: true,
 	})}
-	if ro.ComposeCapsSet {
-		parseOpts = append(parseOpts, manifest.WithComposeCapabilities(ro.ComposeCapabilities))
+	if values, ok := ro.ComposeValues(); ok {
+		parseOpts = append(parseOpts, manifest.WithComposeValues(values))
 	}
 	return manifest.ParseDescriptor(data, r.parser, parseOpts...)
 }
 
 // DescribePrompt returns manifest metadata for routing and introspection.
-// It resolves without compose capabilities, so conditional imports/layers use conservative defaults.
-// Pass prompty.WithResolveComposeCapabilities to ResolveManifest when runtime caps are known.
+// It resolves without compose values, so conditional imports/layers use conservative defaults.
+// Pass prompty.WithResolveComposeContext to ResolveManifest when runtime compose values are known.
 func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	return r.ResolveManifest(ctx, id)
 }
@@ -186,7 +187,7 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 		return nil, ctx.Err()
 	}
 	parseFile := func(path string) (*prompty.ChatPromptTemplate, error) {
-		opts := r.parseOptionsForPath(ctx, path, nil)
+		opts := r.parseOptionsForPath(ctx, path, prompty.ComposeValues{})
 		return manifest.ParseFile(path, r.parser, opts...)
 	}
 	for _, path := range idToPaths(r.dir, id, r.env) {
@@ -211,7 +212,7 @@ func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPr
 
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.templateForPlan(ctx, id, input.ComposeCapabilities())
+	tpl, err := r.templateForPlan(ctx, id, input.ComposeValues())
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,11 @@ func (r *Registry) ManifestUsesComposeE(ctx context.Context, id string) (bool, e
 	return uses, nil
 }
 
-func (r *Registry) parseOptionsForPath(ctx context.Context, path string, caps map[string]any) []manifest.ParseOption {
+func (r *Registry) parseOptionsForPath(
+	ctx context.Context,
+	path string,
+	values prompty.ComposeValues,
+) []manifest.ParseOption {
 	var opts []manifest.ParseOption
 	if r.partialsPattern != "" {
 		glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
@@ -257,9 +262,10 @@ func (r *Registry) parseOptionsForPath(ctx context.Context, path string, caps ma
 		usesCompose, peekErr := manifest.PeekComposeOrError(data, r.parser)
 		if peekErr == nil && usesCompose {
 			opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
-				Ctx:          ctx,
-				Loader:       r,
-				Capabilities: caps,
+				Ctx:                         ctx,
+				Values:                      values,
+				Loader:                      r,
+				AllowMissingConditionValues: false,
 			}))
 		}
 	}
@@ -269,7 +275,7 @@ func (r *Registry) parseOptionsForPath(ctx context.Context, path string, caps ma
 func (r *Registry) templateForPlan(
 	ctx context.Context,
 	id string,
-	caps map[string]any,
+	values prompty.ComposeValues,
 ) (*prompty.ChatPromptTemplate, error) {
 	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
@@ -287,7 +293,7 @@ func (r *Registry) templateForPlan(
 			return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
 		}
 		if usesCompose {
-			return manifest.Parse(data, r.parser, r.parseOptionsForPath(ctx, path, caps)...)
+			return manifest.Parse(data, r.parser, r.parseOptionsForPath(ctx, path, values)...)
 		}
 		break
 	}

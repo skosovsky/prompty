@@ -22,7 +22,7 @@ func sanitizePropForCodegen(prop map[string]any) map[string]any {
 	return out
 }
 
-// splitEarlyLateInputSchema splits bindable input properties into early (Render) and late (WithLateInput).
+// splitEarlyLateInputSchema splits bindable input properties into early recipe input and late input.
 func splitEarlyLateInputSchema(schema map[string]any) (map[string]any, map[string]any, bool) {
 	if schema == nil {
 		return nil, nil, false

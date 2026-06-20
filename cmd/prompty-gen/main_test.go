@@ -171,8 +171,8 @@ packages:
 		t.Fatalf("read generated file: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "prompty.RegistryPlanInput{}") {
-		t.Error("expected RegistryPlanInput{} for empty input manifest")
+	if strings.Contains(content, "func (p *NoVarsPrompt) Render(") {
+		t.Error("render-first prompt method must not be generated")
 	}
 	if strings.Contains(content, "PlanInputFrom") {
 		t.Error("empty input manifest must not call PlanInputFrom")
@@ -363,8 +363,8 @@ func TestRunGenerate_ModeConsts(t *testing.T) {
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
 		t.Fatalf("mkdir prompts: %v", err)
 	}
-	// v2.0 manifest: messages and inputs required for consts mode
-	v2Manifest := `id: legacy_only
+	// Consts mode requires messages and inputs.
+	manifestBody := `id: const_only
 version: "1"
 messages:
   - role: system
@@ -373,7 +373,7 @@ inputs:
   type: object
   properties: {}
 `
-	if err := os.WriteFile(filepath.Join(promptsDir, "legacy.yaml"), []byte(v2Manifest), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(promptsDir, "const.yaml"), []byte(manifestBody), 0644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	configPath := filepath.Join(tmp, "prompty.yaml")
@@ -399,8 +399,8 @@ packages:
 		t.Fatalf("expected consts file %s: %v", constsPath, err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "LegacyOnly") {
-		t.Error("expected LegacyOnly const in consts output")
+	if !strings.Contains(content, "ConstOnly") {
+		t.Error("expected ConstOnly const in consts output")
 	}
 	if !strings.Contains(content, "AllPromptIDs") {
 		t.Error("expected AllPromptIDs in consts output")
@@ -413,15 +413,15 @@ packages:
 	}
 }
 
-// TestRunGenerate_ModeConsts_LegacyFails verifies legacy manifests (no messages/inputs) fail in consts mode.
-func TestRunGenerate_ModeConsts_LegacyFails(t *testing.T) {
+// TestRunGenerate_ModeConsts_MissingContractFails verifies manifests without messages/inputs fail in consts mode.
+func TestRunGenerate_ModeConsts_MissingContractFails(t *testing.T) {
 	tmp := t.TempDir()
 	promptsDir := filepath.Join(tmp, "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
 		t.Fatalf("mkdir prompts: %v", err)
 	}
-	legacyManifest := "id: legacy_only\nversion: \"1\"\n"
-	if err := os.WriteFile(filepath.Join(promptsDir, "legacy.yaml"), []byte(legacyManifest), 0644); err != nil {
+	incompleteManifest := "id: const_only\nversion: \"1\"\n"
+	if err := os.WriteFile(filepath.Join(promptsDir, "const.yaml"), []byte(incompleteManifest), 0644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	configPath := filepath.Join(tmp, "prompty.yaml")
@@ -438,7 +438,7 @@ packages:
 	}
 	err := runGenerate(configPath)
 	if err == nil {
-		t.Fatal("expected error for legacy manifest in consts mode (v2.0 required)")
+		t.Fatal("expected error for manifest missing consts-mode blocks")
 	}
 	if !strings.Contains(err.Error(), "messages") && !strings.Contains(err.Error(), "inputs") {
 		t.Errorf("expected messages or inputs error, got: %v", err)
@@ -451,8 +451,8 @@ func TestRunGenerate_DuplicateID(t *testing.T) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Two manifests with same id - v2.0 required for consts
-	v2Body := `id: same_id
+	// Two manifests with same id and valid consts-mode shape.
+	manifestBody := `id: same_id
 version: "1"
 messages:
   - role: system
@@ -462,7 +462,7 @@ inputs:
   properties: {}
 `
 	for _, name := range []string{"a.yaml", "b.yaml"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(v2Body), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(manifestBody), 0644); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -494,7 +494,7 @@ func TestLoadManifestID_ExplicitAndFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Explicit id (canonical slash format) - v2.0 manifest required
+	// Explicit id in canonical slash format.
 	explicitManifest := `id: internal/router
 version: "1"
 messages:

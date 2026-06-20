@@ -13,6 +13,16 @@ import (
 	"github.com/skosovsky/prompty/parser/yaml"
 )
 
+type workspaceComposeContext struct {
+	enabled bool
+}
+
+func (c workspaceComposeContext) ComposeValues() prompty.ComposeValues {
+	return prompty.NewComposeValuesFromPairs(
+		prompty.ComposeBool("capabilities.workspace_enabled", c.enabled),
+	)
+}
+
 func TestRegistry_ComposedManifest_Provenance(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("testdata", "prompts")
@@ -83,9 +93,11 @@ func TestRegistry_ConditionalCompose_ResolveManifestWithCapabilities(t *testing.
 	runtimeOff, err := reg.ResolveManifest(
 		context.Background(),
 		"composed_conditional_main",
-		prompty.WithResolveComposeCapabilities(map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": false},
-		}),
+		prompty.WithResolveComposeValues(
+			prompty.NewComposeValuesFromPairs(
+				prompty.ComposeBool("capabilities.workspace_enabled", false),
+			),
+		),
 	)
 	require.NoError(t, err)
 	assert.Contains(t, runtimeOff.LayerIDs, "base_system")
@@ -94,9 +106,11 @@ func TestRegistry_ConditionalCompose_ResolveManifestWithCapabilities(t *testing.
 	runtimeOn, err := reg.ResolveManifest(
 		context.Background(),
 		"composed_conditional_main",
-		prompty.WithResolveComposeCapabilities(map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": true},
-		}),
+		prompty.WithResolveComposeValues(
+			prompty.NewComposeValuesFromPairs(
+				prompty.ComposeBool("capabilities.workspace_enabled", true),
+			),
+		),
 	)
 	require.NoError(t, err)
 	assert.Contains(t, runtimeOn.LayerIDs, "child_rules")
@@ -111,7 +125,7 @@ func TestRegistry_ConditionalCompose_ResolveManifestEmptyCapsStrict(t *testing.T
 	desc, err := reg.ResolveManifest(
 		context.Background(),
 		"composed_conditional_main",
-		prompty.WithResolveComposeCapabilities(map[string]any{}),
+		prompty.WithResolveComposeValues(prompty.NewComposeValuesFromPairs()),
 	)
 	require.NoError(t, err)
 	assert.Contains(t, desc.LayerIDs, "base_system")
@@ -132,9 +146,11 @@ func TestRegistry_ConditionalCompose_ResolveManifestInputSchemaWithCaps(t *testi
 	runtimeOff, err := reg.ResolveManifest(
 		context.Background(),
 		"composed_conditional_main",
-		prompty.WithResolveComposeCapabilities(map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": false},
-		}),
+		prompty.WithResolveComposeValues(
+			prompty.NewComposeValuesFromPairs(
+				prompty.ComposeBool("capabilities.workspace_enabled", false),
+			),
+		),
 	)
 	require.NoError(t, err)
 	runtimeProps := schemaPropertyNames(t, runtimeOff.InputSchema)
@@ -157,7 +173,7 @@ func schemaPropertyNames(t *testing.T, schema *prompty.SchemaDefinition) map[str
 	return out
 }
 
-func TestRegistry_ConditionalCompose_PlanDefaultMatchesResolveManifest(t *testing.T) {
+func TestRegistry_ConditionalCompose_PlanMissingComposeValuesRequiresContext(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("testdata", "prompts")
 	reg, err := New(dir, WithParser(yaml.New()))
@@ -169,14 +185,12 @@ func TestRegistry_ConditionalCompose_PlanDefaultMatchesResolveManifest(t *testin
 
 	input, err := prompty.PlanInputFrom(struct {
 		Query string `prompt:"query"`
-	}{Query: "default-conservative"})
+	}{Query: "missing-context"})
 	require.NoError(t, err)
 
-	plan, err := reg.Plan(context.Background(), "composed_conditional_main", input)
-	require.NoError(t, err)
-	exec, err := plan.Execute(context.Background())
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 3)
+	_, err = reg.Plan(context.Background(), "composed_conditional_main", input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires compose values")
 }
 
 func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
@@ -189,9 +203,10 @@ func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "caps-off"})
 	require.NoError(t, err)
-	input = prompty.PlanInputWithCapabilities(input, map[string]any{
-		"capabilities": map[string]any{"workspace_enabled": false},
-	})
+	input = prompty.PlanInputWithComposeContext(
+		input,
+		workspaceComposeContext{enabled: false},
+	)
 
 	plan, err := reg.Plan(context.Background(), "composed_conditional_main", input)
 	require.NoError(t, err)
@@ -204,9 +219,10 @@ func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "caps-on"})
 	require.NoError(t, err)
-	inputOn = prompty.PlanInputWithCapabilities(inputOn, map[string]any{
-		"capabilities": map[string]any{"workspace_enabled": true},
-	})
+	inputOn = prompty.PlanInputWithComposeContext(
+		inputOn,
+		workspaceComposeContext{enabled: true},
+	)
 	planOn, err := reg.Plan(context.Background(), "composed_conditional_main", inputOn)
 	require.NoError(t, err)
 	execOn, err := planOn.Execute(context.Background())
@@ -259,7 +275,10 @@ func (r *composeTamperReader) ReadManifestBytes(ctx context.Context, id string) 
 	return r.base.ReadManifestBytes(ctx, id)
 }
 
-func (r *composeTamperReader) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
+func (r *composeTamperReader) VerifyManifestDescriptor(
+	ctx context.Context,
+	desc prompty.ManifestDescriptor,
+) error {
 	return manifest.CheckpointVerify(ctx, desc, r, yaml.New())
 }
 

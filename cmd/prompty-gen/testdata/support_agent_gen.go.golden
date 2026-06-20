@@ -4,6 +4,7 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/skosovsky/prompty"
 )
@@ -16,26 +17,91 @@ type SupportAgentInput struct {
 }
 
 type SupportAgentPrompt struct {
-	registry prompty.Registry
+	registry prompty.PromptCatalogRegistry
 }
 
-func (p *SupportAgentPrompt) Render(ctx context.Context, input SupportAgentInput) (*prompty.RenderPlan, error) {
+type SupportAgentRecipe struct {
+	inner prompty.PromptRecipeNoLate[SupportAgentInput]
+}
+
+func NewSupportAgentRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]) (SupportAgentRecipe, error) {
+	if checkpoint.Descriptor.ID != string(SupportAgent) {
+		return SupportAgentRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(SupportAgent), checkpoint.Descriptor.ID)
+	}
+	input := checkpoint.Input
 	if input.BotName == nil {
 		v := "SupportBot"
 		input.BotName = &v
 	}
 	if err := validate.Struct(&input); err != nil {
-		return nil, fmt.Errorf("validate input: %w", err)
+		return SupportAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
-	planInput, err := prompty.PlanInputFrom(input)
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return SupportAgentRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	checkpoint.Input = input
+	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[SupportAgentInput](checkpoint)
 	if err != nil {
-		return nil, fmt.Errorf("bind render input: %w", err)
+		return SupportAgentRecipe{}, err
 	}
-	plan, err := p.registry.Plan(ctx, string(SupportAgent), planInput)
+	return SupportAgentRecipe{inner: inner}, nil
+}
+
+func (r SupportAgentRecipe) PromptID() PromptID {
+	return SupportAgent
+}
+
+func (r SupportAgentRecipe) Checkpoint() (prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput], error) {
+	return r.inner.Checkpoint()
+}
+
+func (r SupportAgentRecipe) CheckpointJSON() ([]byte, error) {
+	checkpoint, err := r.Checkpoint()
 	if err != nil {
-		return nil, fmt.Errorf("build render plan: %w", err)
+		return nil, err
 	}
-	return plan, nil
+	return json.Marshal(checkpoint)
+}
+
+func (r SupportAgentRecipe) Descriptor() prompty.ManifestDescriptor {
+	return r.inner.Descriptor
+}
+
+func (r SupportAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+	return r.inner.Execute(ctx, registry)
+}
+
+func (r SupportAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+	return r.inner.ExecuteWithContract(ctx, registry, contract)
+}
+
+func (p *SupportAgentPrompt) NewRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error) {
+	return p.newRecipe(ctx, input)
+}
+
+func (p *SupportAgentPrompt) newRecipe(ctx context.Context, input SupportAgentInput, options ...prompty.PromptRuntimeOptions) (SupportAgentRecipe, error) {
+	if p.registry == nil {
+		return SupportAgentRecipe{}, fmt.Errorf("%s recipe requires registry", string(SupportAgent))
+	}
+	if input.BotName == nil {
+		v := "SupportBot"
+		input.BotName = &v
+	}
+	if err := validate.Struct(&input); err != nil {
+		return SupportAgentRecipe{}, fmt.Errorf("validate input: %w", err)
+	}
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return SupportAgentRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(SupportAgent))
+	if err != nil {
+		return SupportAgentRecipe{}, fmt.Errorf("recommend manifest descriptor: %w", err)
+	}
+	inner, err := prompty.NewPromptRecipeNoLate[SupportAgentInput](desc, input, options...)
+	if err != nil {
+		return SupportAgentRecipe{}, err
+	}
+	return SupportAgentRecipe{inner: inner}, nil
 }
 
 func (p *SupportAgentPrompt) RequiredTools() []string {

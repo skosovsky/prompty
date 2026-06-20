@@ -47,6 +47,13 @@ func New(opts ...Option) *Adapter {
 	return a
 }
 
+// RuntimeDescriptor exposes adapter runtime metadata.
+func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	return adapter.RuntimeDescriptor{
+		Name: "openai",
+	}
+}
+
 // normalizeSchemaForStrict returns a schema copy with additionalProperties: false for type object
 // (required by OpenAI strict mode). Does not mutate the original.
 func normalizeSchemaForStrict(schema any) any {

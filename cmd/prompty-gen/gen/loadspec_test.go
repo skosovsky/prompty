@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/manifest"
 	"github.com/skosovsky/prompty/parser/yaml"
 )
@@ -61,13 +62,20 @@ func loadTestPromptSpec(t *testing.T, manifestPath string, loader manifest.Manif
 	if len(raw.Messages) == 0 && len(raw.Layers) == 0 {
 		t.Fatalf("manifest %s missing messages or layers", manifestPath)
 	}
+	composeConditions, err := ComposeConditionsFromRawManifest(context.Background(), raw, loader)
+	if err != nil {
+		t.Fatalf("ComposeConditionsFromRawManifest: %v", err)
+	}
 	effectiveSchema, err := manifest.ResolveEffectiveInputSchema(context.Background(), raw, loader)
 	if err != nil {
 		t.Fatalf("ResolveEffectiveInputSchema: %v", err)
 	}
 	raw.InputSchema = effectiveSchema
 	if expandErr := manifest.ExpandRawManifest(raw, manifest.ComposeContext{
-		Ctx: context.Background(), Loader: loader, Capabilities: nil,
+		Ctx:                         context.Background(),
+		Loader:                      loader,
+		Values:                      prompty.ComposeValues{},
+		AllowMissingConditionValues: true,
 	}); expandErr != nil {
 		t.Fatalf("ExpandRawManifest: %v", expandErr)
 	}
@@ -83,10 +91,12 @@ func loadTestPromptSpec(t *testing.T, manifestPath string, loader manifest.Manif
 		requiredTools = []string{}
 	}
 	return &PromptSpec{
-		ID:             tpl.Metadata.ID,
-		RequiredTools:  requiredTools,
-		InputSchema:    tpl.InputSchema,
-		ResponseFormat: tpl.ResponseFormat,
+		ID:                tpl.Metadata.ID,
+		Metadata:          tpl.Metadata,
+		RequiredTools:     requiredTools,
+		InputSchema:       tpl.InputSchema,
+		ResponseFormat:    tpl.ResponseFormat,
+		ComposeConditions: composeConditions,
 	}
 }
 
@@ -99,4 +109,41 @@ func composeTestLoader(t *testing.T) manifest.ManifestLoader {
 		loader.byID[raw.ID] = raw
 	}
 	return loader
+}
+
+func TestComposeConditionsFromRawManifest_TransitiveImports(t *testing.T) {
+	t.Parallel()
+	main := &manifest.RawManifest{
+		ID: "main",
+		Imports: []manifest.RawImport{
+			{ID: "child"},
+		},
+	}
+	child := &manifest.RawManifest{
+		ID: "child",
+		Imports: []manifest.RawImport{
+			{
+				ID: "grandchild",
+				Condition: &manifest.RawCondition{Match: map[string]any{
+					"capabilities.child_enabled": true,
+				}},
+			},
+		},
+	}
+	grandchild := &manifest.RawManifest{ID: "grandchild"}
+	loader := &testManifestMemoryLoader{byID: map[string]*manifest.RawManifest{
+		"child":      child,
+		"grandchild": grandchild,
+	}}
+
+	conditions, err := ComposeConditionsFromRawManifest(context.Background(), main, loader)
+	if err != nil {
+		t.Fatalf("ComposeConditionsFromRawManifest: %v", err)
+	}
+	if len(conditions) != 1 {
+		t.Fatalf("expected one transitive condition, got %#v", conditions)
+	}
+	if conditions[0].Key != "capabilities.child_enabled" || conditions[0].Kind != "bool" {
+		t.Fatalf("unexpected transitive condition: %#v", conditions[0])
+	}
 }

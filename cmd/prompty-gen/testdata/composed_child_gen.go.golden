@@ -4,6 +4,7 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/skosovsky/prompty"
 )
@@ -15,22 +16,83 @@ type ComposedChildInput struct {
 }
 
 type ComposedChildPrompt struct {
-	registry prompty.Registry
+	registry prompty.PromptCatalogRegistry
 }
 
-func (p *ComposedChildPrompt) Render(ctx context.Context, input ComposedChildInput) (*prompty.RenderPlan, error) {
+type ComposedChildRecipe struct {
+	inner prompty.PromptRecipeNoLate[ComposedChildInput]
+}
+
+func NewComposedChildRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput]) (ComposedChildRecipe, error) {
+	if checkpoint.Descriptor.ID != string(ComposedChild) {
+		return ComposedChildRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(ComposedChild), checkpoint.Descriptor.ID)
+	}
+	input := checkpoint.Input
 	if err := validate.Struct(&input); err != nil {
-		return nil, fmt.Errorf("validate input: %w", err)
+		return ComposedChildRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
-	planInput, err := prompty.PlanInputFrom(input)
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return ComposedChildRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	checkpoint.Input = input
+	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[ComposedChildInput](checkpoint)
 	if err != nil {
-		return nil, fmt.Errorf("bind render input: %w", err)
+		return ComposedChildRecipe{}, err
 	}
-	plan, err := p.registry.Plan(ctx, string(ComposedChild), planInput)
+	return ComposedChildRecipe{inner: inner}, nil
+}
+
+func (r ComposedChildRecipe) PromptID() PromptID {
+	return ComposedChild
+}
+
+func (r ComposedChildRecipe) Checkpoint() (prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput], error) {
+	return r.inner.Checkpoint()
+}
+
+func (r ComposedChildRecipe) CheckpointJSON() ([]byte, error) {
+	checkpoint, err := r.Checkpoint()
 	if err != nil {
-		return nil, fmt.Errorf("build render plan: %w", err)
+		return nil, err
 	}
-	return plan, nil
+	return json.Marshal(checkpoint)
+}
+
+func (r ComposedChildRecipe) Descriptor() prompty.ManifestDescriptor {
+	return r.inner.Descriptor
+}
+
+func (r ComposedChildRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+	return r.inner.Execute(ctx, registry)
+}
+
+func (r ComposedChildRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+	return r.inner.ExecuteWithContract(ctx, registry, contract)
+}
+
+func (p *ComposedChildPrompt) NewRecipe(ctx context.Context, input ComposedChildInput) (ComposedChildRecipe, error) {
+	return p.newRecipe(ctx, input)
+}
+
+func (p *ComposedChildPrompt) newRecipe(ctx context.Context, input ComposedChildInput, options ...prompty.PromptRuntimeOptions) (ComposedChildRecipe, error) {
+	if p.registry == nil {
+		return ComposedChildRecipe{}, fmt.Errorf("%s recipe requires registry", string(ComposedChild))
+	}
+	if err := validate.Struct(&input); err != nil {
+		return ComposedChildRecipe{}, fmt.Errorf("validate input: %w", err)
+	}
+	if _, err := prompty.PlanInputFrom(input); err != nil {
+		return ComposedChildRecipe{}, fmt.Errorf("bind recipe input: %w", err)
+	}
+	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(ComposedChild))
+	if err != nil {
+		return ComposedChildRecipe{}, fmt.Errorf("recommend manifest descriptor: %w", err)
+	}
+	inner, err := prompty.NewPromptRecipeNoLate[ComposedChildInput](desc, input, options...)
+	if err != nil {
+		return ComposedChildRecipe{}, err
+	}
+	return ComposedChildRecipe{inner: inner}, nil
 }
 
 func (p *ComposedChildPrompt) RequiredTools() []string {

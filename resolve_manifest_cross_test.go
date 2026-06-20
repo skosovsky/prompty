@@ -21,6 +21,16 @@ import (
 	"github.com/skosovsky/prompty/remoteregistry"
 )
 
+type crossWorkspaceComposeContext struct {
+	enabled bool
+}
+
+func (c crossWorkspaceComposeContext) ComposeValues() prompty.ComposeValues {
+	return prompty.NewComposeValuesFromPairs(
+		prompty.ComposeBool("capabilities.workspace_enabled", c.enabled),
+	)
+}
+
 const crossRegistryManifestYAML = `
 id: cross_agent
 version: "3"
@@ -164,9 +174,11 @@ func TestCrossRegistry_ConditionalCompose_ResolveManifestParity(t *testing.T) {
 	wantRuntimeOff, err := regs.file.ResolveManifest(
 		ctx,
 		"composed_conditional_main",
-		prompty.WithResolveComposeCapabilities(map[string]any{
-			"capabilities": map[string]any{"workspace_enabled": false},
-		}),
+		prompty.WithResolveComposeValues(
+			prompty.NewComposeValuesFromPairs(
+				prompty.ComposeBool("capabilities.workspace_enabled", false),
+			),
+		),
 	)
 	require.NoError(t, err)
 	assert.NotContains(t, wantRuntimeOff.LayerIDs, "child_rules")
@@ -194,9 +206,11 @@ func TestCrossRegistry_ConditionalCompose_ResolveManifestParity(t *testing.T) {
 			got, resolveErr := tc.reg.ResolveManifest(
 				ctx,
 				"composed_conditional_main",
-				prompty.WithResolveComposeCapabilities(map[string]any{
-					"capabilities": map[string]any{"workspace_enabled": false},
-				}),
+				prompty.WithResolveComposeValues(
+					prompty.NewComposeValuesFromPairs(
+						prompty.ComposeBool("capabilities.workspace_enabled", false),
+					),
+				),
 			)
 			require.NoError(t, resolveErr)
 			assert.Equal(t, wantRuntimeOff.LayerIDs, got.LayerIDs)
@@ -266,7 +280,10 @@ type crossComposeTamperReader struct {
 	overrides map[string][]byte
 }
 
-func (r *crossComposeTamperReader) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+func (r *crossComposeTamperReader) ReadManifestBytes(
+	ctx context.Context,
+	id string,
+) ([]byte, error) {
 	if b, ok := r.overrides[id]; ok {
 		return b, nil
 	}
@@ -288,9 +305,11 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				desc, err := tc.resolver.ResolveManifest(
 					ctx,
 					manifestID,
-					prompty.WithResolveComposeCapabilities(map[string]any{
-						"capabilities": map[string]any{"workspace_enabled": true},
-					}),
+					prompty.WithResolveComposeValues(
+						prompty.NewComposeValuesFromPairs(
+							prompty.ComposeBool("capabilities.workspace_enabled", true),
+						),
+					),
 				)
 				require.NoError(t, err)
 				assert.Contains(t, desc.LayerIDs, "child_rules")
@@ -301,7 +320,7 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				desc, err := tc.resolver.ResolveManifest(
 					ctx,
 					manifestID,
-					prompty.WithResolveComposeCapabilities(map[string]any{}),
+					prompty.WithResolveComposeValues(prompty.NewComposeValuesFromPairs()),
 				)
 				require.NoError(t, err)
 				assert.Contains(t, desc.LayerIDs, "base_system")
@@ -318,9 +337,11 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				runtimeOff, err := tc.resolver.ResolveManifest(
 					ctx,
 					manifestID,
-					prompty.WithResolveComposeCapabilities(map[string]any{
-						"capabilities": map[string]any{"workspace_enabled": false},
-					}),
+					prompty.WithResolveComposeValues(
+						prompty.NewComposeValuesFromPairs(
+							prompty.ComposeBool("capabilities.workspace_enabled", false),
+						),
+					),
 				)
 				require.NoError(t, err)
 				runtimeProps := crossSchemaPropertyNames(t, runtimeOff.InputSchema)
@@ -344,25 +365,24 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				)
 			})
 
-			t.Run("plan_execute_conservative_and_runtime_off", func(t *testing.T) {
+			t.Run("plan_missing_context_errors_and_runtime_off_executes", func(t *testing.T) {
 				t.Parallel()
-				conservativeInput, err := prompty.PlanInputFrom(struct {
+				missingContextInput, err := prompty.PlanInputFrom(struct {
 					Query string `prompt:"query"`
-				}{Query: "conservative-" + tc.name})
+				}{Query: "missing-context-" + tc.name})
 				require.NoError(t, err)
-				conservativePlan, err := tc.plan.Plan(ctx, manifestID, conservativeInput)
-				require.NoError(t, err)
-				conservativeExec, err := conservativePlan.Execute(ctx)
-				require.NoError(t, err)
-				require.Len(t, conservativeExec.Messages, 3)
+				_, err = tc.plan.Plan(ctx, manifestID, missingContextInput)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "requires compose values")
 
 				runtimeOffInput, err := prompty.PlanInputFrom(struct {
 					Query string `prompt:"query"`
 				}{Query: "runtime-off-" + tc.name})
 				require.NoError(t, err)
-				runtimeOffInput = prompty.PlanInputWithCapabilities(runtimeOffInput, map[string]any{
-					"capabilities": map[string]any{"workspace_enabled": false},
-				})
+				runtimeOffInput = prompty.PlanInputWithComposeContext(
+					runtimeOffInput,
+					crossWorkspaceComposeContext{enabled: false},
+				)
 				runtimeOffPlan, err := tc.plan.Plan(ctx, manifestID, runtimeOffInput)
 				require.NoError(t, err)
 				runtimeOffExec, err := runtimeOffPlan.Execute(ctx)
@@ -462,7 +482,10 @@ func newCrossFlatRegistries(t *testing.T) crossFlatRegistries {
 	manifestBytes := []byte(crossFlatManifestYAML)
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cross_flat_agent.yaml"), manifestBytes, 0600))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(dir, "cross_flat_agent.yaml"), manifestBytes, 0600),
+	)
 	fileReg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 
@@ -558,7 +581,10 @@ func newCrossLateRegistries(t *testing.T) crossLateRegistries {
 	lateBytes := readFileregistryComposeFixture(t, "late_required_agent.yaml")
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "late_required_agent.yaml"), lateBytes, 0600))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(dir, "late_required_agent.yaml"), lateBytes, 0600),
+	)
 	fileReg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 
@@ -730,7 +756,10 @@ func TestCrossRegistry_ChatHistory_FormatMessages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			history := []prompty.ChatMessage{
-				{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "prior-" + tc.name}}},
+				{
+					Role:    prompty.RoleUser,
+					Content: []prompty.ContentPart{prompty.TextPart{Text: "prior-" + tc.name}},
+				},
 			}
 			input, err := prompty.PlanInputFrom(struct {
 				Query       string                `prompt:"query"`
@@ -768,9 +797,12 @@ func TestCrossRegistry_ChatHistory_PreservesProvenance(t *testing.T) {
 			t.Parallel()
 			history := []prompty.ChatMessage{
 				{
-					Role:       prompty.RoleUser,
-					Content:    []prompty.ContentPart{prompty.TextPart{Text: "prior"}},
-					Provenance: &prompty.MessageProvenance{ManifestID: "history-src", LayerID: "turn_1"},
+					Role:    prompty.RoleUser,
+					Content: []prompty.ContentPart{prompty.TextPart{Text: "prior"}},
+					Provenance: &prompty.MessageProvenance{
+						ManifestID: "history-src",
+						LayerID:    "turn_1",
+					},
 				},
 			}
 			input, err := prompty.PlanInputFrom(struct {
@@ -836,7 +868,10 @@ func TestCrossRegistry_LateBinding_RequiredWithoutLateInput(t *testing.T) {
 	lateRequiredBytes := readFileregistryComposeFixture(t, "late_required_agent.yaml")
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "late_required_agent.yaml"), lateRequiredBytes, 0600))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(dir, "late_required_agent.yaml"), lateRequiredBytes, 0600),
+	)
 	fileReg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 
@@ -906,7 +941,11 @@ func TestCrossRegistry_LateBinding_OptionalLate(t *testing.T) {
 			exec, err := plan.Execute(ctx)
 			require.NoError(t, err)
 			require.Len(t, exec.Messages, 1)
-			assert.Contains(t, exec.Messages[0].Content[0].(prompty.TextPart).Text, "hello-"+tc.name)
+			assert.Contains(
+				t,
+				exec.Messages[0].Content[0].(prompty.TextPart).Text,
+				"hello-"+tc.name,
+			)
 		})
 	}
 }

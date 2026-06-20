@@ -90,9 +90,10 @@ func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 	seenID := make(map[string]bool)
 	seenBaseID := make(map[string]bool)
 	composeOpt := manifest.WithCompose(manifest.ComposeContext{
-		Ctx:          context.Background(),
-		Capabilities: nil,
-		Loader:       r.loader,
+		Ctx:                         context.Background(),
+		Values:                      prompty.ComposeValues{},
+		Loader:                      r.loader,
+		AllowMissingConditionValues: true,
 	})
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -254,26 +255,27 @@ func (r *Registry) ResolveManifest(
 	}
 	ro := prompty.ApplyResolveManifestOptions(opts)
 	parseOpts := []manifest.ParseOption{manifest.WithCompose(manifest.ComposeContext{
-		Ctx:          ctx,
-		Capabilities: nil,
-		Loader:       r,
+		Ctx:                         ctx,
+		Values:                      prompty.ComposeValues{},
+		Loader:                      r,
+		AllowMissingConditionValues: true,
 	})}
-	if ro.ComposeCapsSet {
-		parseOpts = append(parseOpts, manifest.WithComposeCapabilities(ro.ComposeCapabilities))
+	if values, ok := ro.ComposeValues(); ok {
+		parseOpts = append(parseOpts, manifest.WithComposeValues(values))
 	}
 	return manifest.ParseDescriptor(data, r.parser, parseOpts...)
 }
 
 // DescribePrompt returns manifest metadata for routing and introspection.
-// It resolves without compose capabilities, so conditional imports/layers use conservative defaults.
-// Pass prompty.WithResolveComposeCapabilities to ResolveManifest when runtime caps are known.
+// It resolves without compose values, so conditional imports/layers use conservative defaults.
+// Pass prompty.WithResolveComposeContext to ResolveManifest when runtime compose values are known.
 func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
 	return r.ResolveManifest(ctx, id)
 }
 
 // Plan returns a deferred render plan for the selected prompt id.
 func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.templateForPlan(ctx, id, input.ComposeCapabilities())
+	tpl, err := r.templateForPlan(ctx, id, input.ComposeValues())
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +352,7 @@ func needsCompose(byID map[string]*manifest.RawManifest, relPath string) bool {
 func (r *Registry) templateForPlan(
 	ctx context.Context,
 	id string,
-	caps map[string]any,
+	values prompty.ComposeValues,
 ) (*prompty.ChatPromptTemplate, error) {
 	data, err := r.readManifestBytes(ctx, id)
 	if err != nil {
@@ -367,9 +369,10 @@ func (r *Registry) templateForPlan(
 			opts = append(opts, manifest.WithPartialsFS(r.fsys, partialsPath))
 		}
 		opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
-			Ctx:          ctx,
-			Loader:       r,
-			Capabilities: caps,
+			Ctx:                         ctx,
+			Values:                      values,
+			Loader:                      r,
+			AllowMissingConditionValues: false,
 		}))
 		return manifest.Parse(data, r.parser, opts...)
 	}

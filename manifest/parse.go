@@ -66,14 +66,19 @@ func WithCompose(ctx ComposeContext) ParseOption {
 	return func(o *parseOpts) { o.compose = &ctx }
 }
 
-// WithComposeCapabilities sets runtime capabilities on an existing or new compose context.
-func WithComposeCapabilities(caps map[string]any) ParseOption {
+// WithComposeValues sets runtime compose values on an existing or new compose context.
+func WithComposeValues(values prompty.ComposeValues) ParseOption {
 	return func(o *parseOpts) {
 		if o.compose == nil {
-			o.compose = &ComposeContext{Ctx: nil, Capabilities: caps, Loader: nil}
+			o.compose = &ComposeContext{
+				Ctx:                         nil,
+				Values:                      values,
+				Loader:                      nil,
+				AllowMissingConditionValues: false,
+			}
 			return
 		}
-		o.compose.Capabilities = caps
+		o.compose.Values = values
 	}
 }
 
@@ -119,7 +124,12 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	if raw.ID == "" {
 		return nil, fmt.Errorf("%w: missing id", prompty.ErrInvalidManifest)
 	}
-	composeCtx := ComposeContext{Ctx: nil, Capabilities: nil, Loader: nil}
+	composeCtx := ComposeContext{
+		Ctx:                         nil,
+		Values:                      prompty.ComposeValues{},
+		Loader:                      nil,
+		AllowMissingConditionValues: false,
+	}
 	if po != nil && po.compose != nil {
 		composeCtx = *po.compose
 	}

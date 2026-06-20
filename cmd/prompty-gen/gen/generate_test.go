@@ -47,7 +47,7 @@ func TestGenerateConstsPackage(t *testing.T) {
 // --- Shared types tests ---
 
 func TestGenerateSharedTypes(t *testing.T) {
-	specs := []*PromptSpec{{ID: "support_agent"}, {ID: "greeter"}}
+	specs := []*PromptSpec{sharedTestSpec("support_agent"), sharedTestSpec("greeter")}
 	f, err := GenerateSharedTypes("prompts", specs)
 	if err != nil {
 		t.Fatalf("GenerateSharedTypes: %v", err)
@@ -66,17 +66,14 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "type PromptCatalog interface") {
 		t.Error("expected PromptCatalog interface")
 	}
-	if !strings.Contains(out, "RenderSupportAgent") {
-		t.Error("expected typed RenderSupportAgent method in catalog")
-	}
 	if !strings.Contains(out, "Descriptor(ctx context.Context, id PromptID)") {
 		t.Error("expected Descriptor method in PromptCatalog")
 	}
-	if !strings.Contains(out, "RenderGreeter") {
-		t.Error("expected typed RenderGreeter method in catalog")
-	}
 	if !strings.Contains(out, "func NewPromptCatalog(") {
 		t.Error("expected NewPromptCatalog")
+	}
+	if strings.Contains(out, "RenderSupportAgent") || strings.Contains(out, "RenderGreeter") {
+		t.Error("render-first catalog methods must not be generated")
 	}
 	if strings.Contains(out, "RenderByID") {
 		t.Error("legacy RenderByID must not be generated")
@@ -84,8 +81,26 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if strings.Contains(out, "renderFromAny") {
 		t.Error("legacy renderFromAny must not be generated")
 	}
-	if !strings.Contains(out, "DescribingRegistry") {
-		t.Error("expected NewPromptCatalog to accept DescribingRegistry")
+	if !strings.Contains(out, "PromptCatalogRegistry") {
+		t.Error("expected NewPromptCatalog to accept PromptCatalogRegistry")
+	}
+	if !strings.Contains(out, "type PromptIndex struct") {
+		t.Error("expected generated PromptIndex")
+	}
+	if !strings.Contains(out, "func (i PromptIndex) Lookup(") {
+		t.Error("expected PromptIndex Lookup")
+	}
+	if !strings.Contains(out, "NewSupportAgentRecipe") {
+		t.Error("expected typed recipe constructor in catalog")
+	}
+	if !strings.Contains(out, "NewRecipeFromJSON") {
+		t.Error("expected prompt-index JSON recipe decoder")
+	}
+	if !strings.Contains(out, "DecodeRecipeCheckpoint") {
+		t.Error("expected prompt-index checkpoint decoder")
+	}
+	if !strings.Contains(out, "CheckpointJSON()") {
+		t.Error("expected generic recipe checkpoint JSON method")
 	}
 	if !strings.Contains(out, "func AllPromptIDs()") {
 		t.Error("expected AllPromptIDs")
@@ -93,8 +108,16 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if strings.Contains(out, legacyClientTypeName) {
 		t.Error("DoD: must not contain the legacy client type")
 	}
-	if strings.Contains(out, "Execute(") {
-		t.Error("DoD: must not contain Execute (legacy agent API)")
+}
+
+func TestGenerateSharedTypes_RequiresDescriptorDigest(t *testing.T) {
+	_, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
+
+	if err == nil {
+		t.Fatal("expected descriptor digest requirement error")
+	}
+	if !strings.Contains(err.Error(), "descriptor digest is required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -135,11 +158,32 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "type SupportAgentPrompt struct") {
 		t.Error("expected SupportAgentPrompt type")
 	}
-	if !strings.Contains(out, "func (p *SupportAgentPrompt) Render(") {
-		t.Error("expected Render method on SupportAgentPrompt")
+	if strings.Contains(out, "func (p *SupportAgentPrompt) Render(") {
+		t.Error("render-first prompt method must not be generated")
 	}
 	if !strings.Contains(out, "func (p *SupportAgentPrompt) RequiredTools()") {
 		t.Error("expected RequiredTools method on SupportAgentPrompt")
+	}
+	if !strings.Contains(out, "type SupportAgentRecipe struct") {
+		t.Error("expected SupportAgentRecipe type")
+	}
+	if !strings.Contains(out, "func (p *SupportAgentPrompt) NewRecipe(") {
+		t.Error("expected NewRecipe method on SupportAgentPrompt")
+	}
+	if !strings.Contains(out, "func NewSupportAgentRecipeFromCheckpoint(") {
+		t.Error("expected generated checkpoint restore constructor")
+	}
+	if !strings.Contains(out, "func (r SupportAgentRecipe) PromptID()") {
+		t.Error("expected recipe PromptID method")
+	}
+	if !strings.Contains(out, "PromptRecipeNoLate[SupportAgentInput]") {
+		t.Error("expected no-late prompt recipe wrapper")
+	}
+	if strings.Contains(out, "SupportAgentComposeContext") {
+		t.Error("compose context must not be generated without compose conditions")
+	}
+	if strings.Contains(out, "NewRecipeWithComposeContext") {
+		t.Error("compose recipe constructor must not be generated without compose conditions")
 	}
 	if !strings.Contains(out, "func (p *SupportAgentPrompt) ID()") {
 		t.Error("expected ID method on SupportAgentPrompt")
@@ -147,8 +191,8 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "validate.Struct") {
 		t.Error("expected input validation")
 	}
-	if !strings.Contains(out, "p.registry.Plan") {
-		t.Error("expected Plan call")
+	if strings.Contains(out, "p.registry.Plan") {
+		t.Error("NewRecipe must not build a render plan")
 	}
 	if !strings.Contains(out, "PlanInputFrom") {
 		t.Error("expected PlanInputFrom call")
@@ -157,10 +201,10 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 		t.Error("expected prompt tags in generated input struct")
 	}
 	if !strings.Contains(out, "string(SupportAgent)") {
-		t.Error("DoD: Plan must receive string(PromptID) for Registry interface")
+		t.Error("expected string(PromptID) for manifest descriptor lookup")
 	}
-	if !strings.Contains(out, "build render plan") {
-		t.Error("expected render-plan build error wrapping")
+	if strings.Contains(out, "build render plan") {
+		t.Error("render-plan build wrapper must not be generated")
 	}
 	if strings.Contains(out, "renderFromAny") {
 		t.Error("legacy renderFromAny must not be generated")
@@ -173,6 +217,84 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	}
 	if strings.Contains(out, "ExecuteWithStructuredOutput") {
 		t.Error("DoD: must not contain ExecuteWithStructuredOutput")
+	}
+	if strings.Contains(out, "func (p *SupportAgentPrompt) WithLate(") {
+		t.Error("legacy WithLate(plan, late) must not be generated")
+	}
+}
+
+func TestGenerateManifestTypes_ComposeConditionRequiresContextPayload(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "compose_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{"type": "string"},
+				},
+				"required": []any{"query"},
+			}),
+		},
+		ComposeConditions: []ComposeConditionSpec{
+			{Key: "routing.enabled", Kind: "bool"},
+		},
+	}
+
+	f, err := GenerateManifestTypes(spec, "prompts")
+	if err != nil {
+		t.Fatalf("GenerateManifestTypes: %v", err)
+	}
+
+	var buf strings.Builder
+	if err := f.Render(&buf); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "func (p *ComposeAgentPrompt) NewRecipe(") {
+		t.Error("contextless NewRecipe must not be generated for compose-required prompts")
+	}
+	if !strings.Contains(out, "func (p *ComposeAgentPrompt) NewRecipeWithComposeContext(") {
+		t.Error("expected compose-aware recipe constructor")
+	}
+	if !strings.Contains(out, "type ComposeAgentRecipePayload struct") {
+		t.Error("expected compose-aware JSON recipe payload")
+	}
+	if !strings.Contains(out, "Compose *ComposeAgentComposeContext `json:\"compose\"`") {
+		t.Error("expected required compose payload pointer")
+	}
+	if !strings.Contains(out, "RoutingEnabled *bool `json:\"routing_enabled\"`") {
+		t.Error("expected pointer compose condition field with presence semantics")
+	}
+	if !strings.Contains(out, "func NewComposeAgentComposeContext(routingEnabled bool)") {
+		t.Error("expected compose context constructor")
+	}
+	if !strings.Contains(out, "ValidateComposeContext() error") {
+		t.Error("expected compose context validator")
+	}
+}
+
+func TestGenerateManifestTypes_ComposeConditionFieldCollision(t *testing.T) {
+	spec := &PromptSpec{
+		ID: "compose_agent",
+		InputSchema: &prompty.SchemaDefinition{
+			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}),
+		},
+		ComposeConditions: []ComposeConditionSpec{
+			{Key: "a.b", Kind: "bool"},
+			{Key: "a-b", Kind: "bool"},
+		},
+	}
+
+	_, err := GenerateManifestTypes(spec, "prompts")
+	if err == nil {
+		t.Fatal("expected compose condition field collision error")
+	}
+	if !strings.Contains(err.Error(), "field name") || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("expected field collision error, got: %v", err)
 	}
 }
 
@@ -244,13 +366,12 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	if !strings.Contains(out, "type GreeterOutput struct") {
 		t.Error("expected GreeterOutput when response_format present")
 	}
-	// Output is generated for downstream use, while Render returns deferred plan.
-	if !strings.Contains(out, "(*prompty.RenderPlan, error)") {
-		t.Error("Render must return (*prompty.RenderPlan, error)")
+	if strings.Contains(out, "(*prompty.RenderPlan, error)") {
+		t.Error("response-format prompts must still use recipe-first generated API")
 	}
 }
 
-// --- task17-3: nested type naming regression tests ---
+// --- Nested type naming regression tests ---
 
 func TestGenerateManifestTypes_NestedObjectInOutput(t *testing.T) {
 	spec := &PromptSpec{
@@ -392,10 +513,10 @@ func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	if !strings.Contains(out, "type NoVarsInput struct") {
 		t.Error("expected empty Input struct")
 	}
-	if !strings.Contains(out, "func (p *NoVarsPrompt) Render(") {
-		t.Error("expected Render on NoVarsPrompt")
+	if strings.Contains(out, "func (p *NoVarsPrompt) Render(") {
+		t.Error("render-first prompt method must not be generated")
 	}
-	assertEmptyInputPlanInputContract(t, out)
+	assertEmptyInputRecipeBindingContract(t, out)
 }
 
 func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
@@ -424,20 +545,17 @@ func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
 	if !strings.Contains(out, `"get_current_time"`) {
 		t.Error("expected get_current_time in RequiredTools return")
 	}
-	assertEmptyInputPlanInputContract(t, out)
+	assertEmptyInputRecipeBindingContract(t, out)
 }
 
-func assertEmptyInputPlanInputContract(t *testing.T, out string) {
+func assertEmptyInputRecipeBindingContract(t *testing.T, out string) {
 	t.Helper()
-	if !strings.Contains(out, "prompty.RegistryPlanInput{}") {
-		t.Error("expected RegistryPlanInput{} for empty input schema")
-	}
 	if strings.Contains(out, "PlanInputFrom") {
 		t.Error("empty input schema must not call PlanInputFrom")
 	}
 }
 
-// --- Schema regression tests (task15 DoD) ---
+// --- Schema regression tests ---
 
 func TestGenerateManifestTypes_Dive(t *testing.T) {
 	spec := &PromptSpec{
@@ -572,7 +690,7 @@ func TestGenerateManifestTypes_Oneof(t *testing.T) {
 	}
 }
 
-// --- Regression tests (task15) ---
+// --- Regression tests ---
 
 func TestGenerateManifestTypes_RequiredBoolWithFalse(t *testing.T) {
 	spec := &PromptSpec{
@@ -653,7 +771,7 @@ func TestGenerateManifestTypes_RootObjectWithoutProperties(t *testing.T) {
 	if !strings.Contains(out, "type EmptyInputInput struct") {
 		t.Error("expected empty Input struct for root object without properties")
 	}
-	assertEmptyInputPlanInputContract(t, out)
+	assertEmptyInputRecipeBindingContract(t, out)
 }
 
 func TestGenerateManifestTypes_ArrayOfArray(t *testing.T) {
@@ -892,7 +1010,7 @@ func TestGenerateManifestTypes_Default_InvalidScalarLiteralFailsFast(t *testing.
 
 func TestGenerateManifestTypes_FormatMessages(t *testing.T) {
 	spec := &PromptSpec{
-		ID: "kosmify_agent",
+		ID: "message_history_agent",
 		InputSchema: &prompty.SchemaDefinition{
 			Schema: prompty.MustJSONDocumentFromMap(map[string]any{
 				"type": "object",
@@ -968,11 +1086,14 @@ func TestGenerateManifestTypes_LateInput(t *testing.T) {
 	if !strings.Contains(out, `prompt:"patient_dossier"`) {
 		t.Error("expected prompt tag on late field")
 	}
-	if !strings.Contains(out, "func (p *MainAgentPrompt) WithLate(") {
-		t.Error("expected WithLate wrapper")
+	if !strings.Contains(out, "func (r MainAgentRecipe) BindLate(") {
+		t.Error("expected recipe-owned BindLate")
 	}
-	if !strings.Contains(out, "WithLateInput") {
-		t.Error("expected WithLateInput call")
+	if !strings.Contains(out, "PromptRecipe[MainAgentInput, MainAgentLateInput]") {
+		t.Error("expected typed prompt recipe wrapper")
+	}
+	if strings.Contains(out, "func (p *MainAgentPrompt) WithLate(") {
+		t.Error("legacy WithLate(plan, late) must not be generated")
 	}
 }
 
@@ -1042,7 +1163,7 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		},
 	}
 
-	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{{ID: "support_agent"}})
+	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{sharedTestSpec("support_agent")})
 	if err != nil {
 		t.Fatalf("GenerateSharedTypes: %v", err)
 	}
@@ -1209,6 +1330,14 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		}
 		return b.String(), nil
 	})
+}
+
+func sharedTestSpec(id string) *PromptSpec {
+	return &PromptSpec{
+		ID:         id,
+		Metadata:   prompty.PromptMetadata{ID: id},
+		Descriptor: prompty.ManifestDescriptor{ID: id, Digest: "sha256:test-" + id},
+	}
 }
 
 func compareGolden(t *testing.T, dir, name string, gen func() (string, error)) {
