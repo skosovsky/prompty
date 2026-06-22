@@ -67,11 +67,23 @@ func (r SupportAgentRecipe) Descriptor() prompty.ManifestDescriptor {
 	return r.inner.Descriptor
 }
 
+func (r SupportAgentRecipe) ResponseFormat() (*prompty.SchemaDefinition, error) {
+	return nil, prompty.ErrStructuredOutputUnavailable
+}
+
+func (r SupportAgentRecipe) JSONSchema() (prompty.JSONDocument, error) {
+	format, err := r.ResponseFormat()
+	if err != nil {
+		return nil, err
+	}
+	return prompty.CloneJSONDocument(format.Schema), nil
+}
+
 func (r SupportAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r SupportAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+func (r SupportAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

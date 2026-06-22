@@ -60,6 +60,50 @@ func TestRenderPlan_ExecuteAsText(t *testing.T) {
 	assert.Equal(t, "ok", text)
 }
 
+func TestRenderPlan_RenderText_JoinsRenderedMessagesWithoutInvoker(t *testing.T) {
+	t.Parallel()
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{
+		{Role: RoleSystem, Content: TextContent("system")},
+		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
+	})
+	require.NoError(t, err)
+	plan := newRenderPlanFromMap(tpl, map[string]any{"q": "hello"})
+
+	text, err := plan.RenderText(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "system\n\nhello", text)
+}
+
+func TestPromptExecution_TextStrictRejectsNonTextPart(t *testing.T) {
+	t.Parallel()
+	exec := NewExecution([]ChatMessage{{
+		Role: RoleAssistant,
+		Content: []ContentPart{
+			TextPart{Text: "x"},
+			ToolCallPart{Name: "lookup", Args: "{}"},
+		},
+	}})
+
+	_, err := exec.Text(true)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNonTextResponse)
+}
+
+func TestPromptExecution_TextStrictRejectsAmbiguousMessages(t *testing.T) {
+	t.Parallel()
+	exec := NewExecution([]ChatMessage{
+		NewSystemMessage("system"),
+		NewUserMessage("hello"),
+	})
+
+	_, err := exec.Text(true)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAmbiguousTextExecution)
+}
+
 func TestRenderPlan_ExecuteAsText_NonTextResponse(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{

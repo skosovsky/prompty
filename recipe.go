@@ -201,7 +201,7 @@ func (r PromptRecipe[TInput, TLate]) Execute(
 func (r PromptRecipe[TInput, TLate]) ExecuteWithContract(
 	ctx context.Context,
 	registry ManifestCheckpointRegistry,
-	contract ToolContract,
+	contract ToolManifestContract,
 ) (*PromptExecution, error) {
 	if err := r.validateState(); err != nil {
 		return nil, err
@@ -219,7 +219,7 @@ func (r PromptRecipe[TInput, TLate]) ExecuteWithContract(
 			return nil, fmt.Errorf("prompt recipe: bind late input: %w", err)
 		}
 	}
-	return plan.ExecuteWithContract(ctx, contract)
+	return plan.ExecuteWithManifestContract(ctx, r.Descriptor, contract)
 }
 
 func (r PromptRecipe[TInput, TLate]) verifiedPlan(
@@ -422,7 +422,7 @@ func (r PromptRecipeNoLate[TInput]) Execute(
 func (r PromptRecipeNoLate[TInput]) ExecuteWithContract(
 	ctx context.Context,
 	registry ManifestCheckpointRegistry,
-	contract ToolContract,
+	contract ToolManifestContract,
 ) (*PromptExecution, error) {
 	if err := r.validateState(); err != nil {
 		return nil, err
@@ -434,7 +434,7 @@ func (r PromptRecipeNoLate[TInput]) ExecuteWithContract(
 	if err != nil {
 		return nil, err
 	}
-	return plan.ExecuteWithContract(ctx, contract)
+	return plan.ExecuteWithManifestContract(ctx, r.Descriptor, contract)
 }
 
 func (r PromptRecipeNoLate[TInput]) validateState() error {

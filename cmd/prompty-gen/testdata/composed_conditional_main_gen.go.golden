@@ -127,6 +127,18 @@ func (r ComposedConditionalMainRecipe) Descriptor() prompty.ManifestDescriptor {
 	return r.inner.Descriptor
 }
 
+func (r ComposedConditionalMainRecipe) ResponseFormat() (*prompty.SchemaDefinition, error) {
+	return nil, prompty.ErrStructuredOutputUnavailable
+}
+
+func (r ComposedConditionalMainRecipe) JSONSchema() (prompty.JSONDocument, error) {
+	format, err := r.ResponseFormat()
+	if err != nil {
+		return nil, err
+	}
+	return prompty.CloneJSONDocument(format.Schema), nil
+}
+
 func (r ComposedConditionalMainRecipe) WithComposeContext(ctx ComposedConditionalMainComposeContext) (ComposedConditionalMainRecipe, error) {
 	inner, err := r.inner.WithComposeContext(ctx)
 	if err != nil {
@@ -139,7 +151,7 @@ func (r ComposedConditionalMainRecipe) Execute(ctx context.Context, registry pro
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r ComposedConditionalMainRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+func (r ComposedConditionalMainRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

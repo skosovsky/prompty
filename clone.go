@@ -110,9 +110,10 @@ func cloneToolDefinitions(tools []ToolDefinition) []ToolDefinition {
 	out := make([]ToolDefinition, len(tools))
 	for i, tool := range tools {
 		out[i] = ToolDefinition{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Parameters:  CloneJSONDocument(tool.Parameters),
+			Name:         tool.Name,
+			Description:  tool.Description,
+			Parameters:   CloneJSONDocument(tool.Parameters),
+			Capabilities: cloneStringSlice(tool.Capabilities),
 		}
 	}
 	return out

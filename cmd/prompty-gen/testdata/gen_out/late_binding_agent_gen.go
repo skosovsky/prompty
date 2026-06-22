@@ -66,6 +66,18 @@ func (r LateBindingAgentRecipe) Descriptor() prompty.ManifestDescriptor {
 	return r.inner.Descriptor
 }
 
+func (r LateBindingAgentRecipe) ResponseFormat() (*prompty.SchemaDefinition, error) {
+	return nil, prompty.ErrStructuredOutputUnavailable
+}
+
+func (r LateBindingAgentRecipe) JSONSchema() (prompty.JSONDocument, error) {
+	format, err := r.ResponseFormat()
+	if err != nil {
+		return nil, err
+	}
+	return prompty.CloneJSONDocument(format.Schema), nil
+}
+
 func (r LateBindingAgentRecipe) BindLate(input LateBindingAgentLateInput) (LateBindingAgentRecipe, error) {
 	inner, err := r.inner.BindLate(input)
 	if err != nil {
@@ -78,7 +90,7 @@ func (r LateBindingAgentRecipe) Execute(ctx context.Context, registry prompty.Ma
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error) {
+func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

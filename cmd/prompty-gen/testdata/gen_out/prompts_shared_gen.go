@@ -20,8 +20,10 @@ type Recipe interface {
 	PromptID() PromptID
 	Descriptor() prompty.ManifestDescriptor
 	CheckpointJSON() ([]byte, error)
+	ResponseFormat() (*prompty.SchemaDefinition, error)
+	JSONSchema() (prompty.JSONDocument, error)
 	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
-	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolContract) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
 }
 
 type PromptCatalog interface {

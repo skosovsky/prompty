@@ -81,9 +81,10 @@ type rawMessage struct {
 }
 
 type rawTool struct {
-	Name        string         `yaml:"name"`
-	Description string         `yaml:"description"`
-	Parameters  map[string]any `yaml:"parameters"`
+	Name         string         `yaml:"name"`
+	Description  string         `yaml:"description"`
+	Parameters   map[string]any `yaml:"parameters"`
+	Capabilities []string       `yaml:"capabilities"`
 }
 
 type rawCondition struct {
@@ -245,9 +246,10 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 			return fmt.Errorf("%w: tools[%d].parameters: %w", prompty.ErrInvalidManifest, i, docErr)
 		}
 		raw.Tools[i] = prompty.ToolDefinition{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Parameters:  paramsDoc,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			Parameters:   paramsDoc,
+			Capabilities: append([]string(nil), tool.Capabilities...),
 		}
 	}
 	raw.LayerKind = fm.LayerKind

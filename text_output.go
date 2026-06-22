@@ -14,6 +14,9 @@ var ErrNonTextResponse = errors.New("prompty: response is not plain text")
 // ErrEmptyTextResponse indicates strict text extraction found no text content.
 var ErrEmptyTextResponse = errors.New("prompty: response contains no text")
 
+// ErrAmbiguousTextExecution indicates strict render-only extraction found multiple messages.
+var ErrAmbiguousTextExecution = errors.New("prompty: execution text is ambiguous")
+
 // NonTextResponseError describes which content types blocked strict text extraction.
 type NonTextResponseError struct {
 	PartKinds []string
@@ -80,6 +83,50 @@ func (r *Response) StrictText() (string, error) {
 		return "", errors.New("prompty: nil response")
 	}
 	return StrictTextFromParts(r.Content)
+}
+
+// Text returns rendered execution text without invoking a model.
+func (e *PromptExecution) Text(strict bool) (string, error) {
+	if e == nil {
+		return "", errors.New("prompty: nil execution")
+	}
+	if strict {
+		if len(e.Messages) != 1 {
+			return "", fmt.Errorf(
+				"%w: expected exactly one message, got %d",
+				ErrAmbiguousTextExecution,
+				len(e.Messages),
+			)
+		}
+		return StrictTextFromParts(e.Messages[0].Content)
+	}
+	var b strings.Builder
+	for _, msg := range e.Messages {
+		text, err := JoinAdapterTextParts(msg.Content)
+		if err != nil {
+			return "", err
+		}
+		if text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(text)
+	}
+	if b.Len() == 0 {
+		return "", ErrEmptyTextResponse
+	}
+	return b.String(), nil
+}
+
+// RenderText materializes the plan and returns joined rendered text without invoking a model.
+func (p *RenderPlan) RenderText(ctx context.Context) (string, error) {
+	exec, err := p.Execute(ctx)
+	if err != nil {
+		return "", err
+	}
+	return exec.Text(false)
 }
 
 // ExecuteAsText renders the plan, invokes the model, and returns plain text (fail-closed).

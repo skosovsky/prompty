@@ -111,10 +111,13 @@ type ChatMessage struct {
 
 // ToolDefinition is the universal tool schema.
 // JSON tags are required for template functions (e.g. render_tools_as_json) that marshal tools.
+//
+//nolint:tagalign,golines // tag columns are kept close to existing public DTO style.
 type ToolDefinition struct {
-	Name        string       `json:"name"                 yaml:"name"`
-	Description string       `json:"description"          yaml:"description"`
-	Parameters  JSONDocument `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
+	Name         string       `json:"name"                 yaml:"name"`
+	Description  string       `json:"description"          yaml:"description"`
+	Parameters   JSONDocument `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
+	Capabilities []string     `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 }
 
 // SchemaDefinition describes a structured output (JSON Schema) for response format.

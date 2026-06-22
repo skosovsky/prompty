@@ -59,9 +59,10 @@ func (t *TypedTool[TArgs, TResult]) Name() string {
 // Definition returns the tool definition for PromptExecution.
 func (t *TypedTool[TArgs, TResult]) Definition() ToolDefinition {
 	return ToolDefinition{
-		Name:        t.name,
-		Description: "",
-		Parameters:  CloneJSONDocument(t.schema),
+		Name:         t.name,
+		Description:  "",
+		Parameters:   CloneJSONDocument(t.schema),
+		Capabilities: nil,
 	}
 }
 

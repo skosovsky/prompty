@@ -65,8 +65,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	exec, err := restored.ExecuteWithContract(ctx, reg, prompty.ToolContractFunc(func(name string) bool {
-		return true
+	exec, err := restored.ExecuteWithContract(ctx, reg, prompty.ToolManifestContractFunc(func(name string) (prompty.ToolManifest, bool) {
+		return prompty.ToolManifest{Name: name}, true
 	}))
 	if err != nil {
 		log.Fatal(err)
@@ -215,8 +215,8 @@ func buildExecution(ctx context.Context) (*prompty.PromptExecution, error) {
 		return nil, err
 	}
 
-	contract := prompty.ToolContractFunc(func(name string) bool {
-		return runtimeTools.HasTool(name)
+	contract := prompty.ToolManifestContractFunc(func(name string) (prompty.ToolManifest, bool) {
+		return runtimeTools.Manifest(name)
 	})
 	exec, err := restored.ExecuteWithContract(ctx, reg, contract)
 	if err != nil {
@@ -271,6 +271,14 @@ Clean-break rules:
 - message layers use `layer_id` (not `source_id`)
 - template context is explicit: `.Input.*` and `.LateVars.*`
 - provider message normalization runs in adapters, not in `RenderPlan.Execute()`
+
+### Runtime Binding, Wire DTO, And Render-Only
+
+Use `RuntimeRecipeCheckpoint` + `BindRuntime` when the runtime boundary stores raw JSON recipe state instead of generated typed recipe values. `BindRuntime` verifies the manifest descriptor, applies `RuntimeOverlay`, validates late fields and attaches `ToolScope` before materialization.
+
+Use `MarshalExecution` / `UnmarshalExecution` for storage or transport of `PromptExecution`. The wire DTO uses typed content-part variants and `JSONDocument` for schema/provider payloads.
+
+For render-only use cases, call `plan.RenderText(ctx)` or `exec.Text(strict)` instead of creating a fake invoker.
 
 ### Composition And Runtime Additions
 

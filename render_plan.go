@@ -16,18 +16,22 @@ type renderContext struct {
 
 // RenderPlan is the deferred rendering contract for prompt execution.
 type RenderPlan struct {
-	template       *ChatPromptTemplate
-	typedInput     any
-	lateVars       map[string]any
-	responseFormat *SchemaDefinition
+	template            *ChatPromptTemplate
+	typedInput          any
+	lateVars            map[string]any
+	responseFormat      *SchemaDefinition
+	toolScope           *ToolScope
+	toolScopeDescriptor ManifestDescriptor
 }
 
 func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 	return &RenderPlan{
-		template:       CloneTemplate(tpl),
-		typedInput:     typedInput,
-		lateVars:       map[string]any{},
-		responseFormat: nil,
+		template:            CloneTemplate(tpl),
+		typedInput:          typedInput,
+		lateVars:            map[string]any{},
+		responseFormat:      nil,
+		toolScope:           nil,
+		toolScopeDescriptor: ManifestDescriptor{ID: "", Digest: ""},
 	}
 }
 
@@ -78,6 +82,44 @@ func NewRenderPlanFromPlanInput(tpl *ChatPromptTemplate, input RegistryPlanInput
 	}), nil
 }
 
+// WithLateInputJSON returns a copy of the plan with late variables bound from a JSON object.
+func (p *RenderPlan) WithLateInputJSON(doc JSONDocument) (*RenderPlan, error) {
+	if p == nil {
+		return nil, ErrNilRenderPlan
+	}
+	vars, err := jsonDocumentObject(doc, "late input")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateLateInputFields(p.template.InputSchema, vars); err != nil {
+		return nil, err
+	}
+	out := p.clone()
+	if out.lateVars == nil {
+		out.lateVars = make(map[string]any)
+	}
+	maps.Copy(out.lateVars, vars)
+	return out, nil
+}
+
+// WithToolScope returns a copy of the plan with a runtime tool scope attached.
+func (p *RenderPlan) WithToolScope(scope ToolScope) (*RenderPlan, error) {
+	return p.withToolScope(scope, ManifestDescriptor{ID: "", Digest: ""})
+}
+
+func (p *RenderPlan) withToolScope(scope ToolScope, desc ManifestDescriptor) (*RenderPlan, error) {
+	if p == nil {
+		return nil, ErrNilRenderPlan
+	}
+	if err := ValidateToolScope(desc, scope); err != nil {
+		return nil, err
+	}
+	out := p.clone()
+	out.toolScope = cloneToolScopePtr(&scope)
+	out.toolScopeDescriptor = desc
+	return out, nil
+}
+
 // Template returns a cloned underlying template for adapter registries.
 func (p *RenderPlan) Template() *ChatPromptTemplate {
 	if p == nil {
@@ -109,12 +151,7 @@ func (p *RenderPlan) WithLateInput(input any) (*RenderPlan, error) {
 	if err := validateLateInputFields(p.template.InputSchema, vars); err != nil {
 		return nil, err
 	}
-	out := &RenderPlan{
-		template:       CloneTemplate(p.template),
-		typedInput:     p.typedInput,
-		lateVars:       cloneMapAny(p.lateVars),
-		responseFormat: cloneSchemaDefinition(p.responseFormat),
-	}
+	out := p.clone()
 	if vars == nil {
 		vars = make(map[string]any)
 	}
@@ -131,12 +168,8 @@ func (p *RenderPlan) WithResponseFormatDefinition(def *SchemaDefinition) (*Rende
 		return nil, errors.New("response format schema is required")
 	}
 	rf := cloneSchemaDefinition(def)
-	out := &RenderPlan{
-		template:       CloneTemplate(p.template),
-		typedInput:     p.typedInput,
-		lateVars:       cloneMapAny(p.lateVars),
-		responseFormat: rf,
-	}
+	out := p.clone()
+	out.responseFormat = rf
 	return out, nil
 }
 
@@ -192,7 +225,47 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 	applyManifestProvenanceOnMessages(rendered, p.template.Metadata.ID)
 	exec.Messages = spliceHistory(rendered, cloneMessages(prepared.history))
 	p.applyRuntimeOverrides(exec)
+	if p.toolScope != nil {
+		desc := p.toolScopeDescriptor
+		if desc.ID == "" {
+			desc.ID = templateID
+		}
+		if err := ValidateExecutionManifestContract(exec, desc, toolScopeContract(*p.toolScope)); err != nil {
+			return nil, err
+		}
+	}
 	return exec, nil
+}
+
+// ValidateRuntimeBindings verifies runtime late bindings without invoking a model.
+func (p *RenderPlan) ValidateRuntimeBindings() error {
+	if p == nil {
+		return ErrNilRenderPlan
+	}
+	templateID := ""
+	if p.template != nil {
+		templateID = p.template.Metadata.ID
+	}
+	lateVars := ensureOptionalLateDefaults(p.template.InputSchema, p.lateVars)
+	return validateRequiredLateVars(p.template.InputSchema, lateVars, templateID)
+}
+
+func (p *RenderPlan) clone() *RenderPlan {
+	if p == nil {
+		return nil
+	}
+	out := &RenderPlan{
+		template:            CloneTemplate(p.template),
+		typedInput:          p.typedInput,
+		lateVars:            cloneMapAny(p.lateVars),
+		responseFormat:      cloneSchemaDefinition(p.responseFormat),
+		toolScope:           cloneToolScopePtr(p.toolScope),
+		toolScopeDescriptor: p.toolScopeDescriptor,
+	}
+	if out.lateVars == nil {
+		out.lateVars = make(map[string]any)
+	}
+	return out
 }
 
 func (p *RenderPlan) applyRuntimeOverrides(exec *PromptExecution) {

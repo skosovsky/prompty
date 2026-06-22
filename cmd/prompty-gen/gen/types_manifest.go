@@ -169,6 +169,7 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 		constName,
 		requiresComposeContext,
 		renderSchema,
+		spec.ResponseFormat,
 		composeConditions,
 	); recipeErr != nil {
 		return nil, recipeErr
@@ -464,6 +465,7 @@ func addRecipeTypeAndMethods(
 	constName string,
 	requiresComposeContext bool,
 	inputSchema *prompty.SchemaDefinition,
+	responseFormat *prompty.SchemaDefinition,
 	composeConditions []ComposeConditionSpec,
 ) error {
 	innerType := jen.Qual("github.com/skosovsky/prompty", "PromptRecipeNoLate").
@@ -559,6 +561,8 @@ func addRecipeTypeAndMethods(
 	)
 	f.Line()
 
+	addRecipeStructuredOutputMethods(f, recipeType, responseFormat)
+
 	if requiresComposeContext {
 		addRecipeTransformMethod(f, recipeType, "WithComposeContext", "ctx", composeContextType)
 	}
@@ -578,7 +582,7 @@ func addRecipeTypeAndMethods(
 	f.Func().Params(jen.Id("r").Id(recipeType)).Id("ExecuteWithContract").Params(
 		jen.Id("ctx").Qual("context", "Context"),
 		jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
-		jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolContract"),
+		jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolManifestContract"),
 	).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())).Block(
 		jen.Return(jen.Id("r").Dot("inner").Dot("ExecuteWithContract").Call(
 			jen.Id("ctx"),
@@ -587,6 +591,57 @@ func addRecipeTypeAndMethods(
 		)),
 	)
 	return nil
+}
+
+func addRecipeStructuredOutputMethods(
+	f *jen.File,
+	recipeType string,
+	responseFormat *prompty.SchemaDefinition,
+) {
+	f.Func().Params(jen.Id("r").Id(recipeType)).Id("ResponseFormat").Params().
+		Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "SchemaDefinition"), jen.Error())).
+		Block(structuredOutputResponseFormatBody(responseFormat)...)
+	f.Line()
+
+	f.Func().Params(jen.Id("r").Id(recipeType)).Id("JSONSchema").Params().
+		Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "JSONDocument"), jen.Error())).
+		Block(
+			jen.List(jen.Id("format"), jen.Id("err")).Op(":=").Id("r").Dot("ResponseFormat").Call(),
+			jen.If(jen.Id("err").Op("!=").Nil()).Block(
+				jen.Return(jen.Nil(), jen.Id("err")),
+			),
+			jen.Return(jen.Qual("github.com/skosovsky/prompty", "CloneJSONDocument").Call(
+				jen.Id("format").Dot("Schema"),
+			), jen.Nil()),
+		)
+	f.Line()
+}
+
+func structuredOutputResponseFormatBody(responseFormat *prompty.SchemaDefinition) []jen.Code {
+	if responseFormat == nil || len(responseFormat.Schema) == 0 {
+		return []jen.Code{
+			jen.Return(
+				jen.Nil(),
+				jen.Qual("github.com/skosovsky/prompty", "ErrStructuredOutputUnavailable"),
+			),
+		}
+	}
+	fields := []jen.Code{
+		jen.Id("Schema").Op(":").Qual("github.com/skosovsky/prompty", "JSONDocument").
+			Call(jen.Lit(string(responseFormat.Schema))),
+	}
+	if responseFormat.Name != "" {
+		fields = append(fields, jen.Id("Name").Op(":").Lit(responseFormat.Name))
+	}
+	if responseFormat.Description != "" {
+		fields = append(fields, jen.Id("Description").Op(":").Lit(responseFormat.Description))
+	}
+	return []jen.Code{
+		jen.Return(
+			jen.Op("&").Qual("github.com/skosovsky/prompty", "SchemaDefinition").Values(fields...),
+			jen.Nil(),
+		),
+	}
 }
 
 func addRecipeTransformMethod(

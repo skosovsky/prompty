@@ -102,6 +102,15 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "CheckpointJSON()") {
 		t.Error("expected generic recipe checkpoint JSON method")
 	}
+	if !strings.Contains(out, "ResponseFormat()") {
+		t.Error("expected generic recipe structured output contract method")
+	}
+	if !strings.Contains(out, "JSONSchema()") {
+		t.Error("expected generic recipe JSON schema contract method")
+	}
+	if strings.Contains(out, "ToolContract") {
+		t.Error("legacy name-only ToolContract must not be generated")
+	}
 	if !strings.Contains(out, "func AllPromptIDs()") {
 		t.Error("expected AllPromptIDs")
 	}
@@ -175,6 +184,12 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	}
 	if !strings.Contains(out, "func (r SupportAgentRecipe) PromptID()") {
 		t.Error("expected recipe PromptID method")
+	}
+	if !strings.Contains(out, "func (r SupportAgentRecipe) ResponseFormat()") {
+		t.Error("expected generated ResponseFormat method")
+	}
+	if !strings.Contains(out, "ErrStructuredOutputUnavailable") {
+		t.Error("expected unavailable structured output error for prompts without response_format")
 	}
 	if !strings.Contains(out, "PromptRecipeNoLate[SupportAgentInput]") {
 		t.Error("expected no-late prompt recipe wrapper")
@@ -365,6 +380,20 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "type GreeterOutput struct") {
 		t.Error("expected GreeterOutput when response_format present")
+	}
+	if !strings.Contains(out, "func (r GreeterRecipe) ResponseFormat()") {
+		t.Error("expected generated ResponseFormat method")
+	}
+	if !strings.Contains(out, "func (r GreeterRecipe) JSONSchema()") {
+		t.Error("expected generated JSONSchema method")
+	}
+	if strings.Contains(out, "ErrStructuredOutputUnavailable") {
+		t.Error("response-format prompt must not return unavailable schema")
+	}
+	wantStaticSchema := `prompty.JSONDocument(` +
+		`"{\"properties\":{\"message\":{\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}")`
+	if !strings.Contains(out, wantStaticSchema) {
+		t.Error("expected generated static schema document")
 	}
 	if strings.Contains(out, "(*prompty.RenderPlan, error)") {
 		t.Error("response-format prompts must still use recipe-first generated API")

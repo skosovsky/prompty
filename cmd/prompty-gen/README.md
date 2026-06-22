@@ -81,7 +81,7 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Recipe` с `CheckpointJSON()`, `type PromptCatalog` (интерфейс), `PromptIndex` с static `Lookup(id)` entry metadata/required tools/descriptor, `NewRecipeFromJSON`, `DecodeRecipeCheckpoint`, `func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Recipe` с `CheckpointJSON()`, `ResponseFormat()` и `JSONSchema()`, `type PromptCatalog` (интерфейс), `PromptIndex` с static `Lookup(id)` entry metadata/required tools/descriptor, `NewRecipeFromJSON`, `DecodeRecipeCheckpoint`, `func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, typed `XxxRecipe`, `NewXxxRecipeFromCheckpoint`, `RequiredTools()`, `ID()`. Для prompt без compose conditions генерируется `NewRecipe`; для prompt с `condition.match` генерируются `XxxComposeContext`, `XxxRecipePayload` и `NewRecipeWithComposeContext`.
 
 `NewRecipe` / `NewRecipeWithComposeContext` выполняют: defaults → validate input → fail-fast bind check → `registry.RecommendManifestDescriptor(ctx, id)` → typed recipe. `Checkpoint()` возвращает JSON-safe DTO, `CheckpointJSON()` сериализует DTO для generic `Recipe`, `NewXxxRecipeFromCheckpoint` повторно применяет defaults/validation/bind checks и восстанавливает typed recipe без ручного switch. `RequiredTools()` и `PromptIndex.Lookup(id)` возвращают generated literals без registry IO.
@@ -134,8 +134,8 @@ restored, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
 if err != nil {
 	return err
 }
-contract := prompty.ToolContractFunc(func(name string) bool {
-	return runtimeHasTool(name)
+contract := prompty.ToolManifestContractFunc(func(name string) (prompty.ToolManifest, bool) {
+	return runtimeToolManifest(name)
 })
 exec, err := restored.ExecuteWithContract(ctx, reg, contract)
 if err != nil {
@@ -154,7 +154,7 @@ resp, err := invoker.Execute(ctx, exec)
 4. Checkpoint: `recipe.Checkpoint()` -> JSON DTO + error; restore через `NewXxxRecipeFromCheckpoint(...)` или `PromptIndex.DecodeRecipeCheckpoint(...)`.
 5. Композиция: декларативные `imports`/`layers` в манифесте; runtime `condition.match` — через generated `XxxComposeContext`.
 6. Late input: `recipe.BindLate(XxxLateInput{...})` для манифестов с late-полями.
-7. Required tools: `recipe.ExecuteWithContract(ctx, reg, contract)` для preflight, когда runtime должен проверить доступные tools.
+7. Required tools: `recipe.ExecuteWithContract(ctx, reg, contract)` для preflight, когда runtime должен проверить tool manifests, schemas и capabilities.
 8. Выполнение без required-tool preflight: `recipe.Execute(ctx, reg)` -> `*prompty.PromptExecution`; основной runtime path должен использовать `ExecuteWithContract`.
 9. Вызов модели: `invoker.Execute(ctx, exec)`.
 

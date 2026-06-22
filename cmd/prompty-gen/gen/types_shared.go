@@ -50,6 +50,10 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 		jen.Id("PromptID").Params().Id("PromptID"),
 		jen.Id("Descriptor").Params().Qual("github.com/skosovsky/prompty", "ManifestDescriptor"),
 		jen.Id("CheckpointJSON").Params().Parens(jen.List(jen.Index().Byte(), jen.Error())),
+		jen.Id("ResponseFormat").Params().
+			Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "SchemaDefinition"), jen.Error())),
+		jen.Id("JSONSchema").Params().
+			Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "JSONDocument"), jen.Error())),
 		jen.Id("Execute").Params(
 			jen.Id("ctx").Qual("context", "Context"),
 			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
@@ -57,7 +61,7 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 		jen.Id("ExecuteWithContract").Params(
 			jen.Id("ctx").Qual("context", "Context"),
 			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
-			jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolContract"),
+			jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolManifestContract"),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())),
 	)
 	f.Line()
