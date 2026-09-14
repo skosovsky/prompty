@@ -35,9 +35,9 @@ func (e *NonTextResponseError) Unwrap() error { return ErrNonTextResponse }
 func contentPartKind(p ContentPart) string {
 	switch p.(type) {
 	case TextPart, *TextPart:
-		return "text"
+		return partKindText
 	case MediaPart, *MediaPart:
-		return "media"
+		return partKindMedia
 	case ReasoningPart, *ReasoningPart:
 		return "reasoning"
 	case ToolCallPart, *ToolCallPart:

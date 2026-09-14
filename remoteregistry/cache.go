@@ -92,7 +92,6 @@ func (r *CachedRegistry) loadTemplate(
 		return r.waitForInflight(ctx, id, inFlight)
 	}
 
-	//nolint:gosec // cancel is stored in inflight and called by waiter lifecycle / fetch completion.
 	sharedCtx, cancel := context.WithCancel(context.Background())
 	inFlight := &inflightFetch{
 		ctx:     sharedCtx,

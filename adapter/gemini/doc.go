@@ -8,5 +8,6 @@
 // MessageProvenance is not mapped to the Gemini provider API.
 // System-only prompts (no user/assistant messages) receive a synthetic user Content turn;
 // Gemini requires non-empty Contents while system text is sent via SystemInstruction.
-// ToolCallPart.Args must be valid JSON when non-empty; otherwise adapter.ErrMalformedArgs is returned.
+// Empty function-call args in ParseResponse become "{}"; adapter.ErrMalformedArgs is returned
+// only for invalid JSON / marshal errors. ToolCallPart.Args must be valid JSON when non-empty.
 package gemini

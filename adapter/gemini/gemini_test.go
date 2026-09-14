@@ -661,8 +661,51 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Contains(t, tc.Args, "NYC")
 }
 
-func TestParseResponse_EmptyFunctionCallArgsFailsClosed(t *testing.T) {
+func TestParseResponse_EmptyFunctionCallArgs(t *testing.T) {
 	t.Parallel()
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "empty map", args: map[string]any{}},
+		{name: "nil map", args: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Arrange
+			a := New()
+			resp := &genai.GenerateContentResponse{
+				Candidates: []*genai.Candidate{{
+					Content: &genai.Content{
+						Parts: []*genai.Part{{
+							FunctionCall: &genai.FunctionCall{
+								ID:   "call_1",
+								Name: "get_weather",
+								Args: tt.args,
+							},
+						}},
+					},
+				}},
+			}
+
+			// Act
+			pResp, err := a.ParseResponse(resp)
+
+			// Assert
+			require.NoError(t, err)
+			require.Len(t, pResp.Content, 1)
+			tc := pResp.Content[0].(prompty.ToolCallPart)
+			assert.Equal(t, "call_1", tc.ID)
+			assert.Equal(t, "get_weather", tc.Name)
+			assert.Equal(t, "{}", tc.Args)
+		})
+	}
+}
+
+func TestParseResponse_MalformedToolArgsFails(t *testing.T) {
+	t.Parallel()
+	// Arrange
 	a := New()
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{{
@@ -671,13 +714,17 @@ func TestParseResponse_EmptyFunctionCallArgsFailsClosed(t *testing.T) {
 					FunctionCall: &genai.FunctionCall{
 						ID:   "call_1",
 						Name: "get_weather",
-						Args: map[string]any{},
+						Args: map[string]any{"bad": make(chan int)},
 					},
 				}},
 			},
 		}},
 	}
+
+	// Act
 	_, err := a.ParseResponse(resp)
+
+	// Assert
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
@@ -768,6 +815,48 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	assert.Equal(t, "application/json", req.Config.ResponseMIMEType)
 	require.NotNil(t, req.Config.ResponseSchema)
 	assert.Equal(t, genai.TypeObject, req.Config.ResponseSchema.Type)
+}
+
+func TestParseStreamChunk_EmptyFunctionCallArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "empty map", args: map[string]any{}},
+		{name: "nil map", args: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Arrange
+			a := New()
+			chunk := &genai.GenerateContentResponse{
+				Candidates: []*genai.Candidate{{
+					Content: &genai.Content{
+						Parts: []*genai.Part{{
+							FunctionCall: &genai.FunctionCall{
+								ID:   "call_1",
+								Name: "get_weather",
+								Args: tt.args,
+							},
+						}},
+					},
+				}},
+			}
+
+			// Act
+			parts, err := a.ParseStreamChunk(chunk)
+
+			// Assert
+			require.NoError(t, err)
+			require.Len(t, parts, 1)
+			tc := parts[0].(prompty.ToolCallPart)
+			assert.Equal(t, "call_1", tc.ID)
+			assert.Equal(t, "get_weather", tc.Name)
+			assert.Empty(t, tc.ArgsChunk)
+		})
+	}
 }
 
 func TestParseStreamChunk_Text(t *testing.T) {

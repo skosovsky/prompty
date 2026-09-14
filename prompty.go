@@ -398,7 +398,7 @@ type TemplatePart struct {
 
 // TextContent returns a single text TemplatePart slice for convenience.
 func TextContent(text string) []TemplatePart {
-	return []TemplatePart{{Type: "text", Text: text}}
+	return []TemplatePart{{Type: partKindText, Text: text}}
 }
 
 // MessageTemplate is the raw template for one message before rendering.

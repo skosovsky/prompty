@@ -307,18 +307,15 @@ func (a *Adapter) ParseResponse(resp *genai.GenerateContentResponse) (*prompty.R
 		out = append(out, prompty.TextPart{Text: text})
 	}
 	for _, fc := range resp.FunctionCalls() {
-		if len(fc.Args) == 0 {
-			return nil, fmt.Errorf(
-				"%w: empty function call args for %q",
-				adapter.ErrMalformedArgs,
-				fc.Name,
-			)
+		argsJSON := "{}"
+		if len(fc.Args) > 0 {
+			b, err := json.Marshal(fc.Args)
+			if err != nil {
+				return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
+			}
+			argsJSON = string(b)
 		}
-		b, err := json.Marshal(fc.Args)
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
-		}
-		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, Args: string(b)})
+		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, Args: argsJSON})
 	}
 	if len(out) == 0 {
 		return nil, adapter.ErrEmptyResponse

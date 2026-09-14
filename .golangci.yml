@@ -488,8 +488,9 @@ linters:
         source: '// ?(nolint|TODO)'
         linters: [ revive, staticcheck ]
       # prompty-gen: schema/codegen paths are intentionally deep; splitting hurts golden stability.
+      # JSON schema map keys ("type", "properties", "json") are repeated literals on purpose.
       - path: 'cmd/prompty-gen/'
-        linters: [ gocognit, nestif ]
+        linters: [ gocognit, nestif, goconst ]
       # prompty core: (nil, nil) and globals are intentional library patterns; see prompty-root-lint plan.
       - path: '^(convenience_test|test_helpers_test|truncate)\.go$|^middleware/contextx/contextx_test\.go$|^manifest/model_options\.go$|^prompty\.go$'
         linters: [ nilnil ]
@@ -498,6 +499,9 @@ linters:
       # Heavy reflection/parsing paths: cognitive complexity accepted until refactor.
       - path: '^(clone|embedregistry/registry|manifest/parse|middleware/contextx/contextx_test|payload|schema_reflect|stream_structured_output|template|token)\.go$'
         linters: [ gocognit, nestif, funlen ]
+      # JSON schema keys, MIME kinds, and file extensions are intentional repeated literals.
+      - path: '^(schema_reflect|template)\.go$|^manifest/(compose|inputs)\.go$|^(embedregistry|fileregistry)/registry\.go$'
+        linters: [ goconst ]
       - path: '^ext/otelprompty/otel\.go$'
         linters: [ gocognit ]
       # Examples and tests use fmt for // Output: and readable demos.
@@ -517,6 +521,7 @@ linters:
           - wrapcheck
           - exhaustruct
       # Provider adapters: vendor SDK DTOs are partially initialized; Translate paths stay complex until refactors.
+      # Provider setting keys and JSON schema type literals are intentional repeated strings.
       - path: '^adapter/.*/'
         linters:
           - exhaustruct
@@ -527,12 +532,14 @@ linters:
           - nestif
           - dupl
           - nilnil
+          - goconst
       - path: '^remoteregistry/git/'
         linters:
           - exhaustruct
           - gocognit
           - nestif
           - nonamedreturns
+          - goconst
       # Adapter modules use replace github.com/skosovsky/prompty => ../.. for local workspace dev.
       - path: '^adapter/.*/go\.mod$'
         linters: [ gomoddirectives ]
