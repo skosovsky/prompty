@@ -25,6 +25,7 @@ func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testin
 	}
 
 	exec := SimplePrompt("hi")
+	exec.Tools = []ToolDefinition{{Name: "lookup"}}
 	result, err := ExecuteWithToolValidation(
 		context.Background(),
 		invoker,
@@ -67,10 +68,12 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 		},
 	}
 
+	exec := SimplePrompt("hi")
+	exec.Tools = []ToolDefinition{{Name: "lookup"}, {Name: "weather"}}
 	result, err := ExecuteWithToolValidation(
 		context.Background(),
 		invoker,
-		SimplePrompt("hi"),
+		exec,
 		stubToolInvoker{
 			validate: func(name string, _ string) error {
 				return errors.New(name + " invalid")
@@ -111,10 +114,12 @@ func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
 		},
 	}
 
+	exec := SimplePrompt("hi")
+	exec.Tools = reg.Definitions()
 	result, err := ExecuteWithToolValidation(
 		context.Background(),
 		invoker,
-		SimplePrompt("hi"),
+		exec,
 		reg,
 	)
 	require.NoError(t, err)

@@ -14,6 +14,10 @@ const streamBufferPreviewLimit = 1024
 
 var streamMaxObjectSizeBytes = 10 * 1024 * 1024
 
+// ErrStructuredStream identifies invalid incremental JSON syntax/shape, not
+// provider refusal or voluntary consumer cancellation.
+var ErrStructuredStream = errors.New("prompty: invalid structured stream")
+
 type streamJSONMode int
 
 const (
@@ -22,8 +26,11 @@ const (
 	streamJSONModeArray
 )
 
-// StreamStructuredOutput streams structured JSON objects from ExecuteStream.
-func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *PromptExecution) iter.Seq2[T, error] {
+// StreamStructuredOutput yields provisional JSON objects. They are final only
+// after successful iterator exhaustion and whole-document validation.
+func StreamStructuredOutput[T any](
+	ctx context.Context, invoker Invoker, exec *PromptExecution, mode StreamMode,
+) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var zero T
 
@@ -32,9 +39,21 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 			return
 		}
 
-		workExec, err := prepareStructuredExecution[T](exec)
+		workExec, err := prepareStructuredStreamExecution[T](exec)
 		if err != nil {
 			yield(zero, err)
+			return
+		}
+		validator, err := workExec.Validator.CompileSchema(
+			workExec.ResponseFormat.Schema,
+			workExec.ResponseFormat.Dialect,
+		)
+		if err != nil {
+			yield(zero, err)
+			return
+		}
+		if validator == nil {
+			yield(zero, ErrSchemaValidatorRequired)
 			return
 		}
 
@@ -42,7 +61,54 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 		defer cancel()
 
 		parser := newStructuredStreamParser[T]()
-		for chunk, err := range invoker.ExecuteStream(streamCtx, workExec) {
+		stream := invoker.ExecuteStream(streamCtx, workExec, mode)
+		if stream == nil {
+			yield(zero, ErrStreamProtocol)
+			return
+		}
+		defer func() { _ = stream.Close() }()
+		var pending []T
+		skipContent := false
+		if bindErr := stream.attachValidation(func(chunk *ResponseChunk) error {
+			pending = nil
+			if chunk.Outcome != "" && chunk.Outcome != OutcomeCompleted {
+				skipContent = true
+			}
+			if skipContent {
+				return nil // retain subsequent usage; failure is classified at finalization
+			}
+			if len(chunk.Content) == 0 {
+				return nil
+			}
+			texts, textErr := strictTextPartsFromContent(chunk.Content)
+			if textErr != nil {
+				return textErr
+			}
+			for _, text := range texts {
+				items, parseErr := parser.feed(text)
+				if parseErr != nil {
+					return parseErr
+				}
+				pending = append(pending, items...)
+			}
+			return nil
+		}, func(_ context.Context, response *Response) error {
+			if response.Outcome != OutcomeCompleted {
+				return &OutcomeError{Outcome: response.Outcome, FinishReason: response.FinishReason}
+			}
+			if finishErr := parser.finish(); finishErr != nil {
+				return finishErr
+			}
+			document, textErr := response.StrictText()
+			if textErr != nil {
+				return textErr
+			}
+			return validator.ValidateJSON(JSONDocument(document))
+		}); bindErr != nil {
+			yield(zero, bindErr)
+			return
+		}
+		for chunk, err := range stream.Events() {
 			if err != nil {
 				cancel()
 				yield(zero, err)
@@ -53,33 +119,43 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 				yield(zero, errors.New("stream structured output: nil chunk"))
 				return
 			}
-			texts, textErr := strictTextPartsFromContent(chunk.Content)
-			if textErr != nil {
-				cancel()
-				yield(zero, textErr)
-				return
+			if chunk.Kind == StreamTerminal {
+				continue
 			}
-			for _, text := range texts {
-				items, parseErr := parser.feed(text)
-				if parseErr != nil {
+			// Role/start/finish and usage-only chunks carry no content. They are
+			// protocol events, not evidence of an empty model response.
+			if len(chunk.Content) == 0 {
+				continue
+			}
+			for _, item := range pending {
+				if !yield(item, nil) {
 					cancel()
-					yield(zero, parseErr)
 					return
 				}
-				for _, item := range items {
-					if !yield(item, nil) {
-						cancel()
-						return
-					}
-				}
 			}
 		}
-
-		if err := parser.finish(); err != nil {
-			cancel()
-			yield(zero, err)
-		}
 	}
+}
+
+// Without an explicit document schema the stream accepts one T object or an
+// array of T objects. Explicit schemas describe the whole document, not an item.
+func prepareStructuredStreamExecution[T any](exec *PromptExecution) (*PromptExecution, error) {
+	working, err := prepareStructuredExecution[T](exec)
+	if err != nil || exec.ResponseFormat != nil {
+		return working, err
+	}
+	itemSchema, err := schemaForStructuredType[T]()
+	if err != nil {
+		return nil, err
+	}
+	document, err := MapToJSONDocument(map[string]any{"anyOf": []any{
+		itemSchema, map[string]any{schemaKeywordType: schemaTypeArray, schemaKeywordItems: itemSchema},
+	}})
+	if err != nil {
+		return nil, err
+	}
+	working.ResponseFormat.Schema = document
+	return working, nil
 }
 
 func strictTextPartsFromContent(parts []ContentPart) ([]string, error) {
@@ -111,15 +187,17 @@ func strictTextPartsFromContent(parts []ContentPart) ([]string, error) {
 }
 
 type structuredStreamParser[T any] struct {
-	mode      streamJSONMode
-	started   bool
-	completed bool
-	capturing bool
-	depth     int
-	inString  bool
-	escape    bool
-	current   bytes.Buffer
-	preview   bytes.Buffer
+	mode            streamJSONMode
+	started         bool
+	completed       bool
+	capturing       bool
+	depth           int
+	inString        bool
+	escape          bool
+	current         bytes.Buffer
+	preview         bytes.Buffer
+	arrayHasItem    bool
+	arrayNeedsValue bool
 }
 
 func newStructuredStreamParser[T any]() *structuredStreamParser[T] {
@@ -183,6 +261,9 @@ func (p *structuredStreamParser[T]) feed(text string) ([]T, error) {
 }
 
 func (p *structuredStreamParser[T]) finish() error {
+	if !p.started {
+		return ErrEmptyTextResponse
+	}
 	if p.capturing || p.depth != 0 {
 		return p.errorf("incomplete JSON in stream")
 	}
@@ -226,14 +307,27 @@ func (p *structuredStreamParser[T]) consumeObjectByte(ch byte) (T, bool, error) 
 
 func (p *structuredStreamParser[T]) consumeArrayByte(ch byte) ([]T, error) {
 	if !p.capturing {
+		if isJSONWhitespace(ch) {
+			return nil, nil
+		}
 		switch ch {
-		case ' ', '\n', '\r', '\t', ',':
+		case ',':
+			if !p.arrayHasItem || p.arrayNeedsValue {
+				return nil, p.errorf("unexpected comma in JSON array stream")
+			}
+			p.arrayNeedsValue = true
 			return nil, nil
 		case ']':
+			if p.arrayNeedsValue {
+				return nil, p.errorf("trailing comma in JSON array stream")
+			}
 			p.appendPreviewByte(ch)
 			p.completed = true
 			return nil, nil
 		case '{':
+			if p.arrayHasItem && !p.arrayNeedsValue {
+				return nil, p.errorf("missing comma in JSON array stream")
+			}
 			p.startCapture(ch)
 			return nil, nil
 		default:
@@ -253,6 +347,8 @@ func (p *structuredStreamParser[T]) consumeArrayByte(ch byte) ([]T, error) {
 		return nil, err
 	}
 	p.capturing = false
+	p.arrayHasItem = true
+	p.arrayNeedsValue = false
 	return []T{item}, nil
 }
 
@@ -309,19 +405,23 @@ func (p *structuredStreamParser[T]) decodeCurrent() (T, error) {
 	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&item); err != nil {
-		return item, p.errorf("failed to decode streamed JSON object: %v", err)
+		return item, p.errorf("failed to decode streamed JSON object: %w", err)
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
 			return item, p.errorf("trailing JSON after streamed object")
 		}
-		return item, p.errorf("failed to decode streamed JSON object: %v", err)
+		return item, p.errorf("failed to decode streamed JSON object: %w", err)
 	}
 	if isNilStructuredValue(item) {
 		return item, p.errorf("decoded nil streamed result")
 	}
 	if err := validateStructuredValue(&item); err != nil {
-		return item, p.errorf("semantic validation failed: %v", err)
+		return item, &ValidationError{
+			RawAssistantMessage: nil,
+			FeedbackPrompt:      semanticFeedbackText(err),
+			Err:                 fmt.Errorf("stream structured output: semantic validation failed: %w", err),
+		}
 	}
 	return item, nil
 }
@@ -352,5 +452,7 @@ func (p *structuredStreamParser[T]) errorf(format string, args ...any) error {
 			preview = preview[len(preview)-streamBufferPreviewLimit:]
 		}
 	}
-	return fmt.Errorf("stream structured output: "+format+"; partial buffer tail: %q", append(args, preview)...)
+	values := append([]any{ErrStructuredStream}, args...)
+	values = append(values, preview)
+	return fmt.Errorf("%w: stream structured output: "+format+"; partial buffer tail: %q", values...)
 }

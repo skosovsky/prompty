@@ -32,6 +32,13 @@ func ExecuteWithStructuredOutput[T any](
 	if err != nil {
 		return nil, err
 	}
+	validator, err := workExec.Validator.CompileSchema(workExec.ResponseFormat.Schema, workExec.ResponseFormat.Dialect)
+	if err != nil {
+		return nil, err
+	}
+	if validator == nil {
+		return nil, ErrSchemaValidatorRequired
+	}
 	resp, err := invoker.Execute(ctx, workExec)
 	if err != nil {
 		return nil, err
@@ -39,14 +46,33 @@ func ExecuteWithStructuredOutput[T any](
 	if resp == nil {
 		return nil, errors.New("structured output: nil response")
 	}
+	if metadataErr := ValidateResponseMetadata(resp); metadataErr != nil {
+		return nil, metadataErr
+	}
+	if resp.Outcome != OutcomeCompleted {
+		return nil, &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason}
+	}
 
-	assistantMsg := newAssistantMessageWithContent(resp.Content)
+	assistantMsg, err := resp.AssistantMessage()
+	if err != nil {
+		return nil, err
+	}
 	rawText, err := resp.StrictText()
 	if err != nil {
 		return nil, &ValidationError{
 			RawAssistantMessage: &assistantMsg,
 			FeedbackPrompt:      validationFeedbackText(err),
 			Err:                 err,
+		}
+	}
+	if validationErr := validator.ValidateJSON(JSONDocument(rawText)); validationErr != nil {
+		if errors.Is(validationErr, ErrSchemaJSONDecode) {
+			return nil, validationErr
+		}
+		return nil, &ValidationError{
+			RawAssistantMessage: &assistantMsg,
+			FeedbackPrompt:      validationFeedbackText(validationErr),
+			Err:                 validationErr,
 		}
 	}
 	result, err := decodeStructuredOutput[T](rawText)
@@ -73,6 +99,9 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 	}
 
 	workExec := clonePromptExecution(exec)
+	if workExec.Validator == nil {
+		workExec.Validator = NewJSONSchemaValidator(nil)
+	}
 	if workExec.ResponseFormat != nil {
 		return workExec, nil
 	}
@@ -166,12 +195,12 @@ func validatableFromValue(value reflect.Value) (Validatable, bool) {
 		return nil, false
 	}
 	if value.CanInterface() {
-		if validatable, ok := value.Interface().(Validatable); ok {
+		if validatable, ok := reflect.TypeAssert[Validatable](value); ok {
 			return validatable, true
 		}
 	}
 	if value.Kind() != reflect.Pointer && value.CanAddr() && value.Addr().CanInterface() {
-		if validatable, ok := value.Addr().Interface().(Validatable); ok {
+		if validatable, ok := reflect.TypeAssert[Validatable](value.Addr()); ok {
 			return validatable, true
 		}
 	}

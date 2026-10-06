@@ -35,15 +35,13 @@ func NewStructuredExecutor[T any](invoker Invoker, exec *PromptExecution) func(c
 			return result, nil
 		}
 
-		var valErr *ValidationError
-		if errors.As(err, &valErr) {
+		if valErr, ok := errors.AsType[*ValidationError](err); ok {
 			workExec = appendAssistantMessageForSelfCorrection(workExec, valErr.RawAssistantMessage)
 			workExec = workExec.AddMessage(NewUserMessage(valErr.FeedbackPrompt))
 			return nil, err
 		}
 
-		var toolErr *ToolCallError
-		if errors.As(err, &toolErr) {
+		if toolErr, ok := errors.AsType[*ToolCallError](err); ok {
 			workExec = appendAssistantMessageForSelfCorrection(workExec, toolErr.RawAssistantMessage)
 			workExec = workExec.AddMessage(newToolMessageWithContent(toolErr.ToolResults))
 			return nil, err

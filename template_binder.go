@@ -164,7 +164,7 @@ func chatMessageFromValue(v reflect.Value) (ChatMessage, bool) {
 		}
 		v = v.Elem()
 	}
-	cm, ok := v.Interface().(ChatMessage)
+	cm, ok := reflect.TypeAssert[ChatMessage](v)
 	return cm, ok
 }
 

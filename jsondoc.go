@@ -1,7 +1,9 @@
 package prompty
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -73,13 +75,40 @@ func SchemaMap(def *SchemaDefinition) (map[string]any, error) {
 	if def == nil {
 		return map[string]any{}, nil
 	}
-	return JSONDocumentAsMap(def.Schema)
+	return SchemaDocumentAsMap(def.Schema)
+}
+
+// SchemaDocumentAsMap preserves JSON numbers exactly for SDK schema mapping.
+// Unlike general metadata decoding, it must not round large numeric constraints.
+func SchemaDocumentAsMap(doc JSONDocument) (map[string]any, error) {
+	if !json.Valid(doc) {
+		return nil, fmt.Errorf("%w: schema must be a complete JSON document", ErrSchemaUnsupported)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(doc))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return nil, fmt.Errorf("%w: SDK schema mapping requires an object", ErrSchemaUnsupported)
+	}
+	return object, nil
 }
 
 // ProviderSettingsMap decodes ModelOptions.ProviderSettings for adapter translation.
 func ProviderSettingsMap(opts *ModelOptions) (map[string]any, error) {
-	if opts == nil {
+	if opts == nil || len(opts.ProviderSettings) == 0 {
 		return map[string]any{}, nil
 	}
-	return JSONDocumentAsMap(opts.ProviderSettings)
+	if !json.Valid(opts.ProviderSettings) {
+		return nil, errors.New("provider settings: invalid JSON object")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(opts.ProviderSettings))
+	decoder.UseNumber()
+	var settings map[string]any
+	if err := decoder.Decode(&settings); err != nil {
+		return nil, errors.New("provider settings: invalid JSON object")
+	}
+	if settings == nil {
+		return nil, errors.New("provider settings: invalid JSON object")
+	}
+	return settings, nil
 }

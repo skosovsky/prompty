@@ -454,7 +454,7 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, exec.Messages, 2)
 				require.NotNil(t, exec.Messages[0].CachePolicy)
-				assert.Equal(t, "ephemeral", exec.Messages[0].CachePolicy.Type)
+				assert.Equal(t, prompty.CacheBlockMarker, exec.Messages[0].CachePolicy.Mechanism)
 			})
 		})
 	}

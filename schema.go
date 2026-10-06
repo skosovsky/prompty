@@ -102,6 +102,6 @@ func instantiateSchemaProvider(t reflect.Type) (SchemaProvider, bool) {
 		return nil, false
 	}
 
-	provider, ok := value.Interface().(SchemaProvider)
+	provider, ok := reflect.TypeAssert[SchemaProvider](value)
 	return provider, ok
 }

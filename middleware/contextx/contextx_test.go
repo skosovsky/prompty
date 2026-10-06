@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -521,17 +522,27 @@ func (i *invokerFunc) Execute(ctx context.Context, exec *prompty.PromptExecution
 func (i *invokerFunc) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		resp, err := i.generate(ctx, exec)
-		if err != nil {
-			yield(nil, err)
-			return
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	return prompty.NewStream(ctx, mode, func(ctx context.Context) iter.Seq2[*prompty.ResponseChunk, error] {
+		return func(yield func(*prompty.ResponseChunk, error) bool) {
+			resp, err := i.generate(ctx, exec)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if resp != nil {
+				ids := make([]string, len(resp.Content))
+				for index := range ids {
+					ids[index] = "result:" + strconv.Itoa(index)
+				}
+				yield(&prompty.ResponseChunk{
+					Identity: prompty.StreamIdentity{MessageID: "", PartIDs: ids},
+					Content:  resp.Content, Kind: prompty.StreamFinish, Outcome: prompty.OutcomeCompleted,
+				}, nil)
+			} else {
+				yield(&prompty.ResponseChunk{Kind: prompty.StreamFinish, Outcome: prompty.OutcomeCompleted}, nil)
+			}
 		}
-		if resp != nil {
-			yield(&prompty.ResponseChunk{Content: resp.Content, IsFinished: true}, nil)
-		} else {
-			yield(&prompty.ResponseChunk{IsFinished: true}, nil)
-		}
-	}
+	})
 }

@@ -152,27 +152,27 @@ func TestTranslate_CacheControlIgnored(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{
 				Role:        prompty.RoleSystem,
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
 						Text:        "System",
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 				},
 			},
 			{
 				Role:        prompty.RoleUser,
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
 						Text:        "Look",
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 					prompty.MediaPart{
 						MediaType:   "image",
 						MIMEType:    "image/png",
 						Data:        []byte{0x89, 0x50, 0x4e, 0x47},
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 				},
 			},
@@ -215,7 +215,7 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "Get weather", decls[0].Description)
 }
 
-func TestTranslate_WithForcedToolInstruction(t *testing.T) {
+func TestTranslate_WithNativeForcedToolSelection(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -242,11 +242,10 @@ func TestTranslate_WithForcedToolInstruction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, req.Config.SystemInstruction)
 	require.Len(t, req.Config.SystemInstruction.Parts, 1)
-	assert.Contains(
-		t,
-		req.Config.SystemInstruction.Parts[0].Text,
-		`You must call tool "get_weather"`,
-	)
+	assert.Equal(t, "Follow policy", req.Config.SystemInstruction.Parts[0].Text)
+	require.NotNil(t, req.Config.ToolConfig)
+	require.Equal(t, genai.FunctionCallingConfigModeAny, req.Config.ToolConfig.FunctionCallingConfig.Mode)
+	require.Equal(t, []string{"get_weather"}, req.Config.ToolConfig.FunctionCallingConfig.AllowedFunctionNames)
 }
 
 func TestTranslate_GeminiSearchGroundingProviderSettings(t *testing.T) {
@@ -815,91 +814,4 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	assert.Equal(t, "application/json", req.Config.ResponseMIMEType)
 	require.NotNil(t, req.Config.ResponseSchema)
 	assert.Equal(t, genai.TypeObject, req.Config.ResponseSchema.Type)
-}
-
-func TestParseStreamChunk_EmptyFunctionCallArgs(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		args map[string]any
-	}{
-		{name: "empty map", args: map[string]any{}},
-		{name: "nil map", args: nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			// Arrange
-			a := New()
-			chunk := &genai.GenerateContentResponse{
-				Candidates: []*genai.Candidate{{
-					Content: &genai.Content{
-						Parts: []*genai.Part{{
-							FunctionCall: &genai.FunctionCall{
-								ID:   "call_1",
-								Name: "get_weather",
-								Args: tt.args,
-							},
-						}},
-					},
-				}},
-			}
-
-			// Act
-			parts, err := a.ParseStreamChunk(chunk)
-
-			// Assert
-			require.NoError(t, err)
-			require.Len(t, parts, 1)
-			tc := parts[0].(prompty.ToolCallPart)
-			assert.Equal(t, "call_1", tc.ID)
-			assert.Equal(t, "get_weather", tc.Name)
-			assert.Empty(t, tc.ArgsChunk)
-		})
-	}
-}
-
-func TestParseStreamChunk_Text(t *testing.T) {
-	t.Parallel()
-	a := New()
-	chunk := &genai.GenerateContentResponse{
-		Candidates: []*genai.Candidate{{
-			Content: &genai.Content{
-				Parts: []*genai.Part{{Text: "Hi "}},
-			},
-		}},
-	}
-	parts, err := a.ParseStreamChunk(chunk)
-	require.NoError(t, err)
-	require.Len(t, parts, 1)
-	assert.Equal(t, "Hi ", parts[0].(prompty.TextPart).Text)
-}
-
-func TestParseStreamChunk_InvalidType(t *testing.T) {
-	t.Parallel()
-	a := New()
-	_, err := a.ParseStreamChunk(nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrInvalidResponse)
-}
-
-func TestParseStreamChunk_MalformedToolArgsFails(t *testing.T) {
-	t.Parallel()
-	a := New()
-	chunk := &genai.GenerateContentResponse{
-		Candidates: []*genai.Candidate{{
-			Content: &genai.Content{
-				Parts: []*genai.Part{{
-					FunctionCall: &genai.FunctionCall{
-						ID:   "call_1",
-						Name: "get_weather",
-						Args: map[string]any{"bad": make(chan int)},
-					},
-				}},
-			},
-		}},
-	}
-	_, err := a.ParseStreamChunk(chunk)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }

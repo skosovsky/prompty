@@ -26,16 +26,13 @@ var (
 	ErrUnsupportedType = errors.New("mediafetch: unsupported content type")
 )
 
-// AllowedImagePrefixes are Content-Type prefixes accepted for image media (e.g. "image/png"). Do not modify.
-var AllowedImagePrefixes = []string{"image/"}
-
-// DefaultClient is the HTTP client used for fetching. Override in tests to use a custom client (e.g. TLS with InsecureSkipVerify).
-var DefaultClient = http.DefaultClient
-
 // DefaultFetcher implements URL-to-bytes fetching using standard HTTP (HTTPS only, size limit, image MIME check).
 // It satisfies the Fetcher interface used by prompty.ResolveMedia; no import of prompty is required.
 type DefaultFetcher struct {
 	MaxBodySize int64
+	// Client supplies transport, egress and redirect restrictions. It is never mutated.
+	// A nil client uses http.DefaultClient. HTTPS remains mandatory on every redirect.
+	Client *http.Client
 }
 
 // Fetch downloads the URL and returns body and Content-Type. Only https is allowed; response is limited to MaxBodySize (or DefaultMaxBodySize if 0).
@@ -55,7 +52,27 @@ func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, strin
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: new request: %w", err)
 	}
-	resp, err := DefaultClient.Do(req)
+	client := f.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	// Copy the client, retaining its transport and timeout without modifying the
+	// caller's redirect policy or sharing per-fetch state.
+	checkedClient := *client
+	checkedClient.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return ErrUnsafeScheme
+		}
+		if client.CheckRedirect != nil {
+			return client.CheckRedirect(next, via)
+		}
+		const maxRedirects = 10
+		if len(via) >= maxRedirects {
+			return errors.New("mediafetch: stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := checkedClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: do request: %w", err)
 	}
@@ -67,27 +84,39 @@ func (f DefaultFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, strin
 	if idx := strings.Index(mimeType, ";"); idx >= 0 {
 		mimeType = strings.TrimSpace(mimeType[:idx])
 	}
-	allowed := false
-	for _, prefix := range AllowedImagePrefixes {
-		if strings.HasPrefix(mimeType, prefix) {
-			allowed = true
-			break
-		}
-	}
+	allowed := strings.HasPrefix(mimeType, "image/")
 	if mimeType != "" && !allowed {
 		return nil, "", fmt.Errorf("%w: %s", ErrUnsupportedType, mimeType)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	data, err := readBoundedBody(resp.Body, maxBytes)
 	if err != nil {
 		return nil, "", fmt.Errorf("mediafetch: read body: %w", err)
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, "", ErrBodyTooLarge
 	}
 	return data, mimeType, nil
 }
 
+// Read at most the limit plus a one-byte probe without adding to the limit;
+// maxBytes may be MaxInt64, for which maxBytes+1 would wrap to a negative bound.
+func readBoundedBody(body io.Reader, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxBytes))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) < maxBytes {
+		return data, nil
+	}
+	var probe [1]byte
+	read, probeErr := io.ReadFull(body, probe[:])
+	if read != 0 {
+		return nil, ErrBodyTooLarge
+	}
+	if !errors.Is(probeErr, io.EOF) {
+		return nil, probeErr
+	}
+	return data, nil
+}
+
 // FetchImage downloads a URL with ctx, size limit, and optional MIME check. Only https is allowed.
 func FetchImage(ctx context.Context, rawURL string, maxBytes int64) ([]byte, string, error) {
-	return DefaultFetcher{MaxBodySize: maxBytes}.Fetch(ctx, rawURL)
+	return DefaultFetcher{MaxBodySize: maxBytes, Client: nil}.Fetch(ctx, rawURL)
 }

@@ -22,7 +22,9 @@ func TestRuntimeClient_DescriptorAndEstimator(t *testing.T) {
 	desc, err := client.RuntimeDescriptor()
 	require.NoError(t, err)
 	assert.Equal(t, "openai", desc.Name)
-	assert.NotContains(t, desc.Capabilities, "token_estimation")
+	assert.Empty(t, desc.Profiles, "provider-wide capabilities are not inferred from a name")
+	assert.NotEmpty(t, desc.Endpoint)
+	assert.NotEmpty(t, desc.DefaultModel)
 
 	estimator, err := client.TokenEstimator()
 	require.NoError(t, err)
@@ -75,7 +77,9 @@ func TestRuntimeClient_DescriptorsForAdapters(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantName, desc.Name)
-			assert.Empty(t, desc.Capabilities)
+			assert.Empty(t, desc.Profiles)
+			assert.NotEmpty(t, desc.Endpoint)
+			assert.NotEmpty(t, desc.DefaultModel)
 		})
 	}
 }

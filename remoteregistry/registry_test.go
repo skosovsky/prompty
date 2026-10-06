@@ -365,13 +365,10 @@ func TestCachedRegistry_Plan_CallerCancellationIsolation(t *testing.T) {
 	t.Parallel()
 	manifestJSON := `{"id":"ctx_isolation","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
 	started := make(chan struct{})
+	var startOnce sync.Once
 	m := &mockFetcher{
 		fetch: func(ctx context.Context, _ string) ([]byte, error) {
-			select {
-			case <-started:
-			default:
-				close(started)
-			}
+			startOnce.Do(func() { close(started) })
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -408,19 +405,12 @@ func TestCachedRegistry_Plan_CancelsSharedFetchWhenAllWaitersCancel(t *testing.T
 	t.Parallel()
 	started := make(chan struct{})
 	canceled := make(chan struct{})
+	var startOnce, cancelOnce sync.Once
 	m := &mockFetcher{
 		fetch: func(ctx context.Context, _ string) ([]byte, error) {
-			select {
-			case <-started:
-			default:
-				close(started)
-			}
+			startOnce.Do(func() { close(started) })
 			<-ctx.Done()
-			select {
-			case <-canceled:
-			default:
-				close(canceled)
-			}
+			cancelOnce.Do(func() { close(canceled) })
 			return nil, ctx.Err()
 		},
 	}

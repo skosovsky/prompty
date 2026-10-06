@@ -308,12 +308,12 @@ version: "1"
 messages:
   - role: system
     cache_policy:
-      type: ephemeral
+      mechanism: block_marker
     content:
       - type: text
         text: "Policy"
         cache_policy:
-          type: ephemeral
+          mechanism: block_marker
   - role: user
     content: "Hi"
 `)
@@ -322,10 +322,10 @@ messages:
 	require.NoError(t, err)
 	require.Len(t, raw.Messages, 2)
 	require.NotNil(t, raw.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", raw.Messages[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, raw.Messages[0].CachePolicy.Mechanism)
 	require.Len(t, raw.Messages[0].Content, 1)
 	require.NotNil(t, raw.Messages[0].Content[0].CachePolicy)
-	assert.Equal(t, "ephemeral", raw.Messages[0].Content[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, raw.Messages[0].Content[0].CachePolicy.Mechanism)
 }
 
 func TestUnmarshal_LegacyCacheFieldRejected(t *testing.T) {

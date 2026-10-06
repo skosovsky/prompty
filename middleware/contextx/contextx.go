@@ -3,7 +3,6 @@ package contextx
 
 import (
 	"context"
-	"iter"
 
 	"github.com/skosovsky/prompty"
 	exttruncate "github.com/skosovsky/prompty/ext/truncate"
@@ -40,15 +39,16 @@ func (t *tokenBudgetInvoker) Execute(ctx context.Context, exec *prompty.PromptEx
 func (t *tokenBudgetInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
+	mode prompty.StreamMode,
+) *prompty.Stream {
 	if exec == nil {
-		return t.next.ExecuteStream(ctx, exec)
+		return t.next.ExecuteStream(ctx, exec, mode)
 	}
 
 	messages, err := exttruncate.DropOldest(exec.Messages, t.maxTokens, t.counter)
 	if err != nil {
-		return func(yield func(*prompty.ResponseChunk, error) bool) { yield(nil, err) }
+		return prompty.ErrorStream(ctx, mode, err)
 	}
 	execCopy := exec.WithMessages(messages)
-	return t.next.ExecuteStream(ctx, execCopy)
+	return t.next.ExecuteStream(ctx, execCopy, mode)
 }

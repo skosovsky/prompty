@@ -39,7 +39,7 @@ func ExecuteWithToolValidation(
 
 func toolCallsFromContent(parts []ContentPart) ([]ToolCallPart, error) {
 	var err error
-	parts, err = GlueToolCallArgChunks(parts)
+	parts, err = AssembleToolCallParts(parts)
 	if err != nil {
 		return nil, err
 	}

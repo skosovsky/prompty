@@ -29,7 +29,9 @@ func TestExecuteWithToolValidation_DelegatesToTypedToolsWhenToolInvoker(t *testi
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), reg)
+	exec := SimplePrompt("hi")
+	exec.Tools = reg.Definitions()
+	result, err := ExecuteWithToolValidation(context.Background(), invoker, exec, reg)
 	require.NoError(t, err)
 	require.True(t, invoked)
 	require.Len(t, result.Messages, 3)

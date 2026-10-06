@@ -61,6 +61,7 @@ func (t *TypedTool[TArgs, TResult]) Definition() ToolDefinition {
 	return ToolDefinition{
 		Name:         t.name,
 		Description:  "",
+		Dialect:      "",
 		Parameters:   CloneJSONDocument(t.schema),
 		Capabilities: nil,
 	}
@@ -76,9 +77,12 @@ func (t *TypedTool[TArgs, TResult]) ValidateArgs(argsJSON string) error {
 }
 
 // DecodeToolArgs parses tool call JSON into TArgs with unknown-field rejection.
+// Dynamic interface/map values retain [json.Number]; explicit numeric DTO fields
+// retain the caller's selected Go conversion semantics.
 func DecodeToolArgs[TArgs any](argsJSON string) (TArgs, error) {
 	var out TArgs
 	dec := json.NewDecoder(bytes.NewReader([]byte(argsJSON)))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("typed tool args: %w", err)

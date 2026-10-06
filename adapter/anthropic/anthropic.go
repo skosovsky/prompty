@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,6 +23,8 @@ const defaultMaxTokens int64 = 1024
 type Adapter struct {
 	defaultModel anthropic.Model
 	client       *anthropic.Client
+	endpoint     string
+	profiles     []prompty.CapabilityProfile
 }
 
 // Option configures an Adapter (e.g. WithModel, WithClient).
@@ -47,25 +50,46 @@ func New(opts ...Option) *Adapter {
 }
 
 // RuntimeDescriptor exposes adapter runtime metadata.
-func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
-	return adapter.RuntimeDescriptor{
-		Name: "anthropic",
+func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	endpoint := a.endpoint
+	if endpoint == "" && a.client == nil {
+		endpoint = "https://api.anthropic.com"
 	}
+	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
+		Name: "anthropic", Endpoint: endpoint, DefaultModel: string(a.defaultModel),
+		Profiles:          a.profiles,
+		ReasoningSettings: []string{"thinking_mode", "thinking_budget", "thinking_visibility", "reasoning_effort"},
+	})
 }
 
-const outputFormatToolName = "output_format"
+// WithProfiles declares caller-owned knowledge for the injected client's actual
+// endpoint. This option does not configure transport; the caller must bind the
+// SDK client to the same endpoint. Unknown models retain unknown capabilities.
+func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option {
+	snapshot := adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{Profiles: profiles})
+	return func(a *Adapter) {
+		a.endpoint = endpoint
+		a.profiles = adapter.CloneRuntimeDescriptor(snapshot).Profiles
+	}
+}
 
 // Translate converts PromptExecution into *anthropic.MessageNewParams.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNewParams, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	if err := adapter.RejectRequestCache(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectSyntheticOutput(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectCacheResource(exec); err != nil {
+		return nil, err
+	}
 	working := adapter.PrepareTranslateExecution(exec)
-	if exec.ResponseFormat != nil && len(exec.Tools) > 0 {
-		return nil, fmt.Errorf(
-			"anthropic adapter: cannot use both Tools and ResponseFormat simultaneously: %w",
-			prompty.ErrConflictingDirectives,
-		)
+	if stateErr := a.ValidateProviderState(working, a.destinationIdentity(working)); stateErr != nil {
+		return nil, stateErr
 	}
 	params := &anthropic.MessageNewParams{
 		MaxTokens: defaultMaxTokens,
@@ -112,7 +136,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 			}
 			messages = append(messages, m)
 		case prompty.RoleAssistant:
-			m, err := a.assistantMessage(msg.Content, msg.CachePolicy)
+			m, err := a.assistantMessageWithState(msg)
 			if err != nil {
 				return nil, err
 			}
@@ -131,32 +155,28 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		params.System = systemBlocks
 	}
 	params.Messages = messages
-	// ResponseFormat: add mandatory output_format tool with schema; force tool_choice.
+	// Native output format is independent of local tools and tool choice.
 	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
 		schemaMap, schemaErr := prompty.SchemaMap(exec.ResponseFormat)
 		if schemaErr != nil {
 			return nil, fmt.Errorf("response_format schema: %w", schemaErr)
 		}
-		schema := schemaToToolInput(schemaMap)
-		desc := exec.ResponseFormat.Description
-		if desc == "" {
-			desc = "Output must strictly follow this JSON schema"
-		}
-		outputTool := anthropic.ToolUnionParamOfTool(schema, outputFormatToolName)
-		outputTool.OfTool.Description = anthropic.String(desc)
-		params.Tools = append(params.Tools, outputTool)
-		params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputFormatToolName)
+		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: sdkSchemaMapNumbers(schemaMap)}
 	}
 	if len(exec.Tools) > 0 {
 		if params.Tools == nil {
 			params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
 		}
 		for _, t := range exec.Tools {
-			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
-			if toolParamsErr != nil {
-				return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+			toolParams := map[string]any{"type": "object"}
+			if len(t.Parameters) != 0 {
+				var toolParamsErr error
+				toolParams, toolParamsErr = prompty.SchemaDocumentAsMap(t.Parameters)
+				if toolParamsErr != nil {
+					return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+				}
 			}
-			schema := toolSchemaFromParameters(toolParams)
+			schema := toolSchemaFromParameters(sdkSchemaMapNumbers(toolParams))
 			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
 			if t.Description != "" {
 				tool.OfTool.Description = anthropic.String(t.Description)
@@ -167,47 +187,10 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	if exec.ForcedTool != "" && len(params.Tools) > 0 {
 		params.ToolChoice = anthropic.ToolChoiceParamOfTool(exec.ForcedTool)
 	}
+	if cacheErr := validateCacheMarkers(params); cacheErr != nil {
+		return nil, cacheErr
+	}
 	return params, nil
-}
-
-// schemaToToolInput converts ResponseFormat.Schema (full JSON Schema) to ToolInputSchemaParam.
-// Passes through type, properties, required; other top-level keys (additionalProperties, description, etc.) go to ExtraFields for strict output.
-func schemaToToolInput(schema map[string]any) anthropic.ToolInputSchemaParam {
-	s := anthropic.ToolInputSchemaParam{
-		Type: constant.Object("object"),
-	}
-	if schema == nil {
-		return s
-	}
-	if t, ok := schema["type"].(string); ok && t != "" {
-		s.Type = constant.Object(t)
-	}
-	if p, ok := schema["properties"].(map[string]any); ok {
-		s.Properties = p
-	}
-	if r, ok := schema["required"].([]any); ok {
-		required := make([]string, 0, len(r))
-		for _, x := range r {
-			if str, ok := x.(string); ok {
-				required = append(required, str)
-			}
-		}
-		s.Required = required
-	} else if r, ok := schema["required"].([]string); ok {
-		s.Required = r
-	}
-	// Pass through remaining top-level schema keys for strict constrained decoding
-	known := map[string]bool{"type": true, "properties": true, "required": true}
-	extras := make(map[string]any)
-	for k, v := range schema {
-		if !known[k] && v != nil {
-			extras[k] = v
-		}
-	}
-	if len(extras) > 0 {
-		s.ExtraFields = extras
-	}
-	return s
 }
 
 // toolSchemaFromParameters builds ToolInputSchemaParam from a JSON Schema map.
@@ -593,14 +576,21 @@ func toAnthropicCacheControl(cache *prompty.CachePolicy) (*anthropic.CacheContro
 	if cache == nil {
 		return nil, nil
 	}
-	cacheType := strings.ToLower(strings.TrimSpace(cache.Type))
-	if cacheType == "" {
+	if err := prompty.ValidateCachePolicy(cache); err != nil {
+		return nil, err
+	}
+	if cache.Provider != "" && cache.Provider != "anthropic" || cache.Mechanism != prompty.CacheBlockMarker {
+		if cache.Mode == prompty.CacheRequired {
+			return nil, prompty.ErrCacheRequirement
+		}
 		return nil, nil
 	}
-	if cacheType != "ephemeral" {
-		return nil, fmt.Errorf("anthropic adapter: unsupported cache_policy.type %q", cache.Type)
+	ttl, err := anthropicCacheTTL(cache)
+	if err != nil {
+		return nil, err
 	}
 	c := anthropic.NewCacheControlEphemeralParam()
+	c.TTL = ttl
 	return &c, nil
 }
 
@@ -663,32 +653,58 @@ func (a *Adapter) Execute(ctx context.Context, req *anthropic.MessageNewParams) 
 
 // ParseResponse converts *anthropic.Message into *prompty.Response.
 func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, error) {
+	desc := a.RuntimeDescriptor()
+	return a.ParseResponseForProfile(msg, prompty.ProfileIdentity{
+		Provider: desc.Name, Endpoint: desc.Endpoint, Model: desc.DefaultModel,
+	})
+}
+
+// ParseResponseForProfile binds opaque continuation blocks to the effective request destination.
+func (a *Adapter) ParseResponseForProfile(
+	msg *anthropic.Message,
+	destination prompty.ProfileIdentity,
+) (*prompty.Response, error) {
 	if msg == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
 	var out []prompty.ContentPart
+	var states []prompty.PartState
+	var annotations []prompty.PartAnnotation
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
-			text := block.Text
-			if text != "" {
-				out = append(out, prompty.TextPart{Text: text})
+			index := len(out)
+			out = append(out, prompty.TextPart{Text: block.Text})
+			for _, citation := range block.Citations {
+				value := prompty.JSONDocument(citation.RawJSON())
+				if len(value) == 0 {
+					var err error
+					value, err = prompty.MarshalJSONDocument(citation)
+					if err != nil {
+						return nil, adapter.ErrInvalidResponse
+					}
+				}
+				annotations = append(annotations, prompty.PartAnnotation{
+					PartIndex: index, Kind: "anthropic.citation", Value: value,
+				})
 			}
+		case "thinking", "redacted_thinking":
+			state, part, err := thinkingState(block, len(out), destination)
+			if err != nil {
+				return nil, err
+			}
+			states = append(states, state)
+			out = append(out, part)
 		case "tool_use":
 			args := string(block.Input)
-			// Structured output: output_format tool returns JSON as text for consumer to parse
-			if block.Name == outputFormatToolName {
-				out = append(out, prompty.TextPart{Text: args})
-			} else {
-				if args == "" {
-					return nil, fmt.Errorf(
-						"%w: empty tool_use args for %q",
-						adapter.ErrMalformedArgs,
-						block.Name,
-					)
-				}
-				out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
+			if args == "" {
+				return nil, fmt.Errorf(
+					"%w: empty tool_use args for %q",
+					adapter.ErrMalformedArgs,
+					block.Name,
+				)
 			}
+			out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
 		default:
 			blockType := block.Type
 			if blockType == "" {
@@ -701,40 +717,85 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 			)
 		}
 	}
-	if len(out) == 0 {
+	outcome := anthropicOutcome(msg.StopReason)
+	if len(out) == 0 && (msg.StopReason == "" || outcome == prompty.OutcomeToolCalls) {
 		return nil, adapter.ErrEmptyResponse
 	}
 	resp := prompty.NewResponse(out)
-	resp.Usage = usageFromAnthropic(msg.Usage)
+	resp.ProviderState = states
+	resp.Annotations = annotations
+	resp.Outcome = outcome
+	usage, usageErr := usageFromAnthropic(msg.Usage)
+	resp.Usage = usage
 	if msg.StopReason != "" {
 		resp.FinishReason = string(msg.StopReason)
 	}
-	return resp, nil
-}
-
-// ParseStreamChunk parses a single Anthropic stream event. The SDK uses RawContentBlockDeltaUnion and
-// ContentBlockStartEventContentBlockUnion; exact field names depend on anthropic-sdk-go version.
-// Until the adapter is updated to match the SDK struct, callers can type-assert to *ContentBlockDeltaEvent
-// or *ContentBlockStartEvent and extract delta/block manually, or use this stub.
-func (*Adapter) ParseStreamChunk(_ any) ([]prompty.ContentPart, error) {
-	return nil, adapter.ErrStreamNotImplemented
+	if err := prompty.ValidatePartAssociations(resp.Content, resp.ProviderState, resp.Annotations); err != nil {
+		return nil, err
+	}
+	return resp, usageErr
 }
 
 var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] = (*Adapter)(nil)
 
-func usageFromAnthropic(usage anthropic.Usage) prompty.Usage {
-	promptTokens := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
-	return prompty.Usage{
-		PromptTokens:              int(promptTokens),
-		CompletionTokens:          int(usage.OutputTokens),
-		TotalTokens:               int(promptTokens + usage.OutputTokens),
-		PromptTokensCached:        int(usage.CacheReadInputTokens),
-		PromptTokensCacheCreation: int(usage.CacheCreationInputTokens),
+func usageFromAnthropic(usage anthropic.Usage) (prompty.Usage, error) {
+	_, inputErr := adapter.SumUsageCounters(usage.InputTokens)
+	output, outputErr := adapter.SumUsageCounters(usage.OutputTokens)
+	read, readErr := adapter.SumUsageCounters(usage.CacheReadInputTokens)
+	write, writeErr := adapter.SumUsageCounters(usage.CacheCreationInputTokens)
+	var promptErr, totalErr error
+	out := prompty.Usage{
+		Mode:                      prompty.UsageCumulative,
+		CompletionTokens:          output,
+		PromptTokensCached:        read,
+		PromptTokensCacheCreation: write,
 	}
+	inputKnown := usage.JSON.InputTokens.Valid() || usage.InputTokens != 0
+	readKnown := usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens != 0
+	writeKnown := usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens != 0
+	outputKnown := usage.JSON.OutputTokens.Valid() || usage.OutputTokens != 0
+	if inputKnown && readKnown && writeKnown {
+		out.PromptTokens, promptErr = adapter.SumUsageCounters(
+			usage.InputTokens,
+			usage.CacheCreationInputTokens,
+			usage.CacheReadInputTokens,
+		)
+		if promptErr == nil {
+			out.Known = append(out.Known, prompty.UsagePrompt)
+		}
+	}
+	if outputKnown && outputErr == nil {
+		out.Known = append(out.Known, prompty.UsageCompletion)
+	}
+	if inputKnown && readKnown && writeKnown && outputKnown {
+		out.TotalTokens, totalErr = adapter.SumUsageCounters(
+			usage.InputTokens,
+			usage.CacheCreationInputTokens,
+			usage.CacheReadInputTokens,
+			usage.OutputTokens,
+		)
+		if totalErr == nil {
+			out.Known = append(out.Known, prompty.UsageTotal)
+		}
+	}
+	if readKnown && readErr == nil {
+		out.Known = append(out.Known, prompty.UsageCacheRead)
+	}
+	if writeKnown && writeErr == nil {
+		out.Known = append(out.Known, prompty.UsageCacheWrite)
+	}
+	return out, errors.Join(inputErr, outputErr, readErr, writeErr, promptErr, totalErr)
 }
 
 func anthropicProviderSettingKeys() []string {
-	return []string{"top_k", "stop_sequences"}
+	return []string{
+		"top_k",
+		"stop_sequences",
+		"thinking_mode",
+		"thinking_budget",
+		"thinking_visibility",
+		"reasoning_effort",
+	}
 }
 
 func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings map[string]any) error {
@@ -761,5 +822,5 @@ func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings
 		}
 		params.StopSequences = stops
 	}
-	return nil
+	return applyThinkingSettings(params, settings)
 }

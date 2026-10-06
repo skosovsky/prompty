@@ -391,17 +391,17 @@ func TestParse_MetadataPassThrough(t *testing.T) {
 func TestParse_CacheControlAndMetadata(t *testing.T) {
 	t.Parallel()
 	data := []byte(
-		`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","cache_policy":{"type":"ephemeral"},"content":[{"type":"text","text":"You are a helper.","cache_policy":{"type":"ephemeral"}}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
+		`{"id":"with_cache_and_metadata","version":"1","messages":[{"role":"system","cache_policy":{"mechanism":"block_marker"},"content":[{"type":"text","text":"You are a helper.","cache_policy":{"mechanism":"block_marker"}}],"metadata":{"gemini_search_grounding":true}},{"role":"user","content":[{"type":"text","text":"Hi"}]}]}`,
 	)
 	tpl, err := Parse(data, jsonParser)
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	require.Len(t, tpl.Messages, 2)
 	require.NotNil(t, tpl.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", tpl.Messages[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, tpl.Messages[0].CachePolicy.Mechanism)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	require.NotNil(t, tpl.Messages[0].Content[0].CachePolicy)
-	assert.Equal(t, "ephemeral", tpl.Messages[0].Content[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, tpl.Messages[0].Content[0].CachePolicy.Mechanism)
 	require.NotNil(t, tpl.Messages[0].Metadata)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(tpl.Messages[0].Metadata)["gemini_search_grounding"])
 	exec, err := executeTemplatePlan(tpl, map[string]any{})
@@ -409,11 +409,11 @@ func TestParse_CacheControlAndMetadata(t *testing.T) {
 	require.NotNil(t, exec)
 	require.Len(t, exec.Messages, 2)
 	require.NotNil(t, exec.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", exec.Messages[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, exec.Messages[0].CachePolicy.Mechanism)
 	require.Len(t, exec.Messages[0].Content, 1)
 	text := exec.Messages[0].Content[0].(prompty.TextPart)
 	require.NotNil(t, text.CachePolicy)
-	assert.Equal(t, "ephemeral", text.CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, text.CachePolicy.Mechanism)
 	require.NotNil(t, exec.Messages[0].Metadata)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["gemini_search_grounding"])
 }

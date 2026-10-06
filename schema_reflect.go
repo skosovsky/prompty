@@ -9,6 +9,12 @@ import (
 
 const maxSchemaDepth = 32
 
+const schemaTypeArray = "array"
+
+const schemaKeywordItems = "items"
+
+const schemaKeywordType = "type"
+
 type schemaBuilder struct {
 	active map[reflect.Type]int
 	order  int
@@ -50,8 +56,8 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 			return nil, fmt.Errorf("items: %w", err)
 		}
 		return map[string]any{
-			"type":  "array",
-			"items": items,
+			"type":             schemaTypeArray,
+			schemaKeywordItems: items,
 		}, nil
 	case reflect.Array:
 		items, err := b.schemaForType(base.Elem(), depth+1)
@@ -59,7 +65,7 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 			return nil, fmt.Errorf("items: %w", err)
 		}
 		return map[string]any{
-			"type":  "array",
+			"type":  schemaTypeArray,
 			"items": items,
 		}, nil
 	case reflect.String:

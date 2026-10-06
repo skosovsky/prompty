@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prompty.invalid/response-wire",
+  "type": "object", "additionalProperties": false,
+  "required": ["format", "content", "usage", "outcome", "diagnostics"],
+  "properties": {
+    "format": {"const": "prompty.response"},
+    "content": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/part"}},
+    "provider_state": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/state"}},
+    "annotations": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/annotation"}},
+    "message_annotations": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/message_annotation"}},
+    "continuation_unavailable": {"type": "boolean"},
+    "usage": {"$ref": "https://prompty.invalid/wire-common#/$defs/usage"},
+    "finish_reason": {"type": "string"}, "outcome": {"enum": ["completed", "tool_calls", "refusal", "incomplete"]},
+    "diagnostics": {"$ref": "https://prompty.invalid/wire-common#/$defs/diagnostics"}
+  }
+}

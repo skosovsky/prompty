@@ -81,6 +81,7 @@ type rawMessage struct {
 }
 
 type rawTool struct {
+	Dialect      string         `yaml:"dialect,omitempty"`
 	Name         string         `yaml:"name"`
 	Description  string         `yaml:"description"`
 	Parameters   map[string]any `yaml:"parameters"`
@@ -182,11 +183,12 @@ func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
 	if hasSchema && inner != nil {
 		name, _ := normalized["name"].(string)
 		desc, _ := normalized["description"].(string)
+		dialect, _ := normalized["dialect"].(string)
 		innerDoc, err := prompty.MapToJSONDocument(inner)
 		if err != nil {
 			return nil
 		}
-		return &prompty.SchemaDefinition{Name: name, Description: desc, Schema: innerDoc}
+		return &prompty.SchemaDefinition{Name: name, Description: desc, Dialect: dialect, Schema: innerDoc}
 	}
 	normDoc, err := prompty.MapToJSONDocument(normalized)
 	if err != nil {
@@ -238,6 +240,13 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 		return fmt.Errorf("%w: inputs: %w", prompty.ErrInvalidManifest, err)
 	}
 	raw.InputSchema = inputs
+	if _, nested := fm.ResponseFormat["schema"]; nested {
+		if dialect, exists := fm.ResponseFormat["dialect"]; exists {
+			if _, valid := dialect.(string); !valid {
+				return fmt.Errorf("%w: response_format.dialect must be a string", prompty.ErrInvalidManifest)
+			}
+		}
+	}
 	raw.ResponseFormat = rawToSchemaDefinition(fm.ResponseFormat)
 	raw.Tools = make([]prompty.ToolDefinition, len(fm.Tools))
 	for i, tool := range fm.Tools {
@@ -248,6 +257,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 		raw.Tools[i] = prompty.ToolDefinition{
 			Name:         tool.Name,
 			Description:  tool.Description,
+			Dialect:      tool.Dialect,
 			Parameters:   paramsDoc,
 			Capabilities: append([]string(nil), tool.Capabilities...),
 		}

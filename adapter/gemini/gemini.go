@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/adapter"
@@ -29,8 +30,13 @@ type Request struct {
 // Adapter implements adapter.ProviderAdapter for the Google Gemini (genai) API.
 // Req = *Request, Resp = *genai.GenerateContentResponse.
 type Adapter struct {
-	defaultModel string
-	client       *genai.Client
+	defaultModel        string
+	client              *genai.Client
+	responseClient      *genai.Client
+	responseLimit       int
+	endpoint            string
+	profiles            []prompty.CapabilityProfile
+	cacheAccountBinding string
 }
 
 // Option configures an Adapter (e.g. WithModel, WithClient).
@@ -43,12 +49,21 @@ func WithModel(m string) Option {
 
 // WithClient injects the genai client for Execute. Required for Execute/Invoker flow.
 func WithClient(c *genai.Client) Option {
-	return func(a *Adapter) { a.client = c }
+	return func(a *Adapter) {
+		a.client = c
+		a.responseClient = isolatedResponseClient(c)
+	}
+}
+
+// WithResponsePayloadLimit bounds original response observation. Nonpositive
+// limits fail before dispatch. Signed state cannot use a truncated payload.
+func WithResponsePayloadLimit(limit int) Option {
+	return func(a *Adapter) { a.responseLimit = limit }
 }
 
 // New returns an Adapter with default model "gemini-2.0-flash".
 func New(opts ...Option) *Adapter {
-	a := &Adapter{defaultModel: "gemini-2.0-flash"}
+	a := &Adapter{defaultModel: "gemini-2.0-flash", responseLimit: defaultResponsePayloadLimit}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -56,9 +71,26 @@ func New(opts ...Option) *Adapter {
 }
 
 // RuntimeDescriptor exposes adapter runtime metadata.
-func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
-	return adapter.RuntimeDescriptor{
-		Name: "gemini",
+func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	endpoint := a.endpoint
+	if endpoint == "" && a.client == nil {
+		endpoint = "https://generativelanguage.googleapis.com"
+	}
+	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
+		Name: "gemini", Endpoint: endpoint, DefaultModel: a.defaultModel,
+		Profiles:          a.profiles,
+		ReasoningSettings: []string{"thinking", "thinking_budget", "thinking_level"},
+	})
+}
+
+// WithProfiles declares caller-owned knowledge for the injected client's actual
+// endpoint. This option does not configure transport; the caller must bind the
+// SDK client to the same endpoint. Unknown models retain unknown capabilities.
+func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option {
+	snapshot := adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{Profiles: profiles})
+	return func(a *Adapter) {
+		a.endpoint = endpoint
+		a.profiles = adapter.CloneRuntimeDescriptor(snapshot).Profiles
 	}
 }
 
@@ -67,8 +99,34 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	if err := adapter.RejectRequestCache(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectSyntheticOutput(exec); err != nil {
+		return nil, err
+	}
+	if cacheErr := adapter.RejectUnmappedCache(exec); cacheErr != nil {
+		return nil, cacheErr
+	}
 	working := adapter.PrepareTranslateExecution(exec)
+	if stateErr := a.ValidateProviderState(working, a.destinationIdentity(working)); stateErr != nil {
+		return nil, stateErr
+	}
 	config := &genai.GenerateContentConfig{}
+	if exec.CacheResource != nil {
+		if err := a.ValidateCacheResource(*exec.CacheResource, a.destinationIdentity(exec)); err != nil {
+			return nil, err
+		}
+		if len(exec.Tools) != 0 || exec.ForcedTool != "" {
+			return nil, prompty.ErrCacheRequirement
+		}
+		for _, message := range exec.Messages {
+			if message.Role == prompty.RoleSystem || message.Role == prompty.RoleDeveloper {
+				return nil, prompty.ErrCacheRequirement
+			}
+		}
+		config.CachedContent = exec.CacheResource.ProviderID
+	}
 	// Model is set on the genai request, not inside Config.
 	if exec.ModelOptions != nil {
 		if exec.ModelOptions.Temperature != nil {
@@ -116,7 +174,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			}
 			contents = append(contents, c)
 		case prompty.RoleAssistant:
-			c, err := a.assistantContent(msg.Content)
+			c, err := a.assistantMessageContent(msg)
 			if err != nil {
 				return nil, err
 			}
@@ -132,15 +190,18 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		}
 	}
 	if exec.ForcedTool != "" {
-		systemParts = append(
-			systemParts,
-			fmt.Sprintf("You must call tool %q for the next tool-use step.", exec.ForcedTool),
-		)
+		config.ToolConfig = &genai.ToolConfig{
+			RetrievalConfig: nil,
+			FunctionCallingConfig: &genai.FunctionCallingConfig{
+				Mode: genai.FunctionCallingConfigModeAny, AllowedFunctionNames: []string{exec.ForcedTool},
+				StreamFunctionCallArguments: nil,
+			},
+		}
 	}
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	// CachePolicy is ignored: Context Caching requires out-of-band orchestration (Context Caching API).
+	// Request cache hints and caller-selected remote resources are distinct contracts.
 	if len(exec.Tools) > 0 {
 		config.Tools = []*genai.Tool{{
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),
@@ -179,6 +240,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 			config.ResponseSchema = schema
 		}
 	}
+	if controlErr := a.applyPartialControl(config, exec, providerSettings); controlErr != nil {
+		return nil, controlErr
+	}
 	model := a.defaultModel
 	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
 		model = exec.ModelOptions.Model
@@ -199,7 +263,13 @@ func (a *Adapter) Execute(ctx context.Context, req *Request) (*genai.GenerateCon
 	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	return a.client.Models.GenerateContent(ctx, req.Model, req.Contents, req.Config)
+	if req == nil {
+		return nil, adapter.ErrNilExecution
+	}
+	if requestsPartialArguments(req) {
+		return nil, adapter.ErrUnsupportedCapability
+	}
+	return a.executeObservedResponse(ctx, req)
 }
 
 func (a *Adapter) userContent(parts []prompty.ContentPart) (*genai.Content, error) {
@@ -241,6 +311,8 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 		switch x := p.(type) {
 		case prompty.TextPart:
 			genParts = append(genParts, genai.NewPartFromText(x.Text))
+		case prompty.ReasoningPart:
+			genParts = append(genParts, &genai.Part{Text: x.Text, Thought: true})
 		case prompty.ToolCallPart:
 			argsJSON, argsErr := prompty.ToolCallArgsForTranslate(x)
 			if argsErr != nil {
@@ -253,7 +325,15 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 			if args == nil {
 				args = make(map[string]any)
 			}
-			genParts = append(genParts, genai.NewPartFromFunctionCall(x.Name, args))
+			functionPart := genai.NewPartFromFunctionCall(x.Name, args)
+			functionPart.FunctionCall.ID = x.ID
+			genParts = append(genParts, functionPart)
+		case prompty.MediaPart:
+			media, err := a.userContent([]prompty.ContentPart{x})
+			if err != nil {
+				return nil, err
+			}
+			genParts = append(genParts, media.Parts...)
 		default:
 			return nil, adapter.ErrUnsupportedContentType
 		}
@@ -297,55 +377,32 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 	return genai.NewContentFromParts(genParts, genai.RoleUser), nil
 }
 
+// SupportsToolNameCorrelation reports the name-preserving FunctionResponse mapping.
+func (*Adapter) SupportsToolNameCorrelation() bool { return true }
+
 // ParseResponse converts *genai.GenerateContentResponse into *prompty.Response.
 func (a *Adapter) ParseResponse(resp *genai.GenerateContentResponse) (*prompty.Response, error) {
-	if resp == nil {
-		return nil, adapter.ErrInvalidResponse
-	}
-	var out []prompty.ContentPart
-	if text := resp.Text(); text != "" {
-		out = append(out, prompty.TextPart{Text: text})
-	}
-	for _, fc := range resp.FunctionCalls() {
-		argsJSON := "{}"
-		if len(fc.Args) > 0 {
-			b, err := json.Marshal(fc.Args)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
-			}
-			argsJSON = string(b)
-		}
-		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, Args: argsJSON})
-	}
-	if len(out) == 0 {
-		return nil, adapter.ErrEmptyResponse
-	}
-	return prompty.NewResponse(out), nil
+	desc := a.RuntimeDescriptor()
+	return a.ParseResponseForProfile(
+		resp,
+		prompty.ProfileIdentity{Provider: desc.Name, Endpoint: desc.Endpoint, Model: desc.DefaultModel},
+	)
 }
 
-// ParseStreamChunk parses a single Gemini stream chunk (*genai.GenerateContentResponse).
-// Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
-func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
-	chunk, ok := rawChunk.(*genai.GenerateContentResponse)
-	if !ok {
-		return nil, adapter.ErrInvalidResponse
+// ValidateProviderState rejects foreign, expired or modified signed parts.
+func (a *Adapter) ValidateProviderState(exec *prompty.PromptExecution, destination prompty.ProfileIdentity) error {
+	if err := prompty.ValidateContinuation(exec.Messages, destination, time.Now()); err != nil {
+		return err
 	}
-	var out []prompty.ContentPart
-	if text := chunk.Text(); text != "" {
-		out = append(out, prompty.TextPart{Text: text})
-	}
-	for _, fc := range chunk.FunctionCalls() {
-		var argsChunk string
-		if len(fc.Args) > 0 {
-			b, err := json.Marshal(fc.Args)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to marshal function call args: %w", adapter.ErrMalformedArgs, err)
+	for _, message := range exec.Messages {
+		for _, state := range message.ProviderState {
+			if state.Envelope.Codec == geminiPartialPartsCodec &&
+				(a.client == nil || a.client.ClientConfig().Backend != genai.BackendVertexAI) {
+				return prompty.ErrProviderState
 			}
-			argsChunk = string(b)
 		}
-		out = append(out, prompty.ToolCallPart{ID: fc.ID, Name: fc.Name, ArgsChunk: argsChunk})
 	}
-	return out, nil
+	return validateGeminiPayloads(exec.Messages)
 }
 
 func modelProviderSettings(opts *prompty.ModelOptions) (map[string]any, error) {
@@ -360,7 +417,9 @@ func geminiProviderSettingKeys() []string {
 		"stop_sequences",
 		"thinking",
 		"thinking_budget",
+		"thinking_level",
 		"gemini_search_grounding",
+		"stream_function_call_arguments",
 	}
 }
 
@@ -423,17 +482,34 @@ func applyGeminiProviderSettings(config *genai.GenerateContentConfig, settings m
 		hasThinkingSettings = true
 	}
 	if raw, ok := settings["thinking_budget"]; ok {
+		if _, levelSet := settings["thinking_level"]; levelSet {
+			return false, adapter.ProviderSettingError(
+				"thinking_budget",
+				errors.New("budget and level are separate modes"),
+			)
+		}
 		budget, err := cast.ToInt32(raw)
 		if err != nil {
 			return false, adapter.ProviderSettingError("thinking_budget", err)
 		}
-		if err := adapter.ValidateInt32Min("thinking_budget", budget, 0); err != nil {
+		if err := adapter.ValidateInt32Min("thinking_budget", budget, -1); err != nil {
 			return false, err
 		}
 		if thinkingCfg == nil {
 			thinkingCfg = &genai.ThinkingConfig{}
 		}
 		thinkingCfg.ThinkingBudget = &budget
+		hasThinkingSettings = true
+	}
+	if raw, ok := settings["thinking_level"]; ok {
+		level, err := geminiThinkingLevel(raw)
+		if err != nil {
+			return false, err
+		}
+		if thinkingCfg == nil {
+			thinkingCfg = &genai.ThinkingConfig{}
+		}
+		thinkingCfg.ThinkingLevel = level
 		hasThinkingSettings = true
 	}
 	if hasThinkingSettings {

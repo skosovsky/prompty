@@ -82,27 +82,27 @@ func TestTranslate_CacheControlIgnored(t *testing.T) {
 		Messages: []prompty.ChatMessage{
 			{
 				Role:        prompty.RoleSystem,
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
 						Text:        "System",
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 				},
 			},
 			{
 				Role:        prompty.RoleUser,
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{
 						Text:        "Look",
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 					prompty.MediaPart{
 						MediaType:   "image",
 						MIMEType:    "image/png",
 						Data:        []byte{0x89, 0x50, 0x4e, 0x47},
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 				},
 			},
@@ -298,8 +298,8 @@ func TestTranslate_ModelOptions(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, params.Temperature.Valid())
 	assert.InDelta(t, 0.5, params.Temperature.Value, 1e-6)
-	assert.True(t, params.MaxTokens.Valid())
-	assert.Equal(t, int64(100), params.MaxTokens.Value)
+	assert.True(t, params.MaxCompletionTokens.Valid())
+	assert.Equal(t, int64(100), params.MaxCompletionTokens.Value)
 }
 
 func TestTranslate_ProviderSettingsMapping(t *testing.T) {
@@ -336,14 +336,15 @@ func TestTranslate_ProviderSettingsMapping(t *testing.T) {
 	assert.True(t, params.TopLogprobs.Valid())
 	assert.Equal(t, int64(5), params.TopLogprobs.Value)
 	assert.Equal(t, "low", string(params.ReasoningEffort))
-	// Guardrail: with reasoning_effort we don't send temperature and switch to max_completion_tokens.
-	assert.False(t, params.Temperature.Valid())
+	// Raw mapping does not silently remove options; checked profiles gate combinations.
+	assert.True(t, params.Temperature.Valid())
+	assert.InDelta(t, 0.8, params.Temperature.Value, 0)
 	assert.False(t, params.MaxTokens.Valid())
 	assert.True(t, params.MaxCompletionTokens.Valid())
 	assert.Equal(t, int64(200), params.MaxCompletionTokens.Value)
 }
 
-func TestTranslate_ReasoningModelIgnoresTemperatureWithoutReasoningEffort(t *testing.T) {
+func TestTranslate_ModelNameDoesNotRemoveTemperature(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -358,7 +359,8 @@ func TestTranslate_ReasoningModelIgnoresTemperatureWithoutReasoningEffort(t *tes
 	}
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
-	assert.False(t, params.Temperature.Valid())
+	assert.True(t, params.Temperature.Valid())
+	assert.InDelta(t, 0.7, params.Temperature.Value, 0)
 	assert.False(t, params.MaxTokens.Valid())
 	assert.True(t, params.MaxCompletionTokens.Valid())
 	assert.Equal(t, int64(150), params.MaxCompletionTokens.Value)
@@ -678,6 +680,11 @@ func TestParseResponse_UsageBreakdown(t *testing.T) {
 		TotalTokens:               16,
 		PromptTokensCached:        4,
 		CompletionTokensReasoning: 2,
+		Known: []prompty.UsageCounter{
+			prompty.UsagePrompt, prompty.UsageCompletion, prompty.UsageTotal,
+			prompty.UsageCacheRead, prompty.UsageReasoning,
+		},
+		Mode: prompty.UsageCumulative,
 	}, resp.Usage)
 }
 
@@ -809,7 +816,7 @@ func TestParseResponse_EmptyContentAndNoToolCalls(t *testing.T) {
 	a := New()
 	completion := &openai.ChatCompletion{
 		Choices: []openai.ChatCompletionChoice{
-			{Message: openai.ChatCompletionMessage{Content: ""}},
+			{Message: openai.ChatCompletionMessage{Content: ""}, FinishReason: "stop"},
 		},
 	}
 	_, err := a.ParseResponse(completion)
@@ -826,7 +833,7 @@ func TestExecuteStream_NoClient(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	seq := a.ExecuteStream(context.Background(), req)
+	seq := a.StreamEvents(context.Background(), req)
 	var gotErr error
 	for _, e := range seq {
 		gotErr = e
@@ -839,7 +846,7 @@ func TestExecuteStream_NoClient(t *testing.T) {
 func TestUsageFromOpenAI_MapsBreakdownFields(t *testing.T) {
 	t.Parallel()
 
-	got := usageFromOpenAI(openai.CompletionUsage{
+	got, err := usageFromOpenAI(openai.CompletionUsage{
 		PromptTokens:     20,
 		CompletionTokens: 8,
 		TotalTokens:      28,
@@ -850,6 +857,7 @@ func TestUsageFromOpenAI_MapsBreakdownFields(t *testing.T) {
 			ReasoningTokens: 3,
 		},
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, prompty.Usage{
 		PromptTokens:              20,
@@ -857,6 +865,11 @@ func TestUsageFromOpenAI_MapsBreakdownFields(t *testing.T) {
 		TotalTokens:               28,
 		PromptTokensCached:        7,
 		CompletionTokensReasoning: 3,
+		Known: []prompty.UsageCounter{
+			prompty.UsagePrompt, prompty.UsageCompletion, prompty.UsageTotal,
+			prompty.UsageCacheRead, prompty.UsageReasoning,
+		},
+		Mode: prompty.UsageCumulative,
 	}, got)
 }
 
@@ -864,8 +877,10 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	t.Parallel()
 	a := New()
 	schema := map[string]any{
-		"type":       "object",
-		"properties": map[string]any{"answer": map[string]any{"type": "string"}},
+		"type":                 "object",
+		"properties":           map[string]any{"answer": map[string]any{"type": "string"}},
+		"required":             []string{"answer"},
+		"additionalProperties": false,
 	}
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
@@ -885,7 +900,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	js := params.ResponseFormat.OfJSONSchema.JSONSchema
 	assert.Equal(t, "reply_schema", js.Name)
 	assert.True(t, js.Strict.Value, "OpenAI ResponseFormat must use strict mode")
-	// strict mode requires additionalProperties: false for type object; normalization adds it
+	// Strict mapping preserves an already closed, fully required source schema.
 	gotSchema, ok := js.Schema.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "object", gotSchema["type"])
@@ -912,7 +927,7 @@ func TestTranslate_ResponseFormat(t *testing.T) {
 	)
 }
 
-func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T) {
+func TestTranslate_ResponseFormat_ExplicitlyLoweredSchema(t *testing.T) {
 	t.Parallel()
 	a := New()
 	schema := map[string]any{
@@ -954,6 +969,18 @@ func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T
 			Schema: prompty.MustJSONDocumentFromMap(schema),
 		},
 	}
+	compiled, compileErr := prompty.CompileProviderSchema(prompty.SchemaCompileRequest{
+		Source: exec.ResponseFormat.Schema, Role: prompty.SchemaOutput,
+		Profile: prompty.ProfileIdentity{Provider: "openai", Endpoint: "https://fixture.invalid", Model: "fixture"},
+		Policy: prompty.SchemaPolicy{
+			Mode:              prompty.SchemaLowering,
+			AllowedTransforms: []string{LoweringCloseObject, LoweringRequiredNullable},
+		},
+		Validator: prompty.NewJSONSchemaValidator(nil),
+	}, a)
+	require.NoError(t, compileErr)
+	require.Len(t, compiled.Report().Transformations, 4)
+	exec.ResponseFormat.Schema = compiled.Translated()
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, params.ResponseFormat.OfJSONSchema)
@@ -963,12 +990,12 @@ func TestTranslate_ResponseFormat_RecursivelyNormalizesStrictSchema(t *testing.T
 	assert.Equal(t, false, gotSchema["additionalProperties"])
 	assert.ElementsMatch(t, []string{"profile", "nickname"}, gotSchema["required"])
 	nickname := gotSchema["properties"].(map[string]any)["nickname"].(map[string]any)
-	assert.Equal(t, []any{"string", "null"}, nickname["type"])
+	assert.Equal(t, map[string]any{"type": "null"}, nickname["anyOf"].([]any)[1])
 	profile := gotSchema["properties"].(map[string]any)["profile"].(map[string]any)
 	assert.Equal(t, false, profile["additionalProperties"])
 	assert.ElementsMatch(t, []string{"bio"}, profile["required"])
 	bio := profile["properties"].(map[string]any)["bio"].(map[string]any)
-	assert.Equal(t, []any{"string", "null"}, bio["type"])
+	assert.Equal(t, map[string]any{"type": "null"}, bio["anyOf"].([]any)[1])
 	assert.Equal(t, original, schema, "strict normalization must not mutate caller-owned schema")
 }
 

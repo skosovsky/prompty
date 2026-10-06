@@ -1018,12 +1018,12 @@ func TestPromptExecution_Normalize(t *testing.T) {
 			{
 				Role:        RoleSystem,
 				Content:     []ContentPart{TextPart{Text: "First system."}},
-				CachePolicy: &CachePolicy{Type: "ephemeral"},
+				CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			},
 			{
 				Role:        RoleSystem,
 				Content:     []ContentPart{TextPart{Text: "Second system."}},
-				CachePolicy: &CachePolicy{Type: "ephemeral"},
+				CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			},
 			{Role: RoleUser, Content: []ContentPart{TextPart{Text: "User query"}}},
 		},
@@ -1037,11 +1037,11 @@ func TestPromptExecution_Normalize(t *testing.T) {
 	assert.Equal(t, "\n\n", out.Messages[0].Content[1].(TextPart).Text)
 	assert.Equal(t, "Second system.", out.Messages[0].Content[2].(TextPart).Text)
 	require.NotNil(t, out.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", out.Messages[0].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, out.Messages[0].CachePolicy.Mechanism)
 	assert.Equal(t, "User query", out.Messages[1].Content[0].(TextPart).Text)
 }
 
-func TestPromptExecution_Normalize_CachePolicyNilWins(t *testing.T) {
+func TestPromptExecution_Normalize_KeepsDistinctCachePolicies(t *testing.T) {
 	t.Parallel()
 	exec := &PromptExecution{
 		Messages: []ChatMessage{
@@ -1052,18 +1052,19 @@ func TestPromptExecution_Normalize_CachePolicyNilWins(t *testing.T) {
 			{
 				Role:        RoleDeveloper,
 				Content:     []ContentPart{TextPart{Text: "Second system."}},
-				CachePolicy: &CachePolicy{Type: "ephemeral"},
+				CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			},
 			{
 				Role:        RoleDeveloper,
 				Content:     []ContentPart{TextPart{Text: "Third system."}},
-				CachePolicy: &CachePolicy{Type: "ephemeral"},
+				CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			},
 		},
 	}
 	out := exec.Normalize()
-	require.Len(t, out.Messages, 1)
+	require.Len(t, out.Messages, 2)
 	assert.Nil(t, out.Messages[0].CachePolicy)
+	assert.Equal(t, CacheBlockMarker, out.Messages[1].CachePolicy.Mechanism)
 }
 
 func TestPromptExecution_Normalize_DoesNotAliasSource(t *testing.T) {

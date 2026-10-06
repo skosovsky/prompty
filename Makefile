@@ -6,7 +6,7 @@ MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor"
 lint:
 	@for dir in $(MODULES); do \
 		echo "golangci-lint - $$dir"; \
-		(cd "$$dir" && golangci-lint run ./...) || exit 1; \
+		(cd "$$dir" && golangci-lint run --allow-serial-runners ./...) || exit 1; \
 	done
 
 fix:

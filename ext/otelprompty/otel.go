@@ -4,7 +4,6 @@ package otelprompty
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -60,7 +59,7 @@ func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecut
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
+		return resp, err
 	}
 	if resp != nil {
 		if resp.Usage.TotalTokens > 0 {
@@ -76,43 +75,35 @@ func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecut
 func (t *tracingInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return func(yield func(*prompty.ResponseChunk, error) bool) {
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	stream := t.next.ExecuteStream(ctx, exec, mode)
+	if stream == nil {
+		return prompty.ErrorStream(ctx, mode, prompty.ErrStreamProtocol)
+	}
+	err := stream.ObserveLifecycle(func(ctx context.Context) (context.Context, func(prompty.StreamStatus)) {
 		streamCtx, span := t.tracer.Start(ctx, "prompty.ExecuteStream")
-		defer span.End()
-		attrs := execAttrs(exec)
-		span.SetAttributes(attrs...)
+		span.SetAttributes(execAttrs(exec)...)
 		start := time.Now()
-		var totalTokens int
-		var finishReason string
-		defer func() {
+		return streamCtx, func(status prompty.StreamStatus) {
+			defer span.End()
 			span.SetAttributes(attribute.Int64("prompty.latency_ms", time.Since(start).Milliseconds()))
-			if totalTokens > 0 {
-				span.SetAttributes(attribute.Int("prompty.tokens_total", totalTokens))
+			if status.Err != nil {
+				span.RecordError(status.Err)
+				span.SetStatus(codes.Error, status.Err.Error())
 			}
-			if finishReason != "" {
-				span.SetAttributes(attribute.String("prompty.finish_reason", finishReason))
+			if status.Result.Usage.TotalTokens > 0 {
+				span.SetAttributes(attribute.Int("prompty.tokens_total", status.Result.Usage.TotalTokens))
 			}
-		}()
-		seq := t.next.ExecuteStream(streamCtx, exec)
-		for chunk, err := range seq {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			if chunk != nil {
-				if chunk.Usage.TotalTokens > 0 {
-					totalTokens = chunk.Usage.TotalTokens
-				}
-				if chunk.FinishReason != "" {
-					finishReason = chunk.FinishReason
-				}
-			}
-			if !yield(chunk, err) {
-				return
+			if status.Result.FinishReason != "" {
+				span.SetAttributes(attribute.String("prompty.finish_reason", status.Result.FinishReason))
 			}
 		}
+	})
+	if err != nil {
+		return prompty.ErrorStream(ctx, mode, err)
 	}
+	return stream
 }
 
 func execAttrs(exec *prompty.PromptExecution) []attribute.KeyValue {

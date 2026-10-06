@@ -1,11 +1,13 @@
 package prompty
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
 
 const (
+	ExecutionWireFormat       = "prompty.execution"
 	ContentPartWireText       = "text"
 	ContentPartWireMedia      = "media"
 	ContentPartWireReasoning  = "reasoning"
@@ -15,24 +17,32 @@ const (
 
 // PromptExecutionWire is the stable JSON-safe wire representation of PromptExecution.
 type PromptExecutionWire struct {
-	Messages       []MessageWire       `json:"messages"`
-	Tools          []ToolWire          `json:"tools,omitempty"`
-	RequiredTools  []string            `json:"required_tools,omitempty"`
-	ForcedTool     string              `json:"forced_tool,omitempty"`
-	ModelOptions   *ModelOptionsWire   `json:"model_options,omitempty"`
-	Metadata       PromptMetadata      `json:"metadata"`
-	ResponseFormat *ResponseFormatWire `json:"response_format,omitempty"`
-	Provider       JSONDocument        `json:"provider,omitempty"`
+	RequestCache   *CachePolicy          `json:"request_cache,omitempty"`
+	CacheResource  *CacheResourceHandle  `json:"cache_resource,omitempty"`
+	Format         string                `json:"format"`
+	Messages       []MessageWire         `json:"messages"`
+	Tools          []ToolWire            `json:"tools,omitempty"`
+	RequiredTools  []string              `json:"required_tools,omitempty"`
+	ForcedTool     string                `json:"forced_tool,omitempty"`
+	ModelOptions   *ModelOptionsWire     `json:"model_options,omitempty"`
+	Metadata       PromptMetadata        `json:"metadata"`
+	ResponseFormat *ResponseFormatWire   `json:"response_format,omitempty"`
+	Provider       JSONDocument          `json:"provider,omitempty"`
+	Requirements   ExecutionRequirements `json:"requirements,omitzero"`
 }
 
 // MessageWire is the JSON-safe representation of ChatMessage.
 type MessageWire struct {
-	Role        Role               `json:"role"`
-	Content     []ContentPartWire  `json:"content"`
-	CachePolicy *CachePolicy       `json:"cache_policy,omitempty"`
-	Provenance  *MessageProvenance `json:"provenance,omitempty"`
-	Metadata    JSONDocument       `json:"metadata,omitempty"`
-	LayerKind   LayerKind          `json:"layer_kind,omitempty"`
+	ProviderState           []PartState         `json:"provider_state,omitempty"`
+	Annotations             []PartAnnotation    `json:"annotations,omitempty"`
+	MessageAnnotations      []MessageAnnotation `json:"message_annotations,omitempty"`
+	ContinuationUnavailable bool                `json:"continuation_unavailable,omitempty"`
+	Role                    Role                `json:"role"`
+	Content                 []ContentPartWire   `json:"content"`
+	CachePolicy             *CachePolicy        `json:"cache_policy,omitempty"`
+	Provenance              *MessageProvenance  `json:"provenance,omitempty"`
+	Metadata                JSONDocument        `json:"metadata,omitempty"`
+	LayerKind               LayerKind           `json:"layer_kind,omitempty"`
 }
 
 // ContentPartWire is a tagged union for all public content part variants.
@@ -56,6 +66,7 @@ type ContentPartWire struct {
 type ToolWire struct {
 	Name         string       `json:"name"`
 	Description  string       `json:"description,omitempty"`
+	Dialect      string       `json:"dialect,omitempty"`
 	Parameters   JSONDocument `json:"parameters,omitempty"`
 	Capabilities []string     `json:"capabilities,omitempty"`
 }
@@ -64,6 +75,7 @@ type ToolWire struct {
 type ResponseFormatWire struct {
 	Name        string       `json:"name,omitempty"`
 	Description string       `json:"description,omitempty"`
+	Dialect     string       `json:"dialect,omitempty"`
 	Schema      JSONDocument `json:"schema"`
 }
 
@@ -77,16 +89,49 @@ type ModelOptionsWire struct {
 }
 
 // MarshalExecution converts PromptExecution into a stable JSON-safe wire DTO.
-func MarshalExecution(exec *PromptExecution) (PromptExecutionWire, error) {
+func MarshalExecution(exec *PromptExecution, policy WirePolicy) (PromptExecutionWire, error) {
 	var zero PromptExecutionWire
 	if exec == nil {
 		return zero, errors.New("prompt execution wire: execution is nil")
 	}
-	messages, err := messagesToWire(exec.Messages)
+	if err := ValidateRequestCachePolicy(exec.RequestCache); err != nil {
+		return zero, err
+	}
+	if exec.CacheResource != nil {
+		if err := ValidateCacheResourceHandle(*exec.CacheResource); err != nil {
+			return zero, err
+		}
+	}
+	if err := ValidateOutputMode(exec.Requirements.OutputMode, exec.ResponseFormat); err != nil {
+		return zero, err
+	}
+	if exec.Requirements.Override != nil {
+		if profileErr := ValidateCapabilityProfile(*exec.Requirements.Override); profileErr != nil {
+			return zero, profileErr
+		}
+	}
+	if err := ValidateSchemaPolicy(exec.Requirements.Schema); err != nil {
+		return zero, err
+	}
+	if captureErr := ValidateCaptureRequirement(exec.Requirements.Capture); captureErr != nil {
+		return zero, captureErr
+	}
+	if cacheErr := ValidateCachePolicies(exec.Messages); cacheErr != nil {
+		return zero, cacheErr
+	}
+	projected, err := projectMessages(exec.Messages, policy)
+	if err != nil {
+		return zero, err
+	}
+	messages, err := messagesToWire(projected)
 	if err != nil {
 		return zero, err
 	}
 	wire := PromptExecutionWire{
+		RequestCache:   cloneCachePolicy(exec.RequestCache),
+		CacheResource:  cloneCacheResource(exec.CacheResource),
+		Format:         ExecutionWireFormat,
+		Requirements:   cloneRequirements(exec.Requirements),
 		Messages:       messages,
 		Tools:          toolsToWire(exec.Tools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
@@ -104,11 +149,50 @@ func MarshalExecution(exec *PromptExecution) (PromptExecutionWire, error) {
 
 // UnmarshalExecution converts a stable wire DTO into PromptExecution.
 func UnmarshalExecution(wire PromptExecutionWire) (*PromptExecution, error) {
+	if wire.Format != ExecutionWireFormat {
+		return nil, ErrWireFormat
+	}
+	if err := ValidateRequestCachePolicy(wire.RequestCache); err != nil {
+		return nil, err
+	}
+	if wire.Requirements.Override != nil {
+		if profileErr := ValidateCapabilityProfile(*wire.Requirements.Override); profileErr != nil {
+			return nil, profileErr
+		}
+	}
+	serialized, encodeErr := json.Marshal(wire)
+	if encodeErr != nil {
+		return nil, encodeErr
+	}
+	if schemaErr := ValidateWireJSON(serialized, ExecutionWireFormat); schemaErr != nil {
+		return nil, schemaErr
+	}
+	if policyErr := ValidateSchemaPolicy(wire.Requirements.Schema); policyErr != nil {
+		return nil, policyErr
+	}
+	if wire.CacheResource != nil {
+		if err := ValidateCacheResourceHandle(*wire.CacheResource); err != nil {
+			return nil, err
+		}
+	}
+	format := responseFormatFromWire(wire.ResponseFormat)
+	if err := ValidateOutputMode(wire.Requirements.OutputMode, format); err != nil {
+		return nil, err
+	}
+	if captureErr := ValidateCaptureRequirement(wire.Requirements.Capture); captureErr != nil {
+		return nil, captureErr
+	}
 	messages, err := messagesFromWire(wire.Messages)
 	if err != nil {
 		return nil, err
 	}
+	if cacheErr := ValidateCachePolicies(messages); cacheErr != nil {
+		return nil, cacheErr
+	}
 	return &PromptExecution{
+		RequestCache:   cloneCachePolicy(wire.RequestCache),
+		CacheResource:  cloneCacheResource(wire.CacheResource),
+		Requirements:   cloneRequirements(wire.Requirements),
 		Messages:       messages,
 		Tools:          toolsFromWire(wire.Tools),
 		RequiredTools:  cloneStringSlice(wire.RequiredTools),
@@ -127,12 +211,16 @@ func messagesToWire(messages []ChatMessage) ([]MessageWire, error) {
 			return nil, fmt.Errorf("prompt execution wire: messages[%d]: %w", i, err)
 		}
 		out[i] = MessageWire{
-			Role:        msg.Role,
-			Content:     parts,
-			CachePolicy: cloneCachePolicy(msg.CachePolicy),
-			Provenance:  cloneMessageProvenance(msg.Provenance),
-			Metadata:    CloneJSONDocument(msg.Metadata),
-			LayerKind:   msg.LayerKind,
+			ProviderState:           clonePartStates(msg.ProviderState),
+			Annotations:             clonePartAnnotations(msg.Annotations),
+			MessageAnnotations:      cloneMessageAnnotations(msg.MessageAnnotations),
+			ContinuationUnavailable: msg.ContinuationUnavailable,
+			Role:                    msg.Role,
+			Content:                 parts,
+			CachePolicy:             cloneCachePolicy(msg.CachePolicy),
+			Provenance:              cloneMessageProvenance(msg.Provenance),
+			Metadata:                CloneJSONDocument(msg.Metadata),
+			LayerKind:               msg.LayerKind,
 		}
 	}
 	return out, nil
@@ -146,12 +234,26 @@ func messagesFromWire(messages []MessageWire) ([]ChatMessage, error) {
 			return nil, fmt.Errorf("prompt execution wire: messages[%d]: %w", i, err)
 		}
 		out[i] = ChatMessage{
-			Role:        msg.Role,
-			Content:     parts,
-			CachePolicy: cloneCachePolicy(msg.CachePolicy),
-			Provenance:  cloneMessageProvenance(msg.Provenance),
-			Metadata:    CloneJSONDocument(msg.Metadata),
-			LayerKind:   msg.LayerKind,
+			ProviderState:           clonePartStates(msg.ProviderState),
+			Annotations:             clonePartAnnotations(msg.Annotations),
+			MessageAnnotations:      cloneMessageAnnotations(msg.MessageAnnotations),
+			ContinuationUnavailable: msg.ContinuationUnavailable,
+			Role:                    msg.Role,
+			Content:                 parts,
+			CachePolicy:             cloneCachePolicy(msg.CachePolicy),
+			Provenance:              cloneMessageProvenance(msg.Provenance),
+			Metadata:                CloneJSONDocument(msg.Metadata),
+			LayerKind:               msg.LayerKind,
+		}
+		if associationErr := ValidatePartAssociations(
+			parts,
+			msg.ProviderState,
+			msg.Annotations,
+		); associationErr != nil {
+			return nil, fmt.Errorf("prompt execution wire: messages[%d]: %w", i, associationErr)
+		}
+		if annotationErr := ValidateMessageAnnotations(msg.MessageAnnotations); annotationErr != nil {
+			return nil, fmt.Errorf("prompt execution wire: messages[%d]: %w", i, annotationErr)
 		}
 	}
 	return out, nil
@@ -336,6 +438,7 @@ func toolsToWire(tools []ToolDefinition) []ToolWire {
 		out[i] = ToolWire{
 			Name:         tool.Name,
 			Description:  tool.Description,
+			Dialect:      tool.Dialect,
 			Parameters:   CloneJSONDocument(tool.Parameters),
 			Capabilities: cloneStringSlice(tool.Capabilities),
 		}
@@ -349,6 +452,7 @@ func toolsFromWire(tools []ToolWire) []ToolDefinition {
 		out[i] = ToolDefinition{
 			Name:         tool.Name,
 			Description:  tool.Description,
+			Dialect:      tool.Dialect,
 			Parameters:   CloneJSONDocument(tool.Parameters),
 			Capabilities: cloneStringSlice(tool.Capabilities),
 		}
@@ -363,6 +467,7 @@ func responseFormatToWire(format *SchemaDefinition) *ResponseFormatWire {
 	return &ResponseFormatWire{
 		Name:        format.Name,
 		Description: format.Description,
+		Dialect:     format.Dialect,
 		Schema:      CloneJSONDocument(format.Schema),
 	}
 }
@@ -374,6 +479,7 @@ func responseFormatFromWire(format *ResponseFormatWire) *SchemaDefinition {
 	return &SchemaDefinition{
 		Name:        format.Name,
 		Description: format.Description,
+		Dialect:     format.Dialect,
 		Schema:      CloneJSONDocument(format.Schema),
 	}
 }

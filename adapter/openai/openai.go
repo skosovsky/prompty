@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/openai/openai-go/v3/shared/constant"
 
@@ -23,6 +24,8 @@ import (
 type Adapter struct {
 	defaultModel shared.ChatModel
 	client       *openai.Client
+	endpoint     string
+	profiles     []prompty.CapabilityProfile
 }
 
 // Option configures an Adapter (e.g. WithModel, WithClient).
@@ -48,84 +51,26 @@ func New(opts ...Option) *Adapter {
 }
 
 // RuntimeDescriptor exposes adapter runtime metadata.
-func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
-	return adapter.RuntimeDescriptor{
-		Name: "openai",
+func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	endpoint := a.endpoint
+	if endpoint == "" && a.client == nil {
+		endpoint = "https://api.openai.com/v1"
 	}
+	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
+		Name: "openai", Endpoint: endpoint, DefaultModel: a.defaultModel,
+		Profiles:          a.profiles,
+		ReasoningSettings: []string{"reasoning_effort"},
+	})
 }
 
-// normalizeSchemaForStrict returns a schema copy with additionalProperties: false for type object
-// (required by OpenAI strict mode). Does not mutate the original.
-func normalizeSchemaForStrict(schema any) any {
-	return normalizeStrictSchemaNode(cloneStrictSchemaNode(schema))
-}
-
-func normalizeStrictSchemaNode(schema any) any {
-	m, ok := schema.(map[string]any)
-	if !ok {
-		return schema
-	}
-
-	if properties, ok := m["properties"].(map[string]any); ok {
-		required := requiredNames(m["required"])
-		missing := make([]string, 0)
-		for name, rawProp := range properties {
-			propMap, ok := rawProp.(map[string]any)
-			if ok {
-				normalized := normalizeStrictSchemaNode(propMap)
-				propMap, ok = normalized.(map[string]any)
-				if !ok {
-					continue
-				}
-				if !required[name] {
-					makeStrictPropertyNullable(propMap)
-					missing = append(missing, name)
-				}
-				properties[name] = propMap
-				continue
-			}
-			if !required[name] {
-				missing = append(missing, name)
-			}
-		}
-		if schemaTypeIncludes(m["type"], "object") || len(properties) > 0 {
-			if _, has := m["additionalProperties"]; !has {
-				m["additionalProperties"] = false
-			}
-			if len(missing) > 0 {
-				sort.Strings(missing)
-				requiredList := requiredNamesInOrder(m["required"])
-				requiredList = append(requiredList, missing...)
-				m["required"] = requiredList
-			}
-		}
-	}
-	if items, ok := m["items"].(map[string]any); ok {
-		m["items"] = normalizeStrictSchemaNode(items)
-	}
-	return m
-}
-
-func cloneStrictSchemaNode(value any) any {
-	switch x := value.(type) {
-	case map[string]any:
-		clone := make(map[string]any, len(x))
-		for key, item := range x {
-			clone[key] = cloneStrictSchemaNode(item)
-		}
-		return clone
-	case []any:
-		clone := make([]any, len(x))
-		for i, item := range x {
-			clone[i] = cloneStrictSchemaNode(item)
-		}
-		return clone
-	case []string:
-		clone := make([]string, len(x))
-		copy(clone, x)
-		return clone
-	default:
-		return value
+// WithProfiles declares caller-owned knowledge for the injected client's actual
+// endpoint. This option does not configure transport; the caller must bind the
+// SDK client to the same endpoint. Unknown models retain unknown capabilities.
+func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option {
+	snapshot := adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{Profiles: profiles})
+	return func(a *Adapter) {
+		a.endpoint = endpoint
+		a.profiles = adapter.CloneRuntimeDescriptor(snapshot).Profiles
 	}
 }
 
@@ -186,43 +131,36 @@ func schemaTypeIncludes(value any, target string) bool {
 	return false
 }
 
-func makeStrictPropertyNullable(schema map[string]any) {
-	switch t := schema["type"].(type) {
-	case string:
-		schema["type"] = []any{t, "null"}
-	case []string:
-		if !schemaTypeIncludes(t, "null") {
-			out := make([]string, len(t), len(t)+1)
-			copy(out, t)
-			out = append(out, "null")
-			schema["type"] = out
-		}
-	case []any:
-		if !schemaTypeIncludes(t, "null") {
-			out := make([]any, len(t), len(t)+1)
-			copy(out, t)
-			out = append(out, "null")
-			schema["type"] = out
-		}
-	}
-}
-
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	if err := adapter.RejectSyntheticOutput(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectCacheResource(exec); err != nil {
+		return nil, err
+	}
+	if cacheErr := adapter.RejectUnmappedCache(exec); cacheErr != nil {
+		return nil, cacheErr
+	}
+	if stateErr := adapter.RejectProviderState(exec); stateErr != nil {
+		return nil, stateErr
+	}
 	working := adapter.PrepareTranslateExecution(exec)
-	// CachePolicy is ignored: OpenAI Prompt Caching is applied automatically by the API (e.g. by prefix/size).
+	// Whole-request controls do not introduce message/part cache markers.
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(working.Messages)),
 		Model:    a.defaultModel,
+	}
+	if err := applyChatRequestCache(params, exec.RequestCache); err != nil {
+		return nil, err
 	}
 	if exec.ModelOptions != nil {
 		if exec.ModelOptions.Model != "" {
 			params.Model = shared.ChatModel(exec.ModelOptions.Model) //nolint:unconvert // ChatModel is a distinct type
 		}
-		reasoningModel := isOpenAIReasoningModel(params.Model)
 		if exec.ModelOptions.TopP != nil {
 			params.TopP = openai.Float(*exec.ModelOptions.TopP)
 		}
@@ -234,18 +172,14 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		if settingsErr != nil {
 			return nil, settingsErr
 		}
-		reasoningEffortSet, err := applyOpenAIProviderSettings(params, providerSettings)
+		_, err := applyOpenAIProviderSettings(params, providerSettings)
 		if err != nil {
 			return nil, err
 		}
 		if exec.ModelOptions.MaxTokens != nil {
-			if reasoningEffortSet || reasoningModel {
-				params.MaxCompletionTokens = openai.Int(*exec.ModelOptions.MaxTokens)
-			} else {
-				params.MaxTokens = openai.Int(*exec.ModelOptions.MaxTokens)
-			}
+			params.MaxCompletionTokens = openai.Int(*exec.ModelOptions.MaxTokens)
 		}
-		if exec.ModelOptions.Temperature != nil && !reasoningEffortSet && !reasoningModel {
+		if exec.ModelOptions.Temperature != nil {
 			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
 		}
 	}
@@ -259,14 +193,18 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 	if len(exec.Tools) > 0 {
 		params.Tools = make([]openai.ChatCompletionToolUnionParam, 0, len(exec.Tools))
 		for _, t := range exec.Tools {
-			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
-			if toolParamsErr != nil {
-				return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+			toolParams := map[string]any{"type": "object"}
+			if len(t.Parameters) != 0 {
+				var toolParamsErr error
+				toolParams, toolParamsErr = prompty.SchemaDocumentAsMap(t.Parameters)
+				if toolParamsErr != nil {
+					return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+				}
 			}
 			params.Tools = append(params.Tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 				Name:        t.Name,
 				Description: openai.String(t.Description),
-				Parameters:  shared.FunctionParameters(toolParams),
+				Parameters:  shared.FunctionParameters(schemaSDKMap(toolParams)),
 			}))
 		}
 		if exec.ForcedTool != "" {
@@ -284,7 +222,11 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		if schemaErr != nil {
 			return nil, fmt.Errorf("response_format schema: %w", schemaErr)
 		}
-		schema := normalizeSchemaForStrict(schemaMap)
+		_, schemaErr = mapOutputSchema(schemaMap, prompty.SchemaPolicy{Mode: prompty.SchemaStrict})
+		if schemaErr != nil {
+			return nil, schemaErr
+		}
+		schema := schemaSDKNumbers(schemaMap)
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
@@ -303,7 +245,7 @@ func (a *Adapter) Execute(ctx context.Context, req *openai.ChatCompletionNewPara
 	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	return a.client.Chat.Completions.New(ctx, *req)
+	return a.client.Chat.Completions.New(ctx, *req, option.WithMaxRetries(0))
 }
 
 func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatCompletionMessageParamUnion, error) {
@@ -514,10 +456,36 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 	if len(completion.Choices) == 0 {
 		return nil, adapter.ErrEmptyResponse
 	}
+	if len(completion.Choices) != 1 || completion.Choices[0].Index != 0 {
+		return nil, fmt.Errorf("%w: expected one choice at index zero", adapter.ErrInvalidResponse)
+	}
 	msg := completion.Choices[0].Message
 	var out []prompty.ContentPart
+	var annotations []prompty.PartAnnotation
 	if msg.Content != "" {
 		out = append(out, prompty.TextPart{Text: msg.Content})
+	}
+	if len(msg.Annotations) != 0 && len(out) == 0 {
+		return nil, fmt.Errorf("%w: annotations without content", adapter.ErrInvalidResponse)
+	}
+	for _, annotation := range msg.Annotations {
+		value := prompty.JSONDocument(annotation.RawJSON())
+		if len(value) == 0 {
+			var err error
+			value, err = prompty.MarshalJSONDocument(annotation)
+			if err != nil {
+				return nil, fmt.Errorf("%w: annotation JSON: %w", adapter.ErrInvalidResponse, err)
+			}
+		}
+		annotations = append(annotations, prompty.PartAnnotation{
+			PartIndex: 0, Kind: "openai.annotation", Value: value,
+		})
+	}
+	refused := msg.Refusal != "" || msg.JSON.Refusal.Valid()
+	if refused {
+		annotation := refusalAnnotation(len(out), msg.Refusal)
+		annotations = append(annotations, annotation)
+		out = append(out, prompty.TextPart{Text: msg.Refusal})
 	}
 	for _, tc := range msg.ToolCalls {
 		if tc.Type != "function" {
@@ -546,19 +514,28 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 			Args: tc.Function.Arguments,
 		})
 	}
-	if len(out) == 0 {
+	finishReason := completion.Choices[0].FinishReason
+	outcome := outcomeFromOpenAI(finishReason)
+	if refused {
+		outcome = prompty.OutcomeRefusal
+	}
+	if len(out) == 0 && outcome != prompty.OutcomeIncomplete {
 		return nil, adapter.ErrEmptyResponse
 	}
-	usage := usageFromOpenAI(completion.Usage)
-	finishReason := ""
-	if completion.Choices[0].FinishReason != "" {
-		finishReason = completion.Choices[0].FinishReason
-	}
-	return &prompty.Response{Content: out, Usage: usage, FinishReason: finishReason}, nil
+	usage, usageErr := usageFromOpenAI(completion.Usage)
+	return &prompty.Response{
+		Content: out, Annotations: annotations, Usage: usage, FinishReason: finishReason, Outcome: outcome,
+	}, usageErr
 }
 
-// ExecuteStream performs streaming chat completion. Requires WithClient.
-func (a *Adapter) ExecuteStream(
+func refusalAnnotation(index int, refusal string) prompty.PartAnnotation {
+	// JSON encoding a string cannot fail.
+	value, _ := json.Marshal(refusal)
+	return prompty.PartAnnotation{PartIndex: index, Kind: "openai.refusal", Value: value}
+}
+
+// StreamEvents performs native streaming chat completion. Requires WithClient.
+func (a *Adapter) StreamEvents(
 	ctx context.Context,
 	req *openai.ChatCompletionNewParams,
 ) iter.Seq2[*prompty.ResponseChunk, error] {
@@ -567,36 +544,132 @@ func (a *Adapter) ExecuteStream(
 			yield(nil, adapter.ErrNoClient)
 			return
 		}
-		stream := a.client.Chat.Completions.NewStreaming(ctx, *req)
+		params := *req
+		params.StreamOptions.IncludeUsage = openai.Bool(true)
+		stream := a.client.Chat.Completions.NewStreaming(ctx, params, option.WithMaxRetries(0))
 		defer func() { _ = stream.Close() }()
+		identities := make(map[int64]prompty.ToolCallPart)
+		indices := make(map[string]int64)
+		refused := false
 
 		for stream.Next() {
 			chunk := stream.Current()
+			captureErr := adapter.CaptureProviderChunk(ctx, chunk.RawJSON(), chunkCaptureMetadata(chunk))
+			if len(chunk.Choices) > 1 || (len(chunk.Choices) == 1 &&
+				(!chunk.Choices[0].JSON.Index.Valid() || chunk.Choices[0].Index != 0)) {
+				yield(
+					nil,
+					fmt.Errorf(
+						"%w: multiple/nonzero choices are not a single canonical response",
+						errors.Join(adapter.ErrInvalidResponse, captureErr),
+					),
+				)
+				return
+			}
 			var content []prompty.ContentPart
+			var partIDs []string
+			var annotations []prompty.PartAnnotation
 			if len(chunk.Choices) > 0 {
 				delta := chunk.Choices[0].Delta
 				if delta.Content != "" {
 					content = append(content, prompty.TextPart{Text: delta.Content})
+					partIDs = append(partIDs, "content:0")
+				}
+				if delta.Refusal != "" || delta.JSON.Refusal.Valid() {
+					refused = true
+					annotations = append(annotations, refusalAnnotation(len(content), delta.Refusal))
+					content = append(content, prompty.TextPart{Text: delta.Refusal})
+					partIDs = append(partIDs, "refusal:0")
 				}
 				for _, tc := range delta.ToolCalls {
-					part := prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, ArgsChunk: tc.Function.Arguments}
+					if !tc.JSON.Index.Valid() || tc.Index < 0 {
+						yield(nil, fmt.Errorf("%w: missing or negative tool index",
+							errors.Join(adapter.ErrInvalidResponse, captureErr)))
+						return
+					}
+					identity := identities[tc.Index]
+					if tc.ID != "" {
+						if identity.ID != "" && identity.ID != tc.ID {
+							yield(
+								nil,
+								fmt.Errorf(
+									"%w: conflicting tool identity",
+									errors.Join(adapter.ErrInvalidResponse, captureErr),
+								),
+							)
+							return
+						}
+						identity.ID = tc.ID
+					}
+					if tc.Function.Name != "" {
+						if identity.Name != "" && identity.Name != tc.Function.Name {
+							yield(
+								nil,
+								fmt.Errorf(
+									"%w: conflicting tool name",
+									errors.Join(adapter.ErrInvalidResponse, captureErr),
+								),
+							)
+							return
+						}
+						identity.Name = tc.Function.Name
+					}
+					if identity.ID == "" || identity.Name == "" {
+						yield(
+							nil,
+							fmt.Errorf(
+								"%w: uncorrelated tool delta",
+								errors.Join(adapter.ErrInvalidResponse, captureErr),
+							),
+						)
+						return
+					}
+					if previous, exists := indices[identity.ID]; exists && previous != tc.Index {
+						yield(nil, fmt.Errorf("%w: tool identity reused across indices",
+							errors.Join(adapter.ErrInvalidResponse, captureErr)))
+						return
+					}
+					indices[identity.ID] = tc.Index
+					identities[tc.Index] = identity
+					part := prompty.ToolCallPart{
+						ID: identity.ID, Name: identity.Name, ArgsChunk: tc.Function.Arguments,
+					}
 					content = append(content, part)
+					partIDs = append(partIDs, fmt.Sprintf("tool:%d", tc.Index))
 				}
 			}
-			usage := usageFromOpenAI(chunk.Usage)
+			usage, usageErr := usageFromOpenAI(chunk.Usage)
 			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
 			finishReason := ""
 			if isFinished && chunk.Choices[0].FinishReason != "" {
 				finishReason = chunk.Choices[0].FinishReason
 			}
 			resChunk := &prompty.ResponseChunk{
+				Identity:     prompty.StreamIdentity{MessageID: "", PartIDs: partIDs},
 				Content:      content,
+				Annotations:  annotations,
 				Usage:        usage,
-				IsFinished:   isFinished,
+				Kind:         prompty.StreamDelta,
 				FinishReason: finishReason,
+			}
+			if refused {
+				resChunk.Outcome = prompty.OutcomeRefusal
+			}
+			if isFinished {
+				resChunk.Kind = prompty.StreamFinish
+				resChunk.Outcome = outcomeFromOpenAI(finishReason)
+				if refused {
+					resChunk.Outcome = prompty.OutcomeRefusal
+				}
+			} else if len(chunk.Choices) == 0 {
+				resChunk.Kind = prompty.StreamUsage
 			}
 			if !yield(resChunk, nil) {
 				// Consumer requested stop; do not call yield again.
+				return
+			}
+			if frameErr := errors.Join(usageErr, captureErr); frameErr != nil {
+				yield(nil, frameErr)
 				return
 			}
 		}
@@ -612,13 +685,48 @@ var (
 	_ adapter.StreamerAdapter[*openai.ChatCompletionNewParams]                         = (*Adapter)(nil)
 )
 
-func usageFromOpenAI(usage openai.CompletionUsage) prompty.Usage {
-	return prompty.Usage{
-		PromptTokens:              int(usage.PromptTokens),
-		CompletionTokens:          int(usage.CompletionTokens),
-		TotalTokens:               int(usage.TotalTokens),
-		PromptTokensCached:        int(usage.PromptTokensDetails.CachedTokens),
-		CompletionTokensReasoning: int(usage.CompletionTokensDetails.ReasoningTokens),
+func usageFromOpenAI(usage openai.CompletionUsage) (prompty.Usage, error) {
+	var out prompty.Usage
+	out.Mode = prompty.UsageCumulative
+	var usageErr error
+	for _, field := range []struct {
+		key         prompty.UsageCounter
+		present     bool
+		value       int64
+		destination *int
+	}{
+		{prompty.UsagePrompt, usage.JSON.PromptTokens.Valid(), usage.PromptTokens, &out.PromptTokens},
+		{prompty.UsageCompletion, usage.JSON.CompletionTokens.Valid(), usage.CompletionTokens, &out.CompletionTokens},
+		{prompty.UsageTotal, usage.JSON.TotalTokens.Valid(), usage.TotalTokens, &out.TotalTokens},
+		{prompty.UsageCacheRead, usage.PromptTokensDetails.JSON.CachedTokens.Valid(), usage.PromptTokensDetails.CachedTokens, &out.PromptTokensCached},
+		{prompty.UsageReasoning, usage.CompletionTokensDetails.JSON.ReasoningTokens.Valid(),
+			usage.CompletionTokensDetails.ReasoningTokens, &out.CompletionTokensReasoning},
+	} {
+		converted, err := adapter.SumUsageCounters(field.value)
+		if err != nil {
+			usageErr = errors.Join(usageErr, err)
+			continue
+		}
+		*field.destination = converted
+		// SDK fixtures constructed in Go have no wire presence metadata. A
+		// nonzero value is known; an absent zero must remain unknown.
+		if field.present || field.value != 0 {
+			out.Known = append(out.Known, field.key)
+		}
+	}
+	return out, usageErr
+}
+
+func outcomeFromOpenAI(reason string) prompty.Outcome {
+	switch reason {
+	case "stop":
+		return prompty.OutcomeCompleted
+	case "length", "content_filter":
+		return prompty.OutcomeIncomplete
+	case "tool_calls":
+		return prompty.OutcomeToolCalls
+	default:
+		return prompty.OutcomeIncomplete
 	}
 }
 
@@ -639,9 +747,4 @@ func parseReasoningEffort(v string) (shared.ReasoningEffort, bool) {
 	default:
 		return "", false
 	}
-}
-
-func isOpenAIReasoningModel(model shared.ChatModel) bool {
-	m := strings.ToLower(model)
-	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3")
 }

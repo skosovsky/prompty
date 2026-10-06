@@ -31,12 +31,6 @@ type ContentPart interface {
 	isContentPart()
 }
 
-// CachePolicy declares cache behavior for a message or content part.
-// Type examples: "ephemeral".
-type CachePolicy struct {
-	Type string `json:"type,omitempty" yaml:"type,omitempty"`
-}
-
 // MessageProvenance tracks manifest/layer origin for a rendered message.
 type MessageProvenance struct {
 	ManifestID string `json:"manifest_id,omitempty" yaml:"manifest_id,omitempty"`
@@ -63,7 +57,9 @@ type MediaPart struct {
 
 func (MediaPart) isContentPart() {}
 
-// ReasoningPart is the hidden reasoning chain returned by some models (e.g. DeepSeek R1, OpenAI o-series).
+// ReasoningPart is provider-exposed reasoning content or a summary. It does not
+// grant access to a model's hidden internal reasoning. Signed continuation state
+// belongs to its provider-scoped envelope, not this text field.
 type ReasoningPart struct {
 	Text        string
 	CachePolicy *CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
@@ -96,27 +92,28 @@ type ToolResultPart struct {
 func (ToolResultPart) isContentPart() {}
 
 // ChatMessage is a single message with role and content parts (supports multimodal).
-// CachePolicy hints providers to cache this message (e.g. ephemeral prompt caching).
+// CachePolicy declares advisory/required scoped request controls, not a cache hit.
 // Provenance records manifest/layer origin; Metadata is for provider-specific extras only.
-//
-//nolint:golines // ChatMessage tag block kept readable alongside CachePolicy/Provenance
 type ChatMessage struct {
-	Role        Role
-	Content     []ContentPart
-	CachePolicy *CachePolicy       `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
-	Provenance  *MessageProvenance `json:"provenance,omitempty"   yaml:"provenance,omitempty"`
-	Metadata    JSONDocument       // Provider-specific message-scoped extras (JSON object)
-	LayerKind   LayerKind          `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"`
+	Role                    Role                `json:"role"`
+	Content                 []ContentPart       `json:"content"`
+	ProviderState           []PartState         `json:"-"                                  yaml:"-"`
+	Annotations             []PartAnnotation    `json:"annotations,omitempty"`
+	MessageAnnotations      []MessageAnnotation `json:"message_annotations,omitempty"`
+	ContinuationUnavailable bool                `json:"continuation_unavailable,omitempty"`
+	CachePolicy             *CachePolicy        `json:"cache_policy,omitempty"             yaml:"cache_policy,omitempty"`
+	Provenance              *MessageProvenance  `json:"provenance,omitempty"               yaml:"provenance,omitempty"`
+	Metadata                JSONDocument        `json:"metadata,omitempty"`
+	LayerKind               LayerKind           `json:"layer_kind,omitempty"               yaml:"layer_kind,omitempty"`
 }
 
 // ToolDefinition is the universal tool schema.
 // JSON tags are required for template functions (e.g. render_tools_as_json) that marshal tools.
-//
-//nolint:tagalign,golines // tag columns are kept close to existing public DTO style.
 type ToolDefinition struct {
-	Name         string       `json:"name"                 yaml:"name"`
-	Description  string       `json:"description"          yaml:"description"`
-	Parameters   JSONDocument `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
+	Name         string       `json:"name"                   yaml:"name"`
+	Description  string       `json:"description"            yaml:"description"`
+	Dialect      string       `json:"dialect,omitempty"      yaml:"dialect,omitempty"`    // Empty selects SchemaDialect2020.
+	Parameters   JSONDocument `json:"parameters,omitempty"   yaml:"parameters,omitempty"` // JSON Schema for parameters
 	Capabilities []string     `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 }
 
@@ -124,7 +121,8 @@ type ToolDefinition struct {
 type SchemaDefinition struct {
 	Name        string       `json:"name,omitempty"        yaml:"name,omitempty"`
 	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
-	Schema      JSONDocument `json:"schema"                yaml:"schema"` // JSON Schema
+	Dialect     string       `json:"dialect,omitempty"     yaml:"dialect,omitempty"` // Empty selects SchemaDialect2020.
+	Schema      JSONDocument `json:"schema"                yaml:"schema"`            // JSON Schema
 }
 
 // PromptMetadata holds observability metadata.
@@ -153,6 +151,12 @@ type ModelOptions struct {
 
 // PromptExecution is the result of formatting a template; immutable after creation.
 type PromptExecution struct {
+	// RequestCache selects whole-request controls, never a block marker or remote resource.
+	RequestCache *CachePolicy `json:"request_cache,omitempty" yaml:"request_cache,omitempty"`
+
+	// CacheResource explicitly selects a scoped remote cache, not a request hint.
+	CacheResource *CacheResourceHandle `json:"cache_resource,omitempty" yaml:"cache_resource,omitempty"`
+
 	Messages       []ChatMessage
 	Tools          []ToolDefinition
 	RequiredTools  []string
@@ -160,6 +164,11 @@ type PromptExecution struct {
 	ModelOptions   *ModelOptions
 	Metadata       PromptMetadata
 	ResponseFormat *SchemaDefinition `json:"response_format,omitempty" yaml:"response_format,omitempty"`
+	// Validator is a runtime port. Rebind it after wire restore; it is never persisted.
+	// Implementations must be immutable or safe for concurrent compilation.
+	Validator    SchemaValidator       `json:"-"                     yaml:"-"`
+	Capture      *CaptureBinding       `json:"-"                     yaml:"-"`
+	Requirements ExecutionRequirements `json:"requirements,omitzero" yaml:"requirements,omitempty"`
 }
 
 // NewExecution creates a new prompt execution from a set of messages.
@@ -215,7 +224,8 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 		// Merge consecutive system/developer messages unless layer provenance differs.
 		merged := cloneChatMessage(cur)
 		for j := i + 1; j < len(e.Messages) && (e.Messages[j].Role == RoleSystem || e.Messages[j].Role == RoleDeveloper); j++ {
-			if provenanceLayerIDConflicts(merged, e.Messages[j]) {
+			if provenanceLayerIDConflicts(merged, e.Messages[j]) || hasPartAssociations(merged) ||
+				hasPartAssociations(e.Messages[j]) || !EqualCachePolicy(merged.CachePolicy, e.Messages[j].CachePolicy) {
 				break
 			}
 			merged = mergeSystemMessages(merged, e.Messages[j])
@@ -223,20 +233,17 @@ func (e *PromptExecution) Normalize() *PromptExecution {
 		}
 		out = append(out, merged)
 	}
-	return &PromptExecution{
-		Messages:       out,
-		Tools:          cloneToolDefinitions(e.Tools),
-		RequiredTools:  cloneStringSlice(e.RequiredTools),
-		ForcedTool:     e.ForcedTool,
-		ModelOptions:   cloneModelOptions(e.ModelOptions),
-		Metadata:       clonePromptMetadata(e.Metadata),
-		ResponseFormat: cloneSchemaDefinition(e.ResponseFormat),
-	}
+	return cloneExecutionWithMessages(e, out)
+}
+
+func hasPartAssociations(message ChatMessage) bool {
+	return len(message.ProviderState) != 0 || len(message.Annotations) != 0 || len(message.MessageAnnotations) != 0 ||
+		message.ContinuationUnavailable
 }
 
 // mergeSystemMessages merges two system/developer messages while preserving content-part boundaries.
 // Provenance, Metadata, and LayerKind are taken from a (first wins).
-// If either source has nil CachePolicy or cache types mismatch, merged message CachePolicy is nil.
+// Normalize merges only messages with identical cache intent and scoped controls.
 func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 	content := make([]ContentPart, 0, len(a.Content)+len(b.Content)+1)
 	content = append(content, cloneContentParts(a.Content)...)
@@ -281,7 +288,7 @@ func mergeMessageCachePolicy(a, b *CachePolicy) *CachePolicy {
 	if a == nil || b == nil {
 		return nil
 	}
-	if a.Type != b.Type {
+	if !EqualCachePolicy(a, b) {
 		return nil
 	}
 	return cloneCachePolicy(a)

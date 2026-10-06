@@ -21,10 +21,21 @@ func TestResolvedToolCallArgs_RejectsArgsChunkWithoutGlue(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIncompleteToolCallArgs)
 }
 
-func TestGlueToolCallArgChunks_CopiesChunkToArgs(t *testing.T) {
+func TestTranslateRejectsDualSnapshotAndDeltaEvenWhenEqual(t *testing.T) {
 	t.Parallel()
-	parts, err := GlueToolCallArgChunks([]ContentPart{
-		ToolCallPart{Name: "lookup", ArgsChunk: `{"q":1}`},
+	// Arrange: equal strings do not make two different argument representations unambiguous.
+	call := ToolCallPart{Name: "private-name", Args: `{}`, ArgsChunk: `{}`}
+	// Act.
+	_, err := ToolCallArgsForTranslate(call)
+	// Assert.
+	require.ErrorIs(t, err, ErrIncompleteToolCallArgs)
+	require.NotContains(t, err.Error(), "private")
+}
+
+func TestAssembleToolCallParts_CopiesChunkToArgs(t *testing.T) {
+	t.Parallel()
+	parts, err := AssembleToolCallParts([]ContentPart{
+		ToolCallPart{ID: "call_1", Name: "lookup", ArgsChunk: `{"q":1}`},
 	})
 	require.NoError(t, err)
 	tc := parts[0].(ToolCallPart)

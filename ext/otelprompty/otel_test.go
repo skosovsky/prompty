@@ -23,9 +23,9 @@ func TestWithTracing_Execute_WrapsNext(t *testing.T) {
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
 				yield(
-					&prompty.ResponseChunk{
-						Content:    []prompty.ContentPart{prompty.TextPart{Text: "ok"}},
-						IsFinished: true,
+					&prompty.ResponseChunk{Identity: prompty.StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+						Content: []prompty.ContentPart{prompty.TextPart{Text: "ok"}},
+						Kind:    prompty.StreamFinish, Outcome: prompty.OutcomeCompleted,
 					},
 					nil,
 				)
@@ -72,21 +72,21 @@ func TestWithTracing_ExecuteStream_WrapsNext(t *testing.T) {
 		},
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
-				yield(&prompty.ResponseChunk{IsFinished: true}, nil)
+				yield(&prompty.ResponseChunk{Kind: prompty.StreamFinish, Outcome: prompty.OutcomeCompleted}, nil)
 			}
 		},
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.ExecuteStream(context.Background(), &prompty.PromptExecution{})
+	seq := inv.ExecuteStream(context.Background(), &prompty.PromptExecution{}, prompty.StreamNative)
 	count := 0
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		if err != nil {
 			require.NoError(t, err)
 		}
 		count++
 	}
-	assert.Equal(t, 1, count, "stream should yield one chunk")
+	assert.Equal(t, 2, count, "finish marker and one terminal event")
 }
 
 // TestWithTracing_ExecuteStream_InterruptedStream verifies that when the consumer
@@ -103,8 +103,10 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
 				// First chunk has tokens and finish reason; consumer stops after it (yield=false)
 				chunk := &prompty.ResponseChunk{
+					Identity:     prompty.StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
 					Content:      []prompty.ContentPart{prompty.TextPart{Text: "a"}},
-					IsFinished:   true,
+					Kind:         prompty.StreamFinish,
+					Outcome:      prompty.OutcomeCompleted,
 					FinishReason: "stop",
 					Usage:        prompty.Usage{TotalTokens: 42},
 				}
@@ -117,9 +119,10 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	count := 0
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		if err != nil {
 			require.NoError(t, err)
 		}
@@ -155,9 +158,10 @@ func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	var gotErr error
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		gotErr = err
 		break
 	}
@@ -204,15 +208,14 @@ func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	count := 0
-	for _, err := range seq {
-		if err != nil {
-			require.NoError(t, err)
-		}
+	for _, err := range seq.Events() {
+		require.ErrorIs(t, err, prompty.ErrStreamProtocol)
 		count++
 	}
-	assert.Equal(t, 0, count, "empty stream yields zero chunks")
+	assert.Equal(t, 1, count, "missing finish yields one failed terminal")
 }
 
 // TestWithTracing_Execute_RecordsFinishReason exercises the sync path where Response has FinishReason.
@@ -252,6 +255,9 @@ func (i *invokerStub) Execute(ctx context.Context, exec *prompty.PromptExecution
 func (i *invokerStub) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return i.generateStream(ctx, exec)
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	return prompty.NewStream(ctx, mode, func(ctx context.Context) iter.Seq2[*prompty.ResponseChunk, error] {
+		return i.generateStream(ctx, exec)
+	})
 }

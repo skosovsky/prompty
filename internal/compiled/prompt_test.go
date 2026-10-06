@@ -63,7 +63,7 @@ func TestPrompt_UnmarshalRejectsFormatVersion1(t *testing.T) {
 
 func TestPrompt_RoundTripProvenanceAndCachePolicy(t *testing.T) {
 	t.Parallel()
-	cache := &prompty.CachePolicy{Type: "ephemeral"}
+	cache := &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker}
 	exec := prompty.NewExecution([]prompty.ChatMessage{{
 		Role: prompty.RoleSystem,
 		Content: []prompty.ContentPart{
@@ -86,7 +86,7 @@ func TestPrompt_RoundTripProvenanceAndCachePolicy(t *testing.T) {
 	require.NotNil(t, restoredExec.Messages[0].Provenance)
 	assert.Equal(t, "rules", restoredExec.Messages[0].Provenance.LayerID)
 	require.NotNil(t, restoredExec.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", restoredExec.Messages[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, restoredExec.Messages[0].CachePolicy.Mechanism)
 }
 
 func TestPrompt_ExecutionCloneIsImmutable(t *testing.T) {

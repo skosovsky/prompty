@@ -28,16 +28,16 @@ func TestStreamStructuredOutput_Object(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
-					Content:    []ContentPart{TextPart{Text: `{"answer":"ok"}`}},
-					IsFinished: true,
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+					Content: []ContentPart{TextPart{Text: `{"answer":"ok"}`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -57,9 +57,9 @@ func TestStreamStructuredOutput_ArrayAcrossChunks(t *testing.T) {
 					`]`,
 				}
 				for i, chunk := range chunks {
-					if !yield(&ResponseChunk{
-						Content:    []ContentPart{TextPart{Text: chunk}},
-						IsFinished: i == len(chunks)-1,
+					if !yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+						Content: []ContentPart{TextPart{Text: chunk}},
+						Kind:    fixtureStreamKind(i == len(chunks)-1), Outcome: OutcomeCompleted,
 					}, nil) {
 						return
 					}
@@ -69,7 +69,7 @@ func TestStreamStructuredOutput_ArrayAcrossChunks(t *testing.T) {
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 2)
@@ -83,18 +83,18 @@ func TestStreamStructuredOutput_EscapedQuotesAndBracesInsideStrings(t *testing.T
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
 					Content: []ContentPart{
 						TextPart{Text: `{"answer":"He said: \"Hello, {world}\""}`},
 					},
-					IsFinished: true,
+					Kind: StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -109,9 +109,9 @@ func TestStreamStructuredOutput_RejectsMarkdownFencedJSON(t *testing.T) {
 			return func(yield func(*ResponseChunk, error) bool) {
 				chunks := []string{"```json\n", `{"answer":"ok"}`, "\n```"}
 				for i, chunk := range chunks {
-					if !yield(&ResponseChunk{
-						Content:    []ContentPart{TextPart{Text: chunk}},
-						IsFinished: i == len(chunks)-1,
+					if !yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+						Content: []ContentPart{TextPart{Text: chunk}},
+						Kind:    fixtureStreamKind(i == len(chunks)-1), Outcome: OutcomeCompleted,
 					}, nil) {
 						return
 					}
@@ -121,7 +121,7 @@ func TestStreamStructuredOutput_RejectsMarkdownFencedJSON(t *testing.T) {
 	}
 
 	_, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "markdown code fences")
@@ -139,10 +139,10 @@ func TestStreamStructuredOutput_NilChunkFailsClosed(t *testing.T) {
 	}
 
 	_, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil chunk")
+	assert.ErrorIs(t, err, ErrStreamProtocol)
 }
 
 func TestStreamStructuredOutput_NonTextChunkFailsClosed(t *testing.T) {
@@ -151,16 +151,16 @@ func TestStreamStructuredOutput_NonTextChunkFailsClosed(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
-					Content:    []ContentPart{ToolCallPart{Name: "lookup", Args: `{}`}},
-					IsFinished: true,
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"part:0"}},
+					Content: []ContentPart{ToolCallPart{Name: "lookup", Args: `{}`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	_, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNonTextResponse)
@@ -172,16 +172,16 @@ func TestStreamStructuredOutput_IncompleteJSONIncludesPreview(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
-					Content:    []ContentPart{TextPart{Text: `{"answer":"oops"`}},
-					IsFinished: true,
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+					Content: []ContentPart{TextPart{Text: `{"answer":"oops"`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.Empty(t, items)
@@ -200,18 +200,18 @@ func TestStreamStructuredOutput_ObjectTooLarge(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
 					Content: []ContentPart{
 						TextPart{Text: `{"answer":"this-is-too-long"}`},
 					},
-					IsFinished: true,
+					Kind: StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.Empty(t, items)
@@ -225,16 +225,16 @@ func TestStreamStructuredOutput_ArrayOfPrimitivesUnsupported(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				yield(&ResponseChunk{
-					Content:    []ContentPart{TextPart{Text: `["a"]`}},
-					IsFinished: true,
+				yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+					Content: []ContentPart{TextPart{Text: `["a"]`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil)
 			}
 		},
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.Empty(t, items)
@@ -248,9 +248,9 @@ func TestStreamStructuredOutput_SemanticValidationCancelsContext(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(ctx context.Context, _ *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				if !yield(&ResponseChunk{
-					Content:    []ContentPart{TextPart{Text: `{"answer":""}`}},
-					IsFinished: true,
+				if !yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+					Content: []ContentPart{TextPart{Text: `{"answer":""}`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil) {
 					<-ctx.Done()
 					canceled <- struct{}{}
@@ -263,7 +263,7 @@ func TestStreamStructuredOutput_SemanticValidationCancelsContext(t *testing.T) {
 	}
 
 	_, err := collectSeq(
-		StreamStructuredOutput[validatedStreamResult](context.Background(), invoker, SimplePrompt("hi")),
+		StreamStructuredOutput[validatedStreamResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "semantic validation failed")
@@ -281,16 +281,17 @@ func TestStreamStructuredOutput_EarlyStopCancelsContext(t *testing.T) {
 	invoker := &scriptedInvoker{
 		generateStream: func(ctx context.Context, _ *PromptExecution) iter.Seq2[*ResponseChunk, error] {
 			return func(yield func(*ResponseChunk, error) bool) {
-				if !yield(&ResponseChunk{
+				if !yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
 					Content: []ContentPart{TextPart{Text: `{"answer":"first"}`}},
+					Kind:    StreamDelta,
 				}, nil) {
 					<-ctx.Done()
 					canceled <- struct{}{}
 					return
 				}
-				if !yield(&ResponseChunk{
-					Content:    []ContentPart{TextPart{Text: `{"answer":"second"}`}},
-					IsFinished: true,
+				if !yield(&ResponseChunk{Identity: StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+					Content: []ContentPart{TextPart{Text: `{"answer":"second"}`}},
+					Kind:    StreamFinish, Outcome: OutcomeCompleted,
 				}, nil) {
 					<-ctx.Done()
 					canceled <- struct{}{}
@@ -299,7 +300,7 @@ func TestStreamStructuredOutput_EarlyStopCancelsContext(t *testing.T) {
 		},
 	}
 
-	seq := StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"))
+	seq := StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative)
 	calls := 0
 	seq(func(item valueSchemaResult, err error) bool {
 		require.NoError(t, err)

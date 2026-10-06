@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,13 @@ type scriptedInvoker struct {
 	generateStream func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error]
 }
 
+func fixtureStreamKind(finished bool) StreamEventKind {
+	if finished {
+		return StreamFinish
+	}
+	return StreamDelta
+}
+
 func (s *scriptedInvoker) Execute(ctx context.Context, exec *PromptExecution) (*Response, error) {
 	if s.generate == nil {
 		return nil, nil
@@ -21,22 +29,37 @@ func (s *scriptedInvoker) Execute(ctx context.Context, exec *PromptExecution) (*
 	return s.generate(ctx, exec)
 }
 
-func (s *scriptedInvoker) ExecuteStream(ctx context.Context, exec *PromptExecution) iter.Seq2[*ResponseChunk, error] {
-	if s.generateStream != nil {
-		return s.generateStream(ctx, exec)
-	}
-	return func(yield func(*ResponseChunk, error) bool) {
-		resp, err := s.Execute(ctx, exec)
-		if err != nil {
-			yield(nil, err)
-			return
+func (s *scriptedInvoker) ExecuteStream(ctx context.Context, exec *PromptExecution, mode StreamMode) *Stream {
+	return NewStream(ctx, mode, func(ctx context.Context) iter.Seq2[*ResponseChunk, error] {
+		if s.generateStream != nil {
+			return s.generateStream(ctx, exec)
 		}
-		if resp == nil {
-			yield(nil, nil)
-			return
+		return func(yield func(*ResponseChunk, error) bool) {
+			resp, err := s.Execute(ctx, exec)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if resp == nil {
+				yield(nil, nil)
+				return
+			}
+			yield(&ResponseChunk{
+				Identity: StreamIdentity{MessageID: "", PartIDs: fixtureCompletePartIDs(len(resp.Content))},
+				Content:  cloneContentParts(resp.Content), Usage: resp.Usage,
+				Kind: StreamFinish, Outcome: resp.Outcome,
+			}, nil)
 		}
-		yield(&ResponseChunk{Content: cloneContentParts(resp.Content), Usage: resp.Usage, IsFinished: true}, nil)
+	})
+}
+
+// The scripted sync-result source emits one complete frame, not correlated deltas.
+func fixtureCompletePartIDs(count int) []string {
+	ids := make([]string, count)
+	for i := range ids {
+		ids[i] = "result:" + strconv.Itoa(i)
 	}
+	return ids
 }
 
 type toolValidatorFunc func(name string, argsJSON string) error

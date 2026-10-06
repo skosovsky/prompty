@@ -2,13 +2,18 @@
 package cast
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 )
 
 // ToFloat64 converts a numeric value to float64. Supports int/uint/float types.
 func ToFloat64(v any) (float64, bool) {
 	switch x := v.(type) {
+	case json.Number:
+		value, err := x.Float64()
+		return value, err == nil
 	case float64:
 		return x, true
 	case float32:
@@ -41,6 +46,12 @@ func ToFloat64(v any) (float64, bool) {
 // ToInt64 converts a numeric value to int64. Clamps uint64/uint to [math.MaxInt64] when out of range.
 func ToInt64(v any) (int64, bool) {
 	switch x := v.(type) {
+	case json.Number:
+		value, ok := new(big.Rat).SetString(string(x))
+		if !ok || !value.IsInt() || !value.Num().IsInt64() {
+			return 0, false
+		}
+		return value.Num().Int64(), true
 	case int64:
 		return x, true
 	case int:
@@ -71,7 +82,7 @@ func ToInt64(v any) (int64, bool) {
 		if math.IsNaN(x) || math.IsInf(x, 0) {
 			return 0, false
 		}
-		if math.Trunc(x) != x || x < math.MinInt64 || x > math.MaxInt64 {
+		if math.Trunc(x) != x || x < math.MinInt64 || x >= float64(math.MaxInt64) {
 			return 0, false
 		}
 		return int64(x), true
@@ -80,7 +91,7 @@ func ToInt64(v any) (int64, bool) {
 		if math.IsNaN(f64) || math.IsInf(f64, 0) {
 			return 0, false
 		}
-		if math.Trunc(f64) != f64 || f64 < math.MinInt64 || f64 > math.MaxInt64 {
+		if math.Trunc(f64) != f64 || f64 < math.MinInt64 || f64 >= float64(math.MaxInt64) {
 			return 0, false
 		}
 		return int64(x), true

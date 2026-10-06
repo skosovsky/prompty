@@ -12,10 +12,6 @@ import (
 func TestNewStructuredExecutor_ValidationErrorAppendsAssistantAndUser(t *testing.T) {
 	t.Parallel()
 
-	type result struct {
-		Name string `json:"name"`
-	}
-
 	callNum := 0
 	var seen []*PromptExecution
 	invoker := &scriptedInvoker{
@@ -23,13 +19,13 @@ func TestNewStructuredExecutor_ValidationErrorAppendsAssistantAndUser(t *testing
 			callNum++
 			seen = append(seen, clonePromptExecution(exec))
 			if callNum == 1 {
-				return NewResponse([]ContentPart{TextPart{Text: `{invalid`}}), nil
+				return NewResponse([]ContentPart{TextPart{Text: `{"answer":""}`}}), nil
 			}
-			return NewResponse([]ContentPart{TextPart{Text: `{"name":"ok"}`}}), nil
+			return NewResponse([]ContentPart{TextPart{Text: `{"answer":"ok"}`}}), nil
 		},
 	}
 
-	step := NewStructuredExecutor[result](invoker, SimplePrompt("hi"))
+	step := NewStructuredExecutor[semanticFeedbackResult](invoker, SimplePrompt("hi"))
 
 	ptr, err := step(context.Background())
 	require.Error(t, err)
@@ -40,15 +36,15 @@ func TestNewStructuredExecutor_ValidationErrorAppendsAssistantAndUser(t *testing
 	ptr, err = step(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, ptr)
-	assert.Equal(t, "ok", ptr.Name)
+	assert.Equal(t, "ok", ptr.Answer)
 
 	require.Equal(t, 2, callNum)
 	require.Len(t, seen, 2)
 	require.Len(t, seen[1].Messages, 3)
 	assert.Equal(t, RoleAssistant, seen[1].Messages[1].Role)
-	assert.Equal(t, `{invalid`, mustTextFromParts(t, seen[1].Messages[1].Content))
+	assert.JSONEq(t, `{"answer":""}`, mustTextFromParts(t, seen[1].Messages[1].Content))
 	assert.Equal(t, RoleUser, seen[1].Messages[2].Role)
-	assert.Contains(t, mustTextFromParts(t, seen[1].Messages[2].Content), "invalid character")
+	assert.Contains(t, mustTextFromParts(t, seen[1].Messages[2].Content), "violates business rules")
 }
 
 func TestNewStructuredExecutor_ToolCallErrorAppendsAssistantAndTool(t *testing.T) {

@@ -17,7 +17,9 @@ import (
 // Req = *api.ChatRequest, Resp = *api.ChatResponse.
 type Adapter struct {
 	defaultModel string
-	client       *api.Client
+	client       ChatClient
+	endpoint     string
+	profiles     []prompty.CapabilityProfile
 }
 
 // Option configures an Adapter (e.g. WithModel, WithClient).
@@ -29,7 +31,17 @@ func WithModel(m string) Option {
 }
 
 // WithClient injects the Ollama SDK client for Execute. Required for Execute/Invoker flow.
-func WithClient(c *api.Client) Option {
+func WithClient(c ChatClient) Option {
+	switch client := c.(type) {
+	case *api.Client:
+		if client == nil {
+			c = nil
+		}
+	case *HTTPChatClient:
+		if client == nil {
+			c = nil
+		}
+	}
 	return func(a *Adapter) { a.client = c }
 }
 
@@ -43,9 +55,25 @@ func New(opts ...Option) *Adapter {
 }
 
 // RuntimeDescriptor exposes adapter runtime metadata.
-func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
-	return adapter.RuntimeDescriptor{
-		Name: "ollama",
+func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
+	endpoint := a.endpoint
+	if endpoint == "" && a.client == nil {
+		endpoint = "http://localhost:11434"
+	}
+	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
+		Name: "ollama", Endpoint: endpoint, DefaultModel: a.defaultModel,
+		Profiles: a.profiles,
+	})
+}
+
+// WithProfiles declares caller-owned knowledge for the injected client's actual
+// endpoint. This option does not configure transport; the caller must bind the
+// SDK client to the same endpoint. Unknown models retain unknown capabilities.
+func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option {
+	snapshot := adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{Profiles: profiles})
+	return func(a *Adapter) {
+		a.endpoint = endpoint
+		a.profiles = adapter.CloneRuntimeDescriptor(snapshot).Profiles
 	}
 }
 
@@ -54,7 +82,28 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	if err := adapter.RejectRequestCache(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectSyntheticOutput(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.RejectCacheResource(exec); err != nil {
+		return nil, err
+	}
+	if cacheErr := adapter.RejectUnmappedCache(exec); cacheErr != nil {
+		return nil, cacheErr
+	}
+	if stateErr := adapter.RejectProviderState(exec); stateErr != nil {
+		return nil, stateErr
+	}
 	working := adapter.PrepareTranslateExecution(exec)
+	if exec.ForcedTool != "" {
+		return nil, fmt.Errorf(
+			"%w: native named-tool selection mapping is not implemented",
+			adapter.ErrUnsupportedCapability,
+		)
+	}
 	if exec.ResponseFormat != nil {
 		return nil, adapter.ErrStructuredOutputNotSupported
 	}
@@ -110,12 +159,6 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			req.Tools = append(req.Tools, tool)
 		}
 	}
-	if exec.ForcedTool != "" && len(req.Tools) > 0 {
-		req.Messages = append([]api.Message{{
-			Role:    "system",
-			Content: fmt.Sprintf("You must call tool %q for the next tool-use step.", exec.ForcedTool),
-		}}, req.Messages...)
-	}
 	return req, nil
 }
 
@@ -124,15 +167,17 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	reqStream := req.Stream
+	if req == nil {
+		return nil, adapter.ErrNilExecution
+	}
+	request := *req
 	streamOff := false
-	req.Stream = &streamOff
+	request.Stream = &streamOff
 	var lastResp api.ChatResponse
-	err := a.client.Chat(ctx, req, func(r api.ChatResponse) error {
+	err := a.client.Chat(ctx, &request, func(r api.ChatResponse) error {
 		lastResp = r
 		return nil
 	})
-	req.Stream = reqStream
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +246,9 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 				if argsErr != nil {
 					return nil, argsErr
 				}
-				var args api.ToolCallFunctionArguments
-				if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-					return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
+				args, err := decodeExactToolArguments([]byte(argsJSON))
+				if err != nil {
+					return nil, err
 				}
 				toolCalls = append(toolCalls, api.ToolCall{
 					ID: tc.ID,
@@ -247,6 +292,7 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 					Role:       "tool",
 					Content:    text,
 					ToolCallID: x.ToolCallID,
+					ToolName:   x.Name,
 				})
 			case *prompty.ToolResultPart:
 				if x == nil {
@@ -268,6 +314,7 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 					Role:       "tool",
 					Content:    text,
 					ToolCallID: x.ToolCallID,
+					ToolName:   x.Name,
 				})
 			default:
 				return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
@@ -291,17 +338,9 @@ func isOllamaImageMediaPart(mp prompty.MediaPart) bool {
 }
 
 func (a *Adapter) translateTool(t prompty.ToolDefinition) (api.Tool, error) {
-	params := api.ToolFunctionParameters{
-		Type:       "object",
-		Properties: api.NewToolPropertiesMap(),
-	}
-	if len(t.Parameters) > 0 {
-		if err := json.Unmarshal(t.Parameters, &params); err != nil {
-			return api.Tool{}, fmt.Errorf("%w: failed to unmarshal tool parameters: %w", adapter.ErrMalformedArgs, err)
-		}
-		if params.Properties == nil {
-			params.Properties = api.NewToolPropertiesMap()
-		}
+	params, err := decodeToolSchema(t.Parameters)
+	if err != nil {
+		return api.Tool{}, err
 	}
 	return api.Tool{
 		Type: "function",
@@ -320,12 +359,15 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 	}
 	msg := &resp.Message
 	var out []prompty.ContentPart
+	if msg.Thinking != "" {
+		out = append(out, prompty.ReasoningPart{Text: msg.Thinking})
+	}
 	if msg.Content != "" {
 		out = append(out, prompty.TextPart{Text: msg.Content})
 	}
 	for _, tc := range msg.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
-		if len(argsMap) == 0 {
+		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
 			return nil, fmt.Errorf(
 				"%w: empty tool call args for %q",
 				adapter.ErrMalformedArgs,
@@ -338,34 +380,69 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 		}
 		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: string(b)})
 	}
-	if len(out) == 0 {
+	if len(out) == 0 && resp.DoneReason == "" {
 		return nil, adapter.ErrEmptyResponse
 	}
-	return prompty.NewResponse(out), nil
+	result := prompty.NewResponse(out)
+	result.FinishReason = resp.DoneReason
+	result.Outcome = prompty.OutcomeIncomplete
+	if resp.Done && resp.DoneReason == "stop" {
+		result.Outcome = prompty.OutcomeCompleted
+		if len(msg.ToolCalls) != 0 {
+			result.Outcome = prompty.OutcomeToolCalls
+		}
+	}
+	usage, err := usageFromOllama(resp)
+	result.Usage = usage
+	return result, err
 }
 
-// ParseStreamChunk parses a single Ollama stream chunk (*api.ChatResponse, Done: false).
-// Emits one ContentPart per chunk; client glues ArgsChunk for tool calls.
+func usageFromOllama(resp *api.ChatResponse) (prompty.Usage, error) {
+	var usage prompty.Usage
+	usage.Mode = prompty.UsageCumulative
+	if resp.PromptEvalCount != 0 {
+		usage.PromptTokens = resp.PromptEvalCount
+		usage.Known = append(usage.Known, prompty.UsagePrompt)
+	}
+	if resp.EvalCount != 0 {
+		usage.CompletionTokens = resp.EvalCount
+		usage.Known = append(usage.Known, prompty.UsageCompletion)
+	}
+	if resp.PromptEvalCount != 0 && resp.EvalCount != 0 {
+		total, err := adapter.SumUsageCounters(int64(resp.PromptEvalCount), int64(resp.EvalCount))
+		if err != nil {
+			return usage, err
+		}
+		usage.TotalTokens = total
+		usage.Known = append(usage.Known, prompty.UsageTotal)
+	}
+	return usage, nil
+}
+
+// ParseStreamChunk maps a single SDK callback. Tool arguments are complete
+// snapshots in Args, never concatenated JSON in ArgsChunk.
 func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	chunk, ok := rawChunk.(*api.ChatResponse)
 	if !ok {
 		return nil, adapter.ErrInvalidResponse
 	}
 	var out []prompty.ContentPart
+	if chunk.Message.Thinking != "" {
+		out = append(out, prompty.ReasoningPart{Text: chunk.Message.Thinking})
+	}
 	if chunk.Message.Content != "" {
 		out = append(out, prompty.TextPart{Text: chunk.Message.Content})
 	}
 	for _, tc := range chunk.Message.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
-		var argsChunk string
-		if len(argsMap) > 0 {
-			b, err := json.Marshal(argsMap)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
-			}
-			argsChunk = string(b)
+		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
+			return nil, adapter.ErrMalformedArgs
 		}
-		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, ArgsChunk: argsChunk})
+		b, err := json.Marshal(argsMap)
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
+		}
+		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: string(b)})
 	}
 	return out, nil
 }
