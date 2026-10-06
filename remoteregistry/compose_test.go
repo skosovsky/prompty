@@ -171,7 +171,7 @@ func (r *remoteComposeTamperReader) VerifyManifestDescriptor(
 	ctx context.Context,
 	desc prompty.ManifestDescriptor,
 ) error {
-	return manifest.CheckpointVerify(ctx, desc, r, yaml.New())
+	return manifest.CheckpointVerify(ctx, desc, r)
 }
 
 func TestCachedRegistry_ConditionalCompose_MissingContextThenStrict(t *testing.T) {
@@ -222,9 +222,9 @@ func TestRegistry_ComposedManifest_FetchCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(
 		t,
-		3,
+		2,
 		m.called,
-		"composed_main: main fetch plus child loads for cycle-check and resolve",
+		"one fetch per source in the captured closure",
 	)
 }
 
@@ -264,7 +264,7 @@ messages:
 	assert.True(t, uses2)
 }
 
-func TestCachedRegistry_FlatToComposeTransition_BypassesStaleCache(t *testing.T) {
+func TestCachedRegistry_FlatToComposeTransition_RequiresEviction(t *testing.T) {
 	t.Parallel()
 	flatYAML := []byte(`id: composed_main
 inputs:
@@ -282,7 +282,7 @@ messages:
 			switch id {
 			case "composed_main":
 				call++
-				if call <= 2 {
+				if call <= 1 {
 					return flatYAML, nil
 				}
 				return composeMain, nil
@@ -313,6 +313,7 @@ messages:
 		Query string `prompt:"query"`
 	}{Query: "second"})
 	require.NoError(t, err)
+	cached.Evict("composed_main")
 	plan2, err := cached.Plan(ctx, "composed_main", input2)
 	require.NoError(t, err)
 	exec2, err := plan2.Execute(ctx)
@@ -398,7 +399,7 @@ func TestRegistry_RecordComposeFlag_KnownManifestUsesCompose(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(
 		t,
-		3,
+		2,
 		m.called,
 		"CachedRegistry.Plan must not redundant-probe after ResolveManifest",
 	)
@@ -605,4 +606,8 @@ func TestRegistry_ComposedManifest_WithEnvironment(t *testing.T) {
 func tamperedComposedChildManifestBytes() []byte {
 	return []byte(`{"id":"composed_child","inputs":{"clinic_name":{"type":"string"}},` +
 		`"layers":[{"id":"child_rules","role":"system","content":"TAMPERED"}]}`)
+}
+
+func (r *remoteComposeTamperReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, r, yaml.New(), nil, map[string]string{"resolution": "test-tamper.v1"})
 }

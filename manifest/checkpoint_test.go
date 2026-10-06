@@ -27,7 +27,7 @@ func (s *stubComposeReader) LoadByID(_ context.Context, id string) (*RawManifest
 	return &raw, nil
 }
 
-func Test_newComposeManifestDescriptor_TransitiveDigest(t *testing.T) {
+func Test_CheckpointRecommend_TransitiveDigest(t *testing.T) {
 	t.Parallel()
 	main := []byte(
 		`{"id":"composed_main","imports":[{"id":"composed_child"}],` +
@@ -43,15 +43,14 @@ func Test_newComposeManifestDescriptor_TransitiveDigest(t *testing.T) {
 		"composed_main":  main,
 		"composed_child": child,
 	}}
-	parser := NewJSONParser()
 
-	desc, err := newComposeManifestDescriptor(
-		context.Background(), "composed_main", reader, parser,
+	desc, err := CheckpointRecommend(
+		context.Background(), "composed_main", reader,
 	)
 	require.NoError(t, err)
 	assert.NotEqual(t, prompty.ManifestDigestSHA256(main), desc.Digest)
 
-	err = verifyComposeManifestDescriptor(context.Background(), desc, reader, parser)
+	err = CheckpointVerify(context.Background(), desc, reader)
 	require.NoError(t, err)
 
 	tampered := []byte(
@@ -59,7 +58,7 @@ func Test_newComposeManifestDescriptor_TransitiveDigest(t *testing.T) {
 			`"content":[{"type":"text","text":"tampered"}]}]}`,
 	)
 	reader.byID["composed_child"] = tampered
-	err = verifyComposeManifestDescriptor(context.Background(), desc, reader, parser)
+	err = CheckpointVerify(context.Background(), desc, reader)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 }
@@ -80,10 +79,9 @@ func TestRecommendManifestDescriptor_SelectsCompose(t *testing.T) {
 		"composed_main":  main,
 		"composed_child": child,
 	}}
-	parser := NewJSONParser()
 
-	desc, err := recommendManifestDescriptor(
-		context.Background(), "composed_main", reader, parser,
+	desc, err := CheckpointRecommend(
+		context.Background(), "composed_main", reader,
 	)
 	require.NoError(t, err)
 	assert.NotEqual(t, prompty.ManifestDigestSHA256(main), desc.Digest)
@@ -92,7 +90,7 @@ func TestRecommendManifestDescriptor_SelectsCompose(t *testing.T) {
 		`{"id":"composed_child","layers":[{"id":"child_rules","role":"system",` +
 			`"content":[{"type":"text","text":"tampered"}]}]}`,
 	)
-	err = verifyManifestDescriptor(context.Background(), desc, reader, parser)
+	err = CheckpointVerify(context.Background(), desc, reader)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 }
@@ -104,12 +102,11 @@ func TestRecommendManifestDescriptor_LayersOnlyUsesComposeDigest(t *testing.T) {
 			`"content":[{"type":"text","text":"hi"}]}]}`,
 	)
 	reader := &stubComposeReader{byID: map[string][]byte{"layers_only": layersOnly}}
-	parser := NewJSONParser()
 
-	desc, err := recommendManifestDescriptor(context.Background(), "layers_only", reader, parser)
+	desc, err := CheckpointRecommend(context.Background(), "layers_only", reader)
 	require.NoError(t, err)
 	assert.NotEqual(t, prompty.ManifestDigestSHA256(layersOnly), desc.Digest)
-	require.NoError(t, verifyManifestDescriptor(context.Background(), desc, reader, parser))
+	require.NoError(t, CheckpointVerify(context.Background(), desc, reader))
 }
 
 func TestComposeClosureDigestSHA256_CorruptChildUnmarshalFails(t *testing.T) {
@@ -126,7 +123,14 @@ func TestComposeClosureDigestSHA256_CorruptChildUnmarshalFails(t *testing.T) {
 			return nil, prompty.ErrTemplateNotFound
 		}
 	}
-	_, err := ComposeClosureDigestSHA256("composed_main", read, NewJSONParser())
+	_, err := CaptureSources(
+		context.Background(),
+		"composed_main",
+		&digestFuncReader{read: read},
+		NewJSONParser(),
+		nil,
+		nil,
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal import")
 }
@@ -142,16 +146,15 @@ func TestVerifyManifestDescriptor_ComposeTamperFails(t *testing.T) {
 		"composed_main":  main,
 		"composed_child": child,
 	}}
-	parser := NewJSONParser()
 
-	desc, err := recommendManifestDescriptor(context.Background(), "composed_main", reader, parser)
+	desc, err := CheckpointRecommend(context.Background(), "composed_main", reader)
 	require.NoError(t, err)
-	require.NoError(t, verifyManifestDescriptor(context.Background(), desc, reader, parser))
+	require.NoError(t, CheckpointVerify(context.Background(), desc, reader))
 
 	reader.byID["composed_child"] = []byte(
 		`{"id":"composed_child","messages":[{"role":"system","content":[{"type":"text","text":"tampered"}]}]}`,
 	)
-	err = verifyManifestDescriptor(context.Background(), desc, reader, parser)
+	err = CheckpointVerify(context.Background(), desc, reader)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 }
@@ -168,14 +171,13 @@ func TestComposeClosureDigest_InactiveImportStillInClosure(t *testing.T) {
 		"composed_conditional_main": main,
 		"composed_child":            child,
 	}}
-	parser := NewJSONParser()
 
-	desc, err := newComposeManifestDescriptor(context.Background(), "composed_conditional_main", reader, parser)
+	desc, err := CheckpointRecommend(context.Background(), "composed_conditional_main", reader)
 	require.NoError(t, err)
 
 	tampered := []byte(`{"id":"composed_child","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`)
 	reader.byID["composed_child"] = tampered
-	err = verifyComposeManifestDescriptor(context.Background(), desc, reader, parser)
+	err = CheckpointVerify(context.Background(), desc, reader)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 }
@@ -183,8 +185,7 @@ func TestComposeClosureDigest_InactiveImportStillInClosure(t *testing.T) {
 func TestRecommendManifestDescriptor_EmptyBytesFails(t *testing.T) {
 	t.Parallel()
 	reader := &stubComposeReader{byID: map[string][]byte{"empty": {}}}
-	parser := NewJSONParser()
-	_, err := recommendManifestDescriptor(context.Background(), "empty", reader, parser)
+	_, err := CheckpointRecommend(context.Background(), "empty", reader)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }
@@ -194,7 +195,7 @@ func TestCheckpointRecommend_CorruptManifest(t *testing.T) {
 	reader := &stubComposeReader{byID: map[string][]byte{
 		"bad": []byte(`{not-json`),
 	}}
-	_, err := CheckpointRecommend(context.Background(), "bad", reader, NewJSONParser())
+	_, err := CheckpointRecommend(context.Background(), "bad", reader)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
 }
@@ -206,9 +207,11 @@ func TestCheckpointVerify_CorruptManifest(t *testing.T) {
 	}}
 	err := CheckpointVerify(
 		context.Background(),
-		prompty.ManifestDescriptor{ID: "bad", Digest: "deadbeef"},
+		prompty.ManifestDescriptor{
+			ID:     "bad",
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
 		reader,
-		NewJSONParser(),
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, prompty.ErrInvalidManifest)
@@ -229,7 +232,7 @@ func TestCheckpointRecommend_ComposeCorruptChild(t *testing.T) {
 		}
 	}
 	reader := &digestFuncReader{read: read}
-	_, err := CheckpointRecommend(context.Background(), "composed_main", reader, NewJSONParser())
+	_, err := CheckpointRecommend(context.Background(), "composed_main", reader)
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrInvalidManifest)
 	require.Contains(t, err.Error(), "unmarshal import")
@@ -245,7 +248,7 @@ func TestCheckpointRecommend_ComposeMissingImport(t *testing.T) {
 		return nil, prompty.ErrTemplateNotFound
 	}
 	reader := &digestFuncReader{read: read}
-	_, err := CheckpointRecommend(context.Background(), "composed_main", reader, NewJSONParser())
+	_, err := CheckpointRecommend(context.Background(), "composed_main", reader)
 	require.Error(t, err)
 	require.ErrorIs(t, err, prompty.ErrTemplateNotFound)
 	require.Contains(t, err.Error(), "read import")
@@ -257,4 +260,11 @@ type digestFuncReader struct {
 
 func (r *digestFuncReader) ReadManifestBytes(_ context.Context, id string) ([]byte, error) {
 	return r.read(id)
+}
+
+func (s *stubComposeReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return CaptureSources(ctx, id, s, NewJSONParser(), nil, nil)
+}
+func (r *digestFuncReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return CaptureSources(ctx, id, r, NewJSONParser(), nil, nil)
 }

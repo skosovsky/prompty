@@ -66,11 +66,11 @@ func (r NoVarsRecipe) JSONSchema() (prompty.JSONDocument, error) {
 	return prompty.CloneJSONDocument(format.Schema), nil
 }
 
-func (r NoVarsRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r NoVarsRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r NoVarsRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r NoVarsRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

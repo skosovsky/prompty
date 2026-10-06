@@ -52,7 +52,10 @@ func TestGeneratedConsumerPreservesPresence(t *testing.T) {
 	spec := &PromptSpec{
 		ID:          "presence",
 		InputSchema: schema,
-		Descriptor:  prompty.ManifestDescriptor{ID: "presence", Digest: "sha256:presence"},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     "presence",
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
 	}
 	generated, err := GenerateManifestTypes(spec, "consumer")
 	require.NoError(t, err)

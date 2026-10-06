@@ -49,3 +49,9 @@ func ValidatePathForFetch(id string) error {
 func CandidatePaths(id string) []string {
 	return []string{id + ".yaml", id + ".yml", id + ".json"}
 }
+
+// RevisionFetcher binds one immutable revision for every read of a captured bundle.
+// The returned Fetcher must never track a moving reference.
+type RevisionFetcher interface {
+	BindRevision(context.Context, string) (Fetcher, error)
+}

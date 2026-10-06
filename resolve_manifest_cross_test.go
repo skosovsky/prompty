@@ -293,7 +293,6 @@ func (r *crossComposeTamperReader) ReadManifestBytes(
 func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	parser := yaml.New()
 	manifestID := "composed_conditional_main"
 
 	for _, tc := range crossComposeRegistryMatrix(t) {
@@ -437,7 +436,7 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 						"composed_child": tamperedComposedChildManifestBytes(),
 					},
 				}
-				err = manifest.CheckpointVerify(ctx, desc, tamperReader, parser)
+				err = manifest.CheckpointVerify(ctx, desc, tamperReader)
 				require.Error(t, err)
 				assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 			})
@@ -562,7 +561,7 @@ func TestCrossRegistry_FlatCheckpoint_Parity(t *testing.T) {
 						),
 					},
 				}
-				err := manifest.CheckpointVerify(ctx, desc, tamperReader, yaml.New())
+				err := manifest.CheckpointVerify(ctx, desc, tamperReader)
 				require.Error(t, err)
 				assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 			})
@@ -670,7 +669,7 @@ func TestCrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
 			plan, err := tc.reg.(prompty.Registry).Plan(ctx, "composed_main", input)
 			require.NoError(t, err)
 
-			cp, err := compiled.FromRenderPlanRegistry(ctx, plan, tc.reg, "composed_main")
+			cp, err := compiled.FromRenderPlan(ctx, plan)
 			require.NoError(t, err)
 
 			data, err := json.Marshal(cp)
@@ -678,7 +677,7 @@ func TestCrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
 
 			var wire map[string]any
 			require.NoError(t, json.Unmarshal(data, &wire))
-			assert.InDelta(t, 2, wire["format_version"], 0)
+			assert.InDelta(t, 3, wire["format_version"], 0)
 
 			var restored compiled.Prompt
 			require.NoError(t, json.Unmarshal(data, &restored))
@@ -953,4 +952,8 @@ func TestCrossRegistry_LateBinding_OptionalLate(t *testing.T) {
 func tamperedComposedChildManifestBytes() []byte {
 	return []byte(`{"id":"composed_child","inputs":{"clinic_name":{"type":"string"}},` +
 		`"layers":[{"id":"child_rules","role":"system","content":"TAMPERED"}]}`)
+}
+
+func (r *crossComposeTamperReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, r, yaml.New(), nil, map[string]string{"resolution": "test-tamper.v1"})
 }

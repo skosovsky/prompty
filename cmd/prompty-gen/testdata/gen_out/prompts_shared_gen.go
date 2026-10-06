@@ -19,8 +19,8 @@ type Recipe interface {
 	CheckpointJSON() ([]byte, error)
 	ResponseFormat() (*prompty.SchemaDefinition, error)
 	JSONSchema() (prompty.JSONDocument, error)
-	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
-	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
+	Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
 }
 
 type PromptCatalog interface {
@@ -107,7 +107,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case ComposedChild:
 		metadata = prompty.PromptMetadata{ID: "composed_child"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "composed_child", Digest: "85b01ac571ed133891a74581e931f2e8aa127c898e42be04190baf9ea6641fea"}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_child", Digest: "source-bundle.v1:sha256:f38c84f745f64cea1a886fae4eac17a8fa56d44ab9840cfd062f747cdb1aa150"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_child")
@@ -162,7 +162,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case ComposedConditionalMain:
 		metadata = prompty.PromptMetadata{ID: "composed_conditional_main"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "composed_conditional_main", Digest: "f19613f98555e7e28a73f208fc6da91711b6ce0097bcdddbff0aa18c0f12a0a6"}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_conditional_main", Digest: "source-bundle.v1:sha256:930389b097b363abe48b59d137f5e7dda393d51eead3fde62a2939ea98264258"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_conditional_main")
@@ -220,7 +220,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case ComposedMain:
 		metadata = prompty.PromptMetadata{ID: "composed_main"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "composed_main", Digest: "7f68061bc860d9c1413f3ae712eb391fb58cf8a3caacf6c9204a8d64b965626e"}
+		descriptor = prompty.ManifestDescriptor{ID: "composed_main", Digest: "source-bundle.v1:sha256:4ec11688269da19654f40aed0136914af65ddf1c2a507b1ca113f7cc711ac76b"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "composed_main")
@@ -275,7 +275,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case LateBindingAgent:
 		metadata = prompty.PromptMetadata{ID: "late_binding_agent"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "late_binding_agent", Digest: "30667b3ac6d891a5bf1e1e900179eb4fdb2d5642b78d6076812c154c8d0f0853"}
+		descriptor = prompty.ManifestDescriptor{ID: "late_binding_agent", Digest: "source-bundle.v1:sha256:b158e89e5315b98c253291c2bf8836c3edb7447282e5ba01f58a24dbb30374d2"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "late_binding_agent")
@@ -330,7 +330,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case LateRequiredAgent:
 		metadata = prompty.PromptMetadata{ID: "late_required_agent"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "late_required_agent", Digest: "90d3a6b08dbea7e6eb1d6ed5d852f785279ca1ab119b06cdf20523816fc32bd6"}
+		descriptor = prompty.ManifestDescriptor{ID: "late_required_agent", Digest: "source-bundle.v1:sha256:4b3ce0ba1fe102f12b0fc75f0124bbdd2eeab2651a0e57b43f93044d40b2c6c6"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "late_required_agent")
@@ -385,7 +385,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case SchemaFidelity:
 		metadata = prompty.PromptMetadata{ID: "schema_fidelity"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "schema_fidelity", Digest: "e4051f2ed2cdcae93b4dc3ee471daa6c9ea2cdcecf97c58a6ab11ccecd954129"}
+		descriptor = prompty.ManifestDescriptor{ID: "schema_fidelity", Digest: "source-bundle.v1:sha256:da19e3a321a2f12408f0276e1914a9ada8235213e6b8f0bdf9c718a077856642"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "schema_fidelity")
@@ -440,7 +440,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case SupportAgent:
 		metadata = prompty.PromptMetadata{ID: "support_agent", Version: "1.2", Description: "Customer support agent"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "4327cb446c7c0f176f3c6579ee390af085d9f7254b6fb85a495136e4de5566c0"}
+		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "source-bundle.v1:sha256:9b5622554af9f232818e68601b818f539701becf502c244cbd148047bab76bb3"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "support_agent")

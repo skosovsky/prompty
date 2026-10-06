@@ -3,6 +3,7 @@ package prompts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +30,10 @@ func (registryStub) ReadManifestBytes(context.Context, string) ([]byte, error) {
 }
 
 func (registryStub) RecommendManifestDescriptor(_ context.Context, id string) (prompty.ManifestDescriptor, error) {
-	return prompty.ManifestDescriptor{ID: id, Digest: "sha256:test"}, nil
+	return prompty.ManifestDescriptor{
+		ID:     id,
+		Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}, nil
 }
 
 func (registryStub) VerifyManifestDescriptor(context.Context, prompty.ManifestDescriptor) error {
@@ -110,7 +114,9 @@ func TestPromptIndex_NewRecipeFromJSON_RejectsMissingComposeField(t *testing.T) 
 func TestPromptIndex_DecodeRecipeCheckpoint_RejectsUnknownFields(t *testing.T) {
 	t.Parallel()
 	index := NewPromptIndex(registryStub{})
-	payload := []byte(`{"descriptor":{"id":"support_agent","digest":"sha256:test"},"input":{"user_query":"hello"},"unknown":true}`)
+	payload := []byte(
+		`{"descriptor":{"id":"support_agent","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},"input":{"user_query":"hello"},"unknown":true}`,
+	)
 
 	_, ok, err := index.DecodeRecipeCheckpoint(SupportAgent, payload)
 
@@ -122,7 +128,9 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsUnknownFields(t *testing.T) {
 func TestPromptIndex_DecodeRecipeCheckpoint_AllowsSchemaPermittedNestedInputFields(t *testing.T) {
 	t.Parallel()
 	index := NewPromptIndex(registryStub{})
-	payload := []byte(`{"descriptor":{"id":"support_agent","digest":"sha256:test"},"input":{"user_query":"hello","unknown":true}}`)
+	payload := []byte(
+		`{"descriptor":{"id":"support_agent","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},"input":{"user_query":"hello","unknown":true}}`,
+	)
 
 	_, ok, err := index.DecodeRecipeCheckpoint(SupportAgent, payload)
 
@@ -133,7 +141,9 @@ func TestPromptIndex_DecodeRecipeCheckpoint_AllowsSchemaPermittedNestedInputFiel
 func TestPromptIndex_DecodeRecipeCheckpoint_RejectsDescriptorIDMismatch(t *testing.T) {
 	t.Parallel()
 	index := NewPromptIndex(registryStub{})
-	payload := []byte(`{"descriptor":{"id":"composed_main","digest":"sha256:test"},"input":{"user_query":"hello"}}`)
+	payload := []byte(
+		`{"descriptor":{"id":"composed_main","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},"input":{"user_query":"hello"}}`,
+	)
 
 	_, ok, err := index.DecodeRecipeCheckpoint(SupportAgent, payload)
 
@@ -145,8 +155,11 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsDescriptorIDMismatch(t *testi
 func TestNewSupportAgentRecipeFromCheckpoint_RejectsDescriptorIDMismatch(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]{
-		Descriptor: prompty.ManifestDescriptor{ID: string(ComposedMain), Digest: "sha256:test"},
-		Input:      SupportAgentInput{UserQuery: "hello"},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     string(ComposedMain),
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input: SupportAgentInput{UserQuery: "hello"},
 	}
 
 	_, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
@@ -158,8 +171,11 @@ func TestNewSupportAgentRecipeFromCheckpoint_RejectsDescriptorIDMismatch(t *test
 func TestNewSupportAgentRecipeFromCheckpoint_AllowsRequiredEmptyString(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]{
-		Descriptor: prompty.ManifestDescriptor{ID: string(SupportAgent), Digest: "sha256:test"},
-		Input:      SupportAgentInput{},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     string(SupportAgent),
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input: SupportAgentInput{},
 	}
 
 	_, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
@@ -170,8 +186,11 @@ func TestNewSupportAgentRecipeFromCheckpoint_AllowsRequiredEmptyString(t *testin
 func TestNewSupportAgentRecipeFromCheckpoint_AppliesDefaults(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]{
-		Descriptor: prompty.ManifestDescriptor{ID: string(SupportAgent), Digest: "sha256:test"},
-		Input:      SupportAgentInput{UserQuery: "hello"},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     string(SupportAgent),
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input: SupportAgentInput{UserQuery: "hello"},
 	}
 
 	recipe, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
@@ -186,8 +205,11 @@ func TestNewSupportAgentRecipeFromCheckpoint_AppliesDefaults(t *testing.T) {
 func TestNewComposedConditionalMainRecipeFromCheckpoint_RejectsEmptyComposeValues(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]{
-		Descriptor: prompty.ManifestDescriptor{ID: string(ComposedConditionalMain), Digest: "sha256:test"},
-		Input:      ComposedConditionalMainInput{Query: "hello"},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     string(ComposedConditionalMain),
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input: ComposedConditionalMainInput{Query: "hello"},
 		RuntimeOptions: prompty.PromptRuntimeOptions{
 			ComposeValues: prompty.MustJSONDocumentFromMap(map[string]interface{}{}),
 		},
@@ -202,10 +224,13 @@ func TestNewComposedConditionalMainRecipeFromCheckpoint_RejectsEmptyComposeValue
 func TestNewLateRequiredAgentRecipeFromCheckpoint_AllowsRequiredEmptyLateInput(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]{
-		Descriptor: prompty.ManifestDescriptor{ID: string(LateRequiredAgent), Digest: "sha256:test"},
-		Input:      LateRequiredAgentInput{UserQuery: "hello"},
-		LateInput:  &LateRequiredAgentLateInput{},
-		LateBound:  true,
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     string(LateRequiredAgent),
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input:     LateRequiredAgentInput{UserQuery: "hello"},
+		LateInput: &LateRequiredAgentLateInput{},
+		LateBound: true,
 	}
 
 	_, err := NewLateRequiredAgentRecipeFromCheckpoint(checkpoint)
@@ -217,7 +242,7 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsInvalidLateInput(t *testing.T
 	t.Parallel()
 	index := NewPromptIndex(registryStub{})
 	payload := []byte(`{
-		"descriptor":{"id":"late_required_agent","digest":"sha256:test"},
+		"descriptor":{"id":"late_required_agent","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		"input":{"user_query":"hello"},
 		"late_input":{},
 		"late_bound":true
@@ -292,4 +317,8 @@ func TestPromptCatalog_NewRecipeRequiresRegistry(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "recipe requires registry")
+}
+
+func (registryStub) CaptureManifest(context.Context, string) (*prompty.ManifestSnapshot, error) {
+	return nil, errors.New("test registry does not materialize")
 }

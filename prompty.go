@@ -535,10 +535,10 @@ type Registry interface {
 	Plan(ctx context.Context, id string, input RegistryPlanInput) (*RenderPlan, error)
 }
 
-// ManifestCheckpointRegistry supplies registry Plan, raw bytes, and manifest checkpoint recommend/verify.
+// ManifestCheckpointRegistry supplies captured materialization and checkpoint identities.
 type ManifestCheckpointRegistry interface {
+	ManifestSnapshotRegistry
 	Registry
-	ManifestBytesReader
 	RecommendManifestDescriptor(ctx context.Context, id string) (ManifestDescriptor, error)
 	VerifyManifestDescriptor(ctx context.Context, desc ManifestDescriptor) error
 }

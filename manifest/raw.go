@@ -4,6 +4,7 @@ import "github.com/skosovsky/prompty"
 
 // Unmarshaler parses raw manifest bytes into RawManifest.
 // Implementations (e.g. parser/yaml) may use YAML, JSON, etc.
+// Input is read-only. Output belongs to the caller; implementations must not retain it.
 type Unmarshaler interface {
 	Unmarshal(in []byte, out any) error
 }

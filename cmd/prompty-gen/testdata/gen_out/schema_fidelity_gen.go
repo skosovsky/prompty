@@ -153,11 +153,11 @@ func (r SchemaFidelityRecipe) BindLate(input SchemaFidelityLateInput) (SchemaFid
 	return SchemaFidelityRecipe{inner: inner}, nil
 }
 
-func (r SchemaFidelityRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r SchemaFidelityRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r SchemaFidelityRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r SchemaFidelityRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

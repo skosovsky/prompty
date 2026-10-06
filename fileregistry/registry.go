@@ -37,14 +37,14 @@ type Registry struct {
 	partialsPattern string // e.g. "_partials/*.tmpl"; resolved relative to manifest dir when loading
 	parser          manifest.Unmarshaler
 	mu              sync.RWMutex
-	cache           map[string]*prompty.ChatPromptTemplate
+	cache           map[string]*prompty.ManifestSnapshot
 }
 
 // New creates a Registry that reads manifests from dir. Parser is required (use WithParser).
 func New(dir string, opts ...Option) (*Registry, error) {
 	r := &Registry{
 		dir:   dir,
-		cache: make(map[string]*prompty.ChatPromptTemplate),
+		cache: make(map[string]*prompty.ManifestSnapshot),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -166,138 +166,79 @@ func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.Templ
 	return r.ResolveManifest(ctx, id)
 }
 
-// loadTemplate returns a template by id. Lazy-loads and caches. After load, enriches tpl.Metadata.Version from Stat if empty.
-func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
-	if err := prompty.ValidateID(id); err != nil {
+// CaptureManifest returns the immutable cached generation until Reload.
+func (r *Registry) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r.mu.RLock()
-	tpl, ok := r.cache[id]
-	r.mu.RUnlock()
-	if ok {
-		return prompty.CloneTemplate(tpl), nil
+	if err := prompty.ValidateID(id); err != nil {
+		return nil, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tpl, ok = r.cache[id]
-	if ok {
-		return prompty.CloneTemplate(tpl), nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if snapshot, ok := r.cache[id]; ok {
+		return snapshot, nil
 	}
-	parseFile := func(path string) (*prompty.ChatPromptTemplate, error) {
-		opts := r.parseOptionsForPath(ctx, path, prompty.ComposeValues{})
-		return manifest.ParseFile(path, r.parser, opts...)
-	}
-	for _, path := range idToPaths(r.dir, id, r.env) {
-		tpl, err := parseFile(path)
-		if err == nil {
-			info, _ := r.Stat(ctx, id)
-			if info.Version != "" && tpl.Metadata.Version == "" {
-				tpl.Metadata.Version = info.Version
-			}
-			tpl.Metadata.Environment = "" // id-based; env expressed via id (e.g. doctor.prod)
-			if !r.pathUsesCompose(path) {
-				r.cache[id] = tpl
-			}
-			return prompty.CloneTemplate(tpl), nil
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
+	partials := make(map[string][]byte)
+	if r.partialsPattern != "" {
+		pattern := filepath.Join(r.dir, filepath.Dir(filepath.FromSlash(id)), r.partialsPattern)
+		names, err := filepath.Glob(pattern)
+		if err != nil {
 			return nil, err
 		}
+		if len(names) == 0 {
+			return nil, fmt.Errorf("%w: no matching partials %q", prompty.ErrTemplateParse, r.partialsPattern)
+		}
+		for _, name := range names {
+			data, err := os.ReadFile(name) // #nosec G304 -- host-configured partial sources
+			if err != nil {
+				return nil, err
+			}
+			relative, err := filepath.Rel(r.dir, name)
+			if err != nil {
+				return nil, err
+			}
+			partials[filepath.ToSlash(relative)] = data
+		}
 	}
-	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
-}
-
-// Plan returns a deferred render plan for the selected prompt id.
-func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.templateForPlan(ctx, id, input.ComposeValues())
+	snapshot, err := manifest.CaptureSources(
+		ctx,
+		id,
+		r,
+		r.parser,
+		partials,
+		manifest.SourceResolutionConfig(r.env, r.partialsPattern, "relative-manifest.v1", "", ""),
+	)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromPlanInput(tpl, input)
+	r.cache[id] = snapshot
+	return snapshot, nil
 }
 
-func (r *Registry) pathUsesCompose(path string) bool {
-	data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
+// Plan builds exclusively from the captured generation.
+func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
+	snapshot, err := r.CaptureManifest(ctx, id)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	uses, peekErr := manifest.PeekComposeOrError(data, r.parser)
-	if peekErr != nil {
-		return true // skip cache when peek is ambiguous
-	}
-	return uses
+	return snapshot.Plan(ctx, input)
 }
 
-// ManifestUsesComposeE reports whether raw manifest bytes declare imports or layers.
+// ManifestUsesComposeE inspects current raw bytes for metadata callers.
 func (r *Registry) ManifestUsesComposeE(ctx context.Context, id string) (bool, error) {
 	data, err := r.ReadManifestBytes(ctx, id)
 	if err != nil {
-		if errors.Is(err, prompty.ErrTemplateNotFound) {
-			return false, nil
-		}
 		return false, err
 	}
-	uses, peekErr := manifest.PeekComposeOrError(data, r.parser)
-	if peekErr != nil {
-		return false, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+	uses, err := manifest.PeekComposeOrError(data, r.parser)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
 	}
 	return uses, nil
-}
-
-func (r *Registry) parseOptionsForPath(
-	ctx context.Context,
-	path string,
-	values prompty.ComposeValues,
-) []manifest.ParseOption {
-	var opts []manifest.ParseOption
-	if r.partialsPattern != "" {
-		glob := filepath.Join(filepath.Dir(path), r.partialsPattern)
-		opts = append(opts, manifest.WithPartialsGlob(glob))
-	}
-	data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
-	if err == nil {
-		usesCompose, peekErr := manifest.PeekComposeOrError(data, r.parser)
-		if peekErr == nil && usesCompose {
-			opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
-				Ctx:                         ctx,
-				Values:                      values,
-				Loader:                      r,
-				AllowMissingConditionValues: false,
-			}))
-		}
-	}
-	return opts
-}
-
-func (r *Registry) templateForPlan(
-	ctx context.Context,
-	id string,
-	values prompty.ComposeValues,
-) (*prompty.ChatPromptTemplate, error) {
-	if err := prompty.ValidateID(id); err != nil {
-		return nil, err
-	}
-	for _, path := range idToPaths(r.dir, id, r.env) {
-		data, err := os.ReadFile(path) // #nosec G304 -- path from idToPaths
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
-		}
-		usesCompose, peekErr := manifest.PeekComposeFieldsE(data, r.parser)
-		if peekErr != nil {
-			return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
-		}
-		if usesCompose {
-			return manifest.Parse(data, r.parser, r.parseOptionsForPath(ctx, path, values)...)
-		}
-		break
-	}
-	return r.loadTemplate(ctx, id)
 }
 
 // baseIDFromPath converts a manifest path to base ID (slash format, no env suffix).
@@ -398,21 +339,21 @@ func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, err
 	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 }
 
-// RecommendManifestDescriptor selects single-file or compose-closure checkpoint descriptor.
+// RecommendManifestDescriptor returns the identity selected by capture policy.
 func (r *Registry) RecommendManifestDescriptor(ctx context.Context, id string) (prompty.ManifestDescriptor, error) {
-	return manifest.CheckpointRecommend(ctx, id, r, r.parser)
+	return manifest.CheckpointRecommend(ctx, id, r)
 }
 
-// VerifyManifestDescriptor verifies a checkpoint descriptor against current manifest bytes.
+// VerifyManifestDescriptor verifies against the generation selected by capture policy.
 func (r *Registry) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
-	return manifest.CheckpointVerify(ctx, desc, r, r.parser)
+	return manifest.CheckpointVerify(ctx, desc, r)
 }
 
 // Reload clears the cache (for hot-reload in development).
 func (r *Registry) Reload() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.cache = make(map[string]*prompty.ChatPromptTemplate)
+	r.cache = make(map[string]*prompty.ManifestSnapshot)
 }
 
 var _ prompty.ManifestCheckpointRegistry = (*Registry)(nil)

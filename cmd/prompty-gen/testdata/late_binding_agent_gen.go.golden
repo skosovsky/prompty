@@ -133,11 +133,11 @@ func (r LateBindingAgentRecipe) BindLate(input LateBindingAgentLateInput) (LateB
 	return LateBindingAgentRecipe{inner: inner}, nil
 }
 
-func (r LateBindingAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r LateBindingAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

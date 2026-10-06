@@ -519,3 +519,7 @@ func TestCanonicalSchemaSourceRetainsLocalErrorLocations(t *testing.T) {
 	require.ErrorAs(t, err, &failure)
 	require.Equal(t, []SchemaSourceLocation{{Resource: "", Pointer: "/properties/n/$ref"}}, failure.Locations)
 }
+
+func (r *exactRuntimeRegistry) CaptureManifest(ctx context.Context, id string) (*ManifestSnapshot, error) {
+	return captureRecipeFixture(ctx, id, r)
+}

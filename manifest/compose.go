@@ -106,8 +106,8 @@ func PeekComposeFieldsE(data []byte, u Unmarshaler) (bool, error) {
 	if len(data) == 0 || u == nil {
 		return false, nil
 	}
-	var raw RawManifest
-	if err := u.Unmarshal(data, &raw); err != nil {
+	raw, err := parseCapturedManifest(data, u)
+	if err != nil {
 		return false, fmt.Errorf("peek compose fields: %w", err)
 	}
 	return len(raw.Imports) > 0 || len(raw.Layers) > 0, nil

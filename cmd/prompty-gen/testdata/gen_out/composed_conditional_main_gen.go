@@ -171,11 +171,11 @@ func (r ComposedConditionalMainRecipe) WithComposeContext(ctx ComposedConditiona
 	return ComposedConditionalMainRecipe{inner: inner}, nil
 }
 
-func (r ComposedConditionalMainRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r ComposedConditionalMainRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r ComposedConditionalMainRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r ComposedConditionalMainRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 

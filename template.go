@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -43,7 +44,8 @@ type ChatPromptTemplate struct {
 	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter
 	parsedTemplates  []parsedMessage
-	partialsGlob     string   // e.g. "_partials/*.tmpl" for ParseGlob
+	partialsGlob     string // e.g. "_partials/*.tmpl" for ParseGlob
+	partialSources   map[string]string
 	partialsFS       struct { // for ParseFS (e.g. embed)
 		fsys    fs.FS
 		pattern string
@@ -125,6 +127,11 @@ func NewChatPromptTemplate(
 				tpl.partialsFS.pattern,
 				err,
 			)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(tpl.partialSources)) {
+		if _, err = root.New(filepath.Base(name)).Parse(tpl.partialSources[name]); err != nil {
+			return nil, fmt.Errorf("%w: captured partial %q: %w", ErrTemplateParse, name, err)
 		}
 	}
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
@@ -249,6 +256,7 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		tokenCounter:    c.tokenCounter,
 		parsedTemplates: c.parsedTemplates,
 		partialsGlob:    c.partialsGlob,
+		partialSources:  maps.Clone(c.partialSources),
 		partialsFS:      c.partialsFS,
 	}
 	if c.ResponseFormat != nil {

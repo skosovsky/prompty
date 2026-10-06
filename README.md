@@ -101,11 +101,11 @@ Use `prompty.SimpleChat(...)`, templates or your own `PromptExecution` builder w
 
 - **PromptRecipe / ManifestDescriptor** — JSON-safe application checkpoint surface. A recipe stores typed input, optional late input, runtime compose values, and `{ID, Digest}`; restore it with `PromptRecipeFromCheckpoint` / generated `NewXRecipeFromCheckpoint`, then execute against a `ManifestCheckpointRegistry`.
 - **Generated PromptCatalog / PromptIndex** — typed recipe constructors and a static id index for known prompts. Use generated recipe APIs as the primary runtime boundary; use `PromptIndex.NewRecipeFromJSON` only for explicit serialized payload dispatch.
-- **Registry** — supplies manifests from files, embed, or remote and verifies checkpoint descriptors. Generated recipes call it to verify descriptor digest and rebuild the render plan at execution time. Direct `Registry.Plan(ctx, id, input)` is a low-level API for advanced integrations.
+- **Registry** — supplies manifests from files, embed, or remote and verifies checkpoint descriptors. Generated recipes capture one source snapshot, verify its identity, and build the plan from the same bytes. Direct `Registry.Plan(ctx, id, input)` is a low-level API for advanced integrations.
 - **Adapter** — maps `PromptExecution` to a provider request and parses a full `Response`. Checked path: `adapter.NewClient(providerAdapter)` → `client.Execute(ctx, exec)`. Low-level `Translate` → SDK `Execute` → `ParseResponse` does not provide checked profile/schema guarantees. Streaming uses `client.ExecuteStream(ctx, exec, mode)` and a lazy, single-use handle; native adapters implement `StreamerAdapter.StreamEvents`. Runtime metadata and token budgets live behind `adapter.NewRuntimeClient(providerAdapter)`; `adapter.EstimateTokens(estimator, exec)` returns `ErrNoTokenEstimator` without a provider estimator.
 - **Templating** — `ChatPromptTemplate` is built from message templates and optional tools. Generated recipes materialize it into `PromptExecution` at execution time. Template context is explicit: `{{ .Input.<field> }}` and `{{ .LateVars.<field> }}`. Registries load manifests (JSON or YAML), expand declarative `imports`/`layers`, and support `WithPartials` for shared `{{ template "name" }}` partials. Template functions (funcmaps) include `truncate_chars`, `truncate_tokens`, `render_tools_as_xml`, `render_tools_as_json`, `escapeXML`, and `randomHex`.
 
-Pipeline: **generated recipe** → **checkpoint/restore** → **VerifyManifestDescriptor** → **registry-backed materialization** → **PromptExecution** → **Adapter** → provider API.
+Pipeline: **generated recipe** → **checkpoint/restore** → **captured source verification + materialization** → **PromptExecution** → **Adapter** → provider API.
 
 ## Features
 
@@ -122,7 +122,7 @@ Pipeline: **generated recipe** → **checkpoint/restore** → **VerifyManifestDe
 | Package                                       | Description                                                                                                                                                                 |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `github.com/skosovsky/prompty/fileregistry`   | Load manifests (JSON or YAML via WithParser) from a directory; lazy load with cache; `Reload()` to clear cache; `WithPartials(relativePattern)` for `{{ template "name" }}` |
-| `github.com/skosovsky/prompty/embedregistry`  | Load from `embed.FS` at build time; eager load; no mutex; `WithPartials(pattern)` for shared partials                                                                       |
+| `github.com/skosovsky/prompty/embedregistry`  | Load from `embed.FS` at build time; source bytes sealed at construction; `WithPartials(pattern)` for shared partials                                                                       |
 | `github.com/skosovsky/prompty/remoteregistry` | Fetch via `Fetcher` (HTTP or Git); explicit cache via `WithCache`; `Close()` for resource cleanup                                                                           |
 
 All three registries also implement optional `prompty.Lister` (`List(ctx)`), `prompty.Statter` (`Stat(ctx, id)`), and `prompty.ManifestResolver` (`ResolveManifest(ctx, id)` — metadata only, no template AST). When you have a variable of type `prompty.Registry` and need list/stat/descriptor APIs, use a type assertion.
@@ -238,7 +238,7 @@ This change is a clear break: old iterator/IsFinished semantics, adjacency-based
 
 Regression gates: `make lint` and `make test` across all modules, including race checks and generator fixtures.
 
-**Checkpoint ops:** compose manifests must list only resolvable import ids for `RecommendManifestDescriptor` / `VerifyManifestDescriptor` (all declared imports, including inactive conditional branches). **Compose caching:** `ManifestUsesComposeE` returns an error on corrupt bytes; cached registries bypass template cache conservatively on error.
+**Checkpoint ops:** compose manifests must list only resolvable import ids for `RecommendManifestDescriptor` / `VerifyManifestDescriptor` (all declared imports, including inactive conditional branches). **Source caching:** file and TTL registries retain whole immutable source bundles, including composition and partials. Reload/expiry/eviction selects a new generation; cache hits do not read current source. See the [source snapshot contract](docs/source-snapshot-contract.md).
 
 ## Recipe-First Runtime
 

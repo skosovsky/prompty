@@ -41,7 +41,7 @@ type ToolScope struct {
 // BindRuntime verifies a checkpoint, applies runtime overlay/tool scope, and returns a materializable plan.
 func BindRuntime(
 	ctx context.Context,
-	registry ManifestCheckpointRegistry,
+	registry ManifestSnapshotRegistry,
 	checkpoint RuntimeRecipeCheckpoint,
 	overlay RuntimeOverlay,
 	scope ToolScope,
@@ -50,9 +50,6 @@ func BindRuntime(
 		return nil, errors.New("runtime binding: registry is required")
 	}
 	if err := validateRuntimeCheckpoint(checkpoint); err != nil {
-		return nil, err
-	}
-	if err := registry.VerifyManifestDescriptor(ctx, checkpoint.Descriptor); err != nil {
 		return nil, err
 	}
 	plan, err := runtimePlanFromCheckpoint(ctx, registry, checkpoint, overlay)
@@ -68,7 +65,7 @@ func BindRuntime(
 
 func runtimePlanFromCheckpoint(
 	ctx context.Context,
-	registry ManifestCheckpointRegistry,
+	registry ManifestSnapshotRegistry,
 	checkpoint RuntimeRecipeCheckpoint,
 	overlay RuntimeOverlay,
 ) (*RenderPlan, error) {
@@ -91,7 +88,7 @@ func runtimePlanFromCheckpoint(
 	if overlay.Values.IsSet() {
 		input = planInputWithComposeValues(input, overlay.Values)
 	}
-	plan, err := registry.Plan(ctx, checkpoint.Descriptor.ID, input)
+	plan, err := VerifiedManifestPlan(ctx, registry, checkpoint.Descriptor, input)
 	if err != nil {
 		return nil, fmt.Errorf("runtime binding: build render plan: %w", err)
 	}

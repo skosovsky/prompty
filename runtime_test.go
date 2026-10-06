@@ -12,10 +12,13 @@ import (
 func TestRuntimeRecipeCheckpoint_JSONSafeDTO(t *testing.T) {
 	t.Parallel()
 	checkpoint := RuntimeRecipeCheckpoint{
-		Descriptor: ManifestDescriptor{ID: "agent", Digest: "digest"},
-		Input:      MustJSONDocumentFromMap(map[string]any{"query": "hello"}),
-		LateInput:  MustJSONDocumentFromMap(map[string]any{"suffix": "world"}),
-		State:      RuntimeRecipeStateLateBound,
+		Descriptor: ManifestDescriptor{
+			ID:     "agent",
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Input:     MustJSONDocumentFromMap(map[string]any{"query": "hello"}),
+		LateInput: MustJSONDocumentFromMap(map[string]any{"suffix": "world"}),
+		State:     RuntimeRecipeStateLateBound,
 	}
 
 	data, err := json.Marshal(checkpoint)
@@ -126,7 +129,7 @@ func TestBindRuntime_EmptyToolScopeFailsClosedForRequiredTools(t *testing.T) {
 	_, err = plan.Execute(ctx)
 
 	require.ErrorIs(t, err, ErrToolScope)
-	assert.Contains(t, err.Error(), "agent@digest")
+	assert.Contains(t, err.Error(), "agent@"+reg.desc.Digest)
 	assert.Contains(t, err.Error(), "lookup")
 }
 
@@ -183,4 +186,12 @@ func (r *runtimeRequiredToolRegistry) Plan(
 	}, WithMetadata(PromptMetadata{ID: id}), WithInputSchema(schema), WithRequiredTools([]string{"lookup"}))
 	require.NoError(r.t, err)
 	return NewRenderPlanFromPlanInput(tpl, input)
+}
+
+func (r *runtimeRequiredLateRegistry) CaptureManifest(ctx context.Context, id string) (*ManifestSnapshot, error) {
+	return captureRecipeFixture(ctx, id, r)
+}
+
+func (r *runtimeRequiredToolRegistry) CaptureManifest(ctx context.Context, id string) (*ManifestSnapshot, error) {
+	return captureRecipeFixture(ctx, id, r)
 }

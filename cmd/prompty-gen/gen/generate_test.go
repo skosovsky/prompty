@@ -1363,9 +1363,12 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 
 func sharedTestSpec(id string) *PromptSpec {
 	return &PromptSpec{
-		ID:         id,
-		Metadata:   prompty.PromptMetadata{ID: id},
-		Descriptor: prompty.ManifestDescriptor{ID: id, Digest: "sha256:test-" + id},
+		ID:       id,
+		Metadata: prompty.PromptMetadata{ID: id},
+		Descriptor: prompty.ManifestDescriptor{
+			ID:     id,
+			Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
 	}
 }
 

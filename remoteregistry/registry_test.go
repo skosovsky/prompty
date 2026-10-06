@@ -84,11 +84,11 @@ func TestRegistry_Plan_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
-	assert.Equal(t, 3, m.called)
+	assert.Equal(t, 1, m.called)
 	tpl2, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	assert.Equal(t, "support_agent", tpl2.Metadata.ID)
-	assert.Equal(t, 4, m.called, "cache hit still re-probes compose on each Plan")
+	assert.Equal(t, 1, m.called, "cache hit reuses captured sources")
 }
 
 func TestRegistry_Plan_EnvSpecific(t *testing.T) {
@@ -202,14 +202,14 @@ func TestRegistry_Plan_TTLExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
-	assert.Equal(t, 3, called, "compose probe + plan fetch + post-plan compose probe")
+	assert.Equal(t, 1, called, "one captured source fetch")
 
 	time.Sleep(60 * time.Millisecond)
 	tpl2, err := templateFromPlan(ctx, reg, "ttl_test")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 6, called, "second load repeats compose probe + plan fetch + post-plan compose probe")
+	assert.Equal(t, 2, called, "second load repeats one captured source fetch")
 }
 
 func TestRegistry_Plan_InfiniteTTL(t *testing.T) {
@@ -230,14 +230,14 @@ func TestRegistry_Plan_InfiniteTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl.Messages[0].Content[0].Text)
-	assert.Equal(t, 3, called)
+	assert.Equal(t, 1, called)
 
 	time.Sleep(20 * time.Millisecond)
 	tpl2, err := templateFromPlan(ctx, reg, "infinite")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 4, called, "TTL<=0: cache hit still re-probes compose")
+	assert.Equal(t, 1, called, "TTL<=0 retains captured generation")
 }
 
 func TestRegistry_Plan_NegativeTTLNeverExpires(t *testing.T) {
@@ -263,7 +263,7 @@ func TestRegistry_Plan_NegativeTTLNeverExpires(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 4, called, "TTL<0: cache hit still re-probes compose")
+	assert.Equal(t, 1, called, "TTL<0 retains captured generation")
 }
 
 func TestRegistry_Plan_CacheSafety(t *testing.T) {
@@ -357,7 +357,7 @@ func TestCachedRegistry_Plan_ConcurrentDedupe(t *testing.T) {
 	for range workers {
 		require.NoError(t, <-errs)
 	}
-	assert.GreaterOrEqual(t, m.called, 2, "at least one shared plan fetch after compose probes")
+	assert.Equal(t, 1, m.called, "one shared capture")
 	assert.LessOrEqual(t, m.called, workers+5, "inflight dedupe limits plan fetches")
 }
 
@@ -398,7 +398,7 @@ func TestCachedRegistry_Plan_CallerCancellationIsolation(t *testing.T) {
 	err = <-firstErr
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.GreaterOrEqual(t, m.called, 2, "compose probes plus one shared plan fetch")
+	assert.Equal(t, 1, m.called, "one shared capture")
 }
 
 func TestCachedRegistry_Plan_CancelsSharedFetchWhenAllWaitersCancel(t *testing.T) {
@@ -495,11 +495,11 @@ func TestRegistry_Evict(t *testing.T) {
 	ctx := context.Background()
 	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
-	assert.Equal(t, 3, m.called)
+	assert.Equal(t, 1, m.called)
 	reg.Evict("evict_me")
 	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
-	assert.Equal(t, 6, m.called, "after Evict, next Plan should fetch again")
+	assert.Equal(t, 2, m.called, "after Evict, next Plan should fetch again")
 }
 
 func TestRegistry_EvictAll(t *testing.T) {
@@ -515,7 +515,7 @@ func TestRegistry_EvictAll(t *testing.T) {
 	reg.EvictAll()
 	_, err = templateFromPlan(ctx, reg, "all")
 	require.NoError(t, err)
-	assert.Equal(t, 6, m.called)
+	assert.Equal(t, 2, m.called)
 }
 
 func TestRegistry_List_ReturnsNilWhenNoLister(t *testing.T) {

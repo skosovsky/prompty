@@ -17,6 +17,7 @@ type renderContext struct {
 
 // RenderPlan is the deferred rendering contract for prompt execution.
 type RenderPlan struct {
+	sourceDescriptor    ManifestDescriptor
 	template            *ChatPromptTemplate
 	typedInput          any
 	lateVars            map[string]any
@@ -27,6 +28,7 @@ type RenderPlan struct {
 
 func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 	return &RenderPlan{
+		sourceDescriptor:    ManifestDescriptor{ID: "", Digest: ""},
 		template:            CloneTemplate(tpl),
 		typedInput:          typedInput,
 		lateVars:            map[string]any{},
@@ -267,6 +269,7 @@ func (p *RenderPlan) clone() *RenderPlan {
 		return nil
 	}
 	out := &RenderPlan{
+		sourceDescriptor:    p.sourceDescriptor,
 		template:            CloneTemplate(p.template),
 		typedInput:          p.typedInput,
 		lateVars:            cloneMapAny(p.lateVars),

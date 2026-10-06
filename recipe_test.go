@@ -95,7 +95,7 @@ func TestPromptRecipeCheckpoint_UnmarshalRejectsLateInputWhenNotMarkedBound(t *t
 	t.Parallel()
 	var checkpoint PromptRecipeCheckpoint[recipeInput, recipeLateInput]
 	payload := []byte(`{
-		"descriptor":{"id":"agent","digest":"digest"},
+		"descriptor":{"id":"agent","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		"input":{"query":"hello"},
 		"late_input":{"suffix":"world"},
 		"late_bound":false
@@ -111,7 +111,7 @@ func TestPromptRecipeCheckpoint_UnmarshalRejectsUnknownFields(t *testing.T) {
 	t.Parallel()
 	var checkpoint PromptRecipeCheckpoint[recipeInput, recipeLateInput]
 	payload := []byte(`{
-		"descriptor":{"id":"agent","digest":"digest"},
+		"descriptor":{"id":"agent","digest":"source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		"input":{"query":"hello","unknown":true}
 	}`)
 
@@ -177,7 +177,10 @@ func TestPromptRecipe_Execute_VerifiesDigestBeforePlanning(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	reg := newRecipeTestRegistry(t)
-	badDesc := ManifestDescriptor{ID: reg.desc.ID, Digest: "stale"}
+	badDesc := ManifestDescriptor{
+		ID:     reg.desc.ID,
+		Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}
 	recipe, err := NewPromptRecipeNoLate[recipeInput](badDesc, recipeInput{Query: "hello"})
 	require.NoError(t, err)
 
@@ -279,10 +282,11 @@ type recipeTestRegistry struct {
 
 func newRecipeTestRegistry(t *testing.T) *recipeTestRegistry {
 	t.Helper()
-	return &recipeTestRegistry{
-		t:    t,
-		desc: ManifestDescriptor{ID: "agent", Digest: "digest"},
-	}
+	r := &recipeTestRegistry{t: t}
+	snapshot, err := captureRecipeFixture(context.Background(), "agent", r)
+	require.NoError(t, err)
+	r.desc = snapshot.Descriptor()
+	return r
 }
 
 func (r *recipeTestRegistry) Plan(
@@ -327,4 +331,18 @@ func (r *recipeTestRegistry) VerifyManifestDescriptor(
 		return ErrManifestDigestMismatch
 	}
 	return nil
+}
+
+func captureRecipeFixture(_ context.Context, id string, registry Registry) (*ManifestSnapshot, error) {
+	return NewManifestSnapshot(id, SourceBundle{Sources: map[string][]byte{"fixture": []byte("recipe-fixture.v1")}},
+		func(ctx context.Context, _ SourceBundle, input RegistryPlanInput) (*ChatPromptTemplate, error) {
+			plan, err := registry.Plan(ctx, id, input)
+			if err != nil {
+				return nil, err
+			}
+			return plan.Template(), nil
+		})
+}
+func (r *recipeTestRegistry) CaptureManifest(ctx context.Context, id string) (*ManifestSnapshot, error) {
+	return captureRecipeFixture(ctx, id, r)
 }

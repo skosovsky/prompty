@@ -279,7 +279,7 @@ func (r *composeTamperReader) VerifyManifestDescriptor(
 	ctx context.Context,
 	desc prompty.ManifestDescriptor,
 ) error {
-	return manifest.CheckpointVerify(ctx, desc, r, yaml.New())
+	return manifest.CheckpointVerify(ctx, desc, r)
 }
 
 func TestRegistry_Checkpoint_ReadManifestDescriptorRePlan(t *testing.T) {
@@ -367,4 +367,8 @@ func TestRegistry_ComposedCachePolicy_PlanExecute(t *testing.T) {
 func tamperedComposedChildManifestBytes() []byte {
 	return []byte(`{"id":"composed_child","inputs":{"clinic_name":{"type":"string"}},` +
 		`"layers":[{"id":"child_rules","role":"system","content":"TAMPERED"}]}`)
+}
+
+func (r *composeTamperReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, r, yaml.New(), nil, map[string]string{"resolution": "test-tamper.v1"})
 }

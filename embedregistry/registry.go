@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/skosovsky/prompty"
@@ -24,19 +26,19 @@ var (
 	_ prompty.PromptDescriber        = (*Registry)(nil)
 )
 
-// Registry loads all manifests from an [fs.FS] at construction (eager). No mutex. Holds parsed templates by id.
+// Registry seals source bytes from an [fs.FS] at construction and caches immutable snapshots.
 // WithEnvironment(env): Plan resolves only id.env (e.g. internal/router.prod), not base id.
 // Parser is required; use WithParser when creating the registry.
 type Registry struct {
-	fsys            fs.FS
-	cache           map[string]*prompty.ChatPromptTemplate
-	ids             []string // ordered list of ids for List()
+	sources         map[string][]byte
+	cache           map[string]*prompty.ManifestSnapshot
+	mu              sync.Mutex
+	ids             []string
 	root            string
-	env             string // e.g. "prod"; Plan tries id.env first
-	partialsPattern string // e.g. "partials/*.tmpl"; relative to root
+	env             string
+	partialsPattern string
 	parser          manifest.Unmarshaler
-	loader          manifest.ManifestLoader
-	version         string // optional build/git version from WithVersion
+	version         string
 }
 
 // baseIDFromPath converts a manifest path (slash, no ext) to base ID: drops env suffix from basename.
@@ -67,85 +69,82 @@ func underPartialsDir(relPath, partialsPattern string) bool {
 }
 
 // New walks fsys, parses every .yaml/.yml/.json under root, and returns a Registry.
-// Cache keys are full id (agent, agent.prod); List returns base IDs only (agent).
+// List returns base IDs; snapshot capture applies strict environment resolution.
 // Parser is required (use WithParser).
 func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
-	r := &Registry{
-		fsys:  fsys,
-		cache: make(map[string]*prompty.ChatPromptTemplate),
-		root:  root,
-	}
+	r := &Registry{root: root, sources: make(map[string][]byte), cache: make(map[string]*prompty.ManifestSnapshot)}
 	for _, opt := range opts {
 		opt(r)
 	}
 	if r.parser == nil {
 		return nil, prompty.ErrNoParser
 	}
-	byID, indexErr := indexEmbeddedManifests(fsys, root, r.parser, r.partialsPattern)
-	if indexErr != nil {
-		return nil, indexErr
-	}
-	r.loader = &manifest.MemoryLoader{ByID: byID}
-
-	seenID := make(map[string]bool)
-	seenBaseID := make(map[string]bool)
-	composeOpt := manifest.WithCompose(manifest.ComposeContext{
-		Ctx:                         context.Background(),
-		Values:                      prompty.ComposeValues{},
-		Loader:                      r.loader,
-		AllowMissingConditionValues: true,
-	})
-	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
+	seen := make(map[string]bool)
+	err := fs.WalkDir(fsys, root, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() ||
-			(!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
+		if entry.IsDir() {
 			return nil
 		}
-		relPath := path
-		if root != "" && strings.HasPrefix(path, root+"/") {
-			relPath = strings.TrimPrefix(path, root+"/")
-		} else if root != "" && path == root {
-			return nil
+		relative := strings.TrimPrefix(name, strings.TrimSuffix(root, "/")+"/")
+		if root == "." {
+			relative = name
 		}
-		if underPartialsDir(relPath, r.partialsPattern) {
-			return nil
-		}
-		var tpl *prompty.ChatPromptTemplate
-		var opts []manifest.ParseOption
+		isManifest := !underPartialsDir(relative, r.partialsPattern) &&
+			(strings.HasSuffix(relative, ".yaml") || strings.HasSuffix(relative, ".yml") || strings.HasSuffix(relative, ".json"))
+		isPartial := false
 		if r.partialsPattern != "" {
-			partialsPath := filepath.Join(r.root, r.partialsPattern)
-			opts = append(opts, manifest.WithPartialsFS(fsys, partialsPath))
+			var matchErr error
+			isPartial, matchErr = filepath.Match(filepath.Join(root, r.partialsPattern), name)
+			if matchErr != nil {
+				return matchErr
+			}
 		}
-		if needsCompose(byID, relPath) {
-			opts = append(opts, composeOpt)
+		if !isManifest && !isPartial {
+			return nil
 		}
-		tpl, err = manifest.ParseFS(fsys, path, r.parser, opts...)
+		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return err
 		}
-		slashPath := filepath.ToSlash(relPath)
-		id := slashPath
+		r.sources[name] = append([]byte(nil), data...)
+		if !isManifest {
+			return nil
+		}
 		for _, ext := range []string{".yaml", ".yml", ".json"} {
-			id = strings.TrimSuffix(id, ext)
-		}
-		tpl.Metadata.Environment = ""
-		if !needsCompose(byID, relPath) {
-			r.cache[id] = tpl
-		}
-		if !seenID[id] {
-			seenID[id] = true
-			baseID := baseIDFromPath(id)
-			if !seenBaseID[baseID] {
-				seenBaseID[baseID] = true
-				r.ids = append(r.ids, baseID)
+			if strings.HasSuffix(relative, ext) {
+				var raw manifest.RawManifest
+				if err := r.parser.Unmarshal(append([]byte(nil), data...), &raw); err != nil {
+					return fmt.Errorf("%s: %w", name, err)
+				}
+				base := baseIDFromPath(strings.TrimSuffix(relative, ext))
+				if !seen[base] {
+					seen[base] = true
+					r.ids = append(r.ids, base)
+				}
+				break
 			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	slices.Sort(r.ids)
+	// Validate available selected manifests eagerly; missing environment variants remain unavailable.
+	for _, id := range r.ids {
+		if _, err := r.readManifestBytes(context.Background(), id); errors.Is(err, prompty.ErrTemplateNotFound) {
+			continue
+		}
+		snapshot, err := r.CaptureManifest(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
+		// Conservative descriptor parsing validates composition without demanding runtime conditions.
+		if err := manifest.ValidateCapturedSources(context.Background(), id, snapshot.Sources(), r.parser); err != nil {
+			return nil, err
+		}
 	}
 	return r, nil
 }
@@ -181,27 +180,6 @@ func candidateIDs(id, env string) []string {
 	return []string{id}
 }
 
-// loadTemplate returns a template by id. O(1) map lookup. With env, only id.env is resolved. Enriches tpl.Metadata.Version from Stat if empty.
-func (r *Registry) loadTemplate(ctx context.Context, id string) (*prompty.ChatPromptTemplate, error) {
-	if err := prompty.ValidateID(id); err != nil {
-		return nil, err
-	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	for _, cid := range candidateIDs(id, r.env) {
-		if tpl, ok := r.cache[cid]; ok {
-			clone := prompty.CloneTemplate(tpl)
-			info, _ := r.Stat(ctx, cid)
-			if info.Version != "" && clone.Metadata.Version == "" {
-				clone.Metadata.Version = info.Version
-			}
-			return clone, nil
-		}
-	}
-	return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
-}
-
 func (r *Registry) readManifestBytes(ctx context.Context, id string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -213,12 +191,8 @@ func (r *Registry) readManifestBytes(ctx context.Context, id string) ([]byte, er
 	for _, cid := range candidateIDs(id, r.env) {
 		for _, ext := range exts {
 			path := filepath.Join(r.root, filepath.FromSlash(cid+ext))
-			data, err := fs.ReadFile(r.fsys, path)
-			if err == nil {
-				return data, nil
-			}
-			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
+			if data, ok := r.sources[path]; ok {
+				return append([]byte(nil), data...), nil
 			}
 		}
 	}
@@ -237,7 +211,7 @@ func (r *Registry) LoadByID(ctx context.Context, id string) (*manifest.RawManife
 		return nil, err
 	}
 	var raw manifest.RawManifest
-	if unmarshalErr := r.parser.Unmarshal(data, &raw); unmarshalErr != nil {
+	if unmarshalErr := r.parser.Unmarshal(append([]byte(nil), data...), &raw); unmarshalErr != nil {
 		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, unmarshalErr)
 	}
 	return &raw, nil
@@ -273,110 +247,60 @@ func (r *Registry) DescribePrompt(ctx context.Context, id string) (prompty.Templ
 	return r.ResolveManifest(ctx, id)
 }
 
-// Plan returns a deferred render plan for the selected prompt id.
-func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	tpl, err := r.templateForPlan(ctx, id, input.ComposeValues())
-	if err != nil {
+// CaptureManifest returns a snapshot from bytes sealed at construction.
+func (r *Registry) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromPlanInput(tpl, input)
-}
-
-func indexEmbeddedManifests(
-	fsys fs.FS,
-	root string,
-	parser manifest.Unmarshaler,
-	partialsPattern string,
-) (map[string]*manifest.RawManifest, error) {
-	byID := make(map[string]*manifest.RawManifest)
-	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() ||
-			(!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
-			return nil
-		}
-		relPath := path
-		if root != "" && strings.HasPrefix(path, root+"/") {
-			relPath = strings.TrimPrefix(path, root+"/")
-		} else if root != "" && path == root {
-			return nil
-		}
-		if underPartialsDir(relPath, partialsPattern) {
-			return nil
-		}
-		data, readErr := fs.ReadFile(fsys, path)
-		if readErr != nil {
-			return readErr
-		}
-		var raw manifest.RawManifest
-		if unmarshalErr := parser.Unmarshal(data, &raw); unmarshalErr != nil {
-			return fmt.Errorf("%s: %w", path, unmarshalErr)
-		}
-		cacheID := filepath.ToSlash(relPath)
-		for _, ext := range []string{".yaml", ".yml", ".json"} {
-			cacheID = strings.TrimSuffix(cacheID, ext)
-		}
-		if raw.ID == "" {
-			raw.ID = cacheID
-		}
-		if prev, ok := byID[cacheID]; ok && prev != nil {
-			return fmt.Errorf("duplicate manifest path id %q at %s", cacheID, path)
-		}
-		cloned := raw
-		byID[cacheID] = &cloned
-		if raw.ID != cacheID {
-			if _, ok := byID[raw.ID]; !ok {
-				alias := cloned
-				byID[raw.ID] = &alias
+	if err := prompty.ValidateID(id); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if snapshot, ok := r.cache[id]; ok {
+		return snapshot, nil
+	}
+	partials := make(map[string][]byte)
+	if r.partialsPattern != "" {
+		pattern := filepath.ToSlash(filepath.Join(r.root, r.partialsPattern))
+		for name, data := range r.sources {
+			matches, err := filepath.Match(pattern, name)
+			if err != nil {
+				return nil, err
+			}
+			if matches {
+				partials[name] = data
 			}
 		}
-		return nil
-	})
-	return byID, err
-}
-
-func needsCompose(byID map[string]*manifest.RawManifest, relPath string) bool {
-	id := filepath.ToSlash(relPath)
-	for _, ext := range []string{".yaml", ".yml", ".json"} {
-		id = strings.TrimSuffix(id, ext)
+		if len(partials) == 0 {
+			return nil, fmt.Errorf("%w: no matching partials %q", prompty.ErrTemplateParse, r.partialsPattern)
+		}
 	}
-	raw, ok := byID[id]
-	if !ok || raw == nil {
-		return false
-	}
-	return len(raw.Imports) > 0 || len(raw.Layers) > 0
-}
-
-func (r *Registry) templateForPlan(
-	ctx context.Context,
-	id string,
-	values prompty.ComposeValues,
-) (*prompty.ChatPromptTemplate, error) {
-	data, err := r.readManifestBytes(ctx, id)
+	snapshot, err := manifest.CaptureSources(
+		ctx,
+		id,
+		r,
+		r.parser,
+		partials,
+		manifest.SourceResolutionConfig(r.env, r.partialsPattern, "relative-root.v1", r.version, ""),
+	)
 	if err != nil {
 		return nil, err
 	}
-	usesCompose, peekErr := manifest.PeekComposeFieldsE(data, r.parser)
-	if peekErr != nil {
-		return nil, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
+	r.cache[id] = snapshot
+	return snapshot, nil
+}
+
+// Plan builds from captured sources only.
+func (r *Registry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
+	snapshot, err := r.CaptureManifest(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	if usesCompose {
-		var opts []manifest.ParseOption
-		if r.partialsPattern != "" {
-			partialsPath := filepath.Join(r.root, r.partialsPattern)
-			opts = append(opts, manifest.WithPartialsFS(r.fsys, partialsPath))
-		}
-		opts = append(opts, manifest.WithCompose(manifest.ComposeContext{
-			Ctx:                         ctx,
-			Values:                      values,
-			Loader:                      r,
-			AllowMissingConditionValues: false,
-		}))
-		return manifest.Parse(data, r.parser, opts...)
-	}
-	return r.loadTemplate(ctx, id)
+	return snapshot.Plan(ctx, input)
 }
 
 // List returns all template ids (order from walk).
@@ -392,15 +316,6 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 func (r *Registry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
 	if err := prompty.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
-	}
-	for _, cid := range candidateIDs(id, r.env) {
-		if _, ok := r.cache[cid]; ok {
-			return prompty.TemplateInfo{
-				ID:        id,
-				Version:   r.version,
-				UpdatedAt: time.Time{},
-			}, nil
-		}
 	}
 	if _, err := r.readManifestBytes(ctx, id); err == nil {
 		return prompty.TemplateInfo{
@@ -428,14 +343,14 @@ func (r *Registry) ManifestUsesComposeE(ctx context.Context, id string) (bool, e
 	return uses, nil
 }
 
-// RecommendManifestDescriptor selects single-file or compose-closure checkpoint descriptor.
+// RecommendManifestDescriptor returns the identity selected by capture policy.
 func (r *Registry) RecommendManifestDescriptor(ctx context.Context, id string) (prompty.ManifestDescriptor, error) {
-	return manifest.CheckpointRecommend(ctx, id, r, r.parser)
+	return manifest.CheckpointRecommend(ctx, id, r)
 }
 
-// VerifyManifestDescriptor verifies a checkpoint descriptor against current manifest bytes.
+// VerifyManifestDescriptor verifies against the generation selected by capture policy.
 func (r *Registry) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
-	return manifest.CheckpointVerify(ctx, desc, r, r.parser)
+	return manifest.CheckpointVerify(ctx, desc, r)
 }
 
 var _ prompty.ManifestCheckpointRegistry = (*Registry)(nil)

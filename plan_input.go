@@ -2,7 +2,6 @@ package prompty
 
 import (
 	"fmt"
-	"maps"
 	"strings"
 )
 
@@ -43,18 +42,7 @@ func (r RegistryPlanInput) isEmpty() bool {
 }
 
 func cloneComposeMap(values map[string]any) map[string]any {
-	if values == nil {
-		return nil
-	}
-	out := make(map[string]any, len(values))
-	for k, v := range values {
-		if nested, ok := v.(map[string]any); ok {
-			out[k] = maps.Clone(nested)
-			continue
-		}
-		out[k] = v
-	}
-	return out
+	return cloneMapAny(values)
 }
 
 // ComposeValues is an opaque typed token for manifest condition.match evaluation.
@@ -144,7 +132,7 @@ func (v ComposeValues) mapValue() map[string]any {
 	return cloneComposeMap(v.values)
 }
 
-// Lookup returns a runtime compose value by dot path.
+// Lookup returns an owned copy of a runtime compose value by dot path.
 func (v ComposeValues) Lookup(path string) (any, bool) {
 	if !v.set || path == "" {
 		return nil, false
@@ -162,7 +150,7 @@ func (v ComposeValues) Lookup(path string) (any, bool) {
 		}
 		cur = next
 	}
-	return cur, true
+	return cloneAny(cur), true
 }
 
 // ComposeContext is the typed public contract generated prompt packages can implement.

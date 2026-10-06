@@ -597,7 +597,7 @@ func addRecipeTypeAndMethods(
 
 	f.Func().Params(jen.Id("r").Id(recipeType)).Id("Execute").Params(
 		jen.Id("ctx").Qual("context", "Context"),
-		jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+		jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 	).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())).Block(
 		jen.Return(jen.Id("r").Dot("inner").Dot("Execute").Call(jen.Id("ctx"), jen.Id("registry"))),
 	)
@@ -605,7 +605,7 @@ func addRecipeTypeAndMethods(
 
 	f.Func().Params(jen.Id("r").Id(recipeType)).Id("ExecuteWithContract").Params(
 		jen.Id("ctx").Qual("context", "Context"),
-		jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+		jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 		jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolManifestContract"),
 	).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())).Block(
 		jen.Return(jen.Id("r").Dot("inner").Dot("ExecuteWithContract").Call(

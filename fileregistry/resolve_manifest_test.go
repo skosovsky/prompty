@@ -158,11 +158,15 @@ func (r *flatTamperReader) ReadManifestBytes(ctx context.Context, id string) ([]
 }
 
 func (r *flatTamperReader) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
-	return manifest.CheckpointVerify(ctx, desc, r, yaml.New())
+	return manifest.CheckpointVerify(ctx, desc, r)
 }
 
 var _ prompty.ManifestResolver = (*Registry)(nil)
 
 func writeFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0600)
+}
+
+func (r *flatTamperReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, r, yaml.New(), nil, map[string]string{"resolution": "test-tamper.v1"})
 }

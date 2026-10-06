@@ -19,8 +19,8 @@ type Recipe interface {
 	CheckpointJSON() ([]byte, error)
 	ResponseFormat() (*prompty.SchemaDefinition, error)
 	JSONSchema() (prompty.JSONDocument, error)
-	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
-	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
+	Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
 }
 
 type PromptCatalog interface {
@@ -95,7 +95,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case SupportAgent:
 		metadata = prompty.PromptMetadata{ID: "support_agent"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "sha256:test-support_agent"}
+		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "support_agent")

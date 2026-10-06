@@ -52,11 +52,11 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 			Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "JSONDocument"), jen.Error())),
 		jen.Id("Execute").Params(
 			jen.Id("ctx").Qual("context", "Context"),
-			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())),
 		jen.Id("ExecuteWithContract").Params(
 			jen.Id("ctx").Qual("context", "Context"),
-			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 			jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolManifestContract"),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())),
 	)
@@ -141,6 +141,14 @@ func validateSharedPromptSpecs(specs []*PromptSpec) error {
 		if spec.Descriptor.Digest == "" {
 			return fmt.Errorf("shared types: prompt %q descriptor digest is required", spec.ID)
 		}
+		descriptor := spec.Descriptor
+		if descriptor.ID == "" {
+			descriptor.ID = spec.ID
+		}
+		if err := prompty.ValidateManifestDescriptor(descriptor); err != nil {
+			return fmt.Errorf("shared types: prompt %q descriptor: %w", spec.ID, err)
+		}
+
 		if spec.Descriptor.ID != "" && spec.Descriptor.ID != spec.ID {
 			return fmt.Errorf(
 				"shared types: prompt %q descriptor id mismatch: %q",

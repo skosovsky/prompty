@@ -698,3 +698,65 @@ func TestReadRawManifestFile_EmptyFile(t *testing.T) {
 		t.Fatalf("expected path in error, got %v", err)
 	}
 }
+
+func TestCapturedIndex_SpecAndDescriptorUseOriginalBytes(t *testing.T) {
+	// Arrange: index captures the generation before storage changes.
+	directory := t.TempDir()
+	name := filepath.Join(directory, "agent.json")
+	old := `{"id":"agent","inputs":{"query":{"type":"string"}},"messages":[{"role":"user","content":[{"type":"text","text":"{{ .Input.query }}"}]}]}`
+	if err := os.WriteFile(name, []byte(old), 0600); err != nil {
+		t.Fatal(err)
+	}
+	index, err := indexManifests([]string{name}, directory, []string{"*.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := index.CaptureManifest(context.Background(), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Act: a new incompatible DTO contract replaces the physical source.
+	updated := strings.ReplaceAll(old, `"type":"string"`, `"type":"integer"`)
+	if writeErr := os.WriteFile(name, []byte(updated), 0600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	spec, err := loadSpec(name, directory, []string{"*.json"}, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := index.CaptureManifest(context.Background(), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Assert: generated fields and identity stay in the captured generation.
+	if before.Descriptor() != after.Descriptor() {
+		t.Fatal("descriptor changed after capture")
+	}
+	if !strings.Contains(string(spec.InputSchema.Schema), `"type":"string"`) {
+		t.Fatal("spec read new schema")
+	}
+	if strings.Contains(string(spec.InputSchema.Schema), `"type":"integer"`) {
+		t.Fatal("spec contains uncaptured bytes")
+	}
+}
+
+func TestCapturedIndexRejectsLogicalIDPathAliasCollision(t *testing.T) {
+	t.Parallel()
+	// Arrange: b is both the explicit ID of a.json and the path alias of b.json.
+	directory := t.TempDir()
+	first := filepath.Join(directory, "a.json")
+	second := filepath.Join(directory, "b.json")
+	for name, id := range map[string]string{first: "b", second: "c"} {
+		if err := os.WriteFile(name, []byte(`{"id":"`+id+`"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, files := range [][]string{{first, second}, {second, first}} {
+		// Act.
+		index, err := indexManifests(files, directory, []string{"*.json"})
+		// Assert: schema and source identity cannot resolve the same ID differently.
+		if err == nil || index != nil || !strings.Contains(err.Error(), "alias collision") {
+			t.Fatalf("index=%v err=%v", index, err)
+		}
+	}
+}

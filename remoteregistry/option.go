@@ -16,3 +16,9 @@ func WithParser(u manifest.Unmarshaler) Option {
 func WithEnvironment(env string) Option {
 	return func(r *Registry) { r.env = env }
 }
+
+// WithRevision requires capture from an explicit immutable source revision.
+// Unsupported or unavailable revisions fail; mutable reads are never substituted.
+func WithRevision(revision string) Option {
+	return func(r *Registry) { r.revision = revision }
+}
