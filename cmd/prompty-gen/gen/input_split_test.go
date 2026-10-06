@@ -19,14 +19,14 @@ func TestSanitizePropForCodegen(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "strips late markers and required",
+			name: "strips late markers and preserves nested required",
 			in: map[string]any{
 				"type":           "string",
 				"late":           true,
 				"x-prompty-late": true,
-				"required":       true,
+				"required":       []string{"name"},
 			},
-			want: map[string]any{"type": "string"},
+			want: map[string]any{"type": "string", "required": []string{"name"}},
 		},
 		{
 			name: "preserves other keys",
@@ -119,7 +119,7 @@ func TestSplitEarlyLateInputSchema(t *testing.T) {
 					"patient_dossier": map[string]any{
 						"type":     "string",
 						"late":     true,
-						"required": true,
+						"required": []string{"child"},
 					},
 				},
 				"required": []any{"user_query", "patient_dossier"},
@@ -134,7 +134,7 @@ func TestSplitEarlyLateInputSchema(t *testing.T) {
 			wantLate: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"patient_dossier": map[string]any{"type": "string"},
+					"patient_dossier": map[string]any{"type": "string", "required": []string{"child"}},
 				},
 				"required": []string{"patient_dossier"},
 			},
@@ -154,7 +154,7 @@ func TestSplitEarlyLateInputSchema(t *testing.T) {
 				"properties": map[string]any{
 					"query": map[string]any{"type": "string"},
 				},
-				"required": []string{"query"},
+				"required": []any{"query"},
 			},
 			wantLate:    nil,
 			wantHasLate: false,

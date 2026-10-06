@@ -24,7 +24,14 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 		//nolint:nilnil // nil inputs block is valid and represented as nil schema.
 		return nil, nil
 	}
-	normalized := normalizeMapAny(raw)
+	document, encodeErr := prompty.MapToJSONDocument(raw)
+	if encodeErr != nil {
+		return nil, fmt.Errorf("inputs: %w", encodeErr)
+	}
+	normalized, decodeErr := prompty.JSONDocumentAsMap(document)
+	if decodeErr != nil {
+		return nil, fmt.Errorf("inputs: %w", decodeErr)
+	}
 	if len(normalized) == 0 {
 		schemaDoc, err := prompty.MapToJSONDocument(map[string]any{
 			"type":       "object",
@@ -114,38 +121,4 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 		return nil, err
 	}
 	return &prompty.SchemaDefinition{Schema: schemaDoc}, nil
-}
-
-func normalizeMapAny(in map[string]any) map[string]any {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = normalizeAny(value)
-	}
-	return out
-}
-
-func normalizeAny(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return normalizeMapAny(typed)
-	case map[any]any:
-		normalized := make(map[string]any, len(typed))
-		for key, val := range typed {
-			if strKey, ok := key.(string); ok {
-				normalized[strKey] = normalizeAny(val)
-			}
-		}
-		return normalized
-	case []any:
-		items := make([]any, len(typed))
-		for i := range typed {
-			items[i] = normalizeAny(typed[i])
-		}
-		return items
-	default:
-		return value
-	}
 }

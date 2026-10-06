@@ -1,6 +1,7 @@
 package yaml
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/skosovsky/prompty"
@@ -179,11 +180,10 @@ messages:
 	assert.InDelta(t, 0.8, *raw.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, []string{"END"}, raw.ModelOptions.Stop)
 	require.NotNil(t, raw.ModelOptions.ProviderSettings)
-	assert.InDelta(
+	assert.Equal(
 		t,
-		0.5,
-		prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["frequency_penalty"].(float64),
-		1e-9,
+		json.Number("0.5"),
+		prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["frequency_penalty"],
 	)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["custom_flag"])
 }

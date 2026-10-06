@@ -12,15 +12,20 @@ func missingSchemaReferenceOrigins(
 	document any,
 	dialect string,
 	resources map[string]JSONDocument,
+	sourceURIs ...string,
 ) []SchemaSourceLocation {
+	sourceURI := schemaSourceURI
+	if len(sourceURIs) > 0 {
+		sourceURI = sourceURIs[0]
+	}
 	loader := &diagnosticSchemaLoader{missing: make(map[string]bool)}
-	compiler, err := newJSONSchemaCompiler(document, dialect, resources, loader)
+	compiler, err := newJSONSchemaCompiler(document, dialect, resources, loader, sourceURI)
 	if err != nil {
 		return nil
 	}
-	graph, err := compiler.Compile(schemaSourceURI)
+	graph, err := compiler.Compile(sourceURI)
 	if err != nil {
-		return failedSchemaReferenceOrigins(document, dialect, resources)
+		return failedSchemaReferenceOrigins(document, dialect, resources, sourceURI)
 	}
 	var locations []SchemaSourceLocation
 	seen := make(map[*jsonschema.Schema]bool)

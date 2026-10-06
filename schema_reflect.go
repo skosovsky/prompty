@@ -1,10 +1,14 @@
 package prompty
 
 import (
+	"encoding"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/skosovsky/prompty/internal/jsonfield"
 )
 
 const maxSchemaDepth = 32
@@ -14,6 +18,9 @@ const schemaTypeArray = "array"
 const schemaKeywordItems = "items"
 
 const schemaKeywordType = "type"
+const schemaKeywordRef = "$ref"
+const schemaKeywordDynamicRef = "$dynamicRef"
+const schemaKeywordAnyOf = "anyOf"
 
 type schemaBuilder struct {
 	active map[reflect.Type]int
@@ -36,12 +43,29 @@ func newSchemaBuilder() *schemaBuilder {
 }
 
 func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any, error) {
+	if depth >= maxSchemaDepth {
+		return nil, fmt.Errorf("%w: recursive or excessive-depth type %s", ErrSchemaUnsupported, t)
+	}
+
+	if t.Kind() == reflect.Pointer {
+		schema, err := b.schemaForType(t.Elem(), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		return nullableInferredSchema(schema), nil
+	}
 	base, err := normalizedSchemaType(t)
 	if err != nil {
 		return nil, err
 	}
-	if schema, ok := schemaFromProvider(base); ok {
-		return schema, nil
+	if schema, ok, providerErr := schemaFromProvider(base); ok {
+		return schema, providerErr
+	}
+	if base == reflect.TypeFor[json.Number]() {
+		return map[string]any{"type": "number"}, nil
+	}
+	if hasCustomJSONCodec(base) {
+		return nil, fmt.Errorf("%w: type %s has a custom codec; provide JSONSchema", ErrSchemaUnsupported, base)
 	}
 
 	switch base.Kind() {
@@ -49,24 +73,27 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 		return b.schemaForStructType(base, depth)
 	case reflect.Slice:
 		if base.Elem().Kind() == reflect.Uint8 {
-			return map[string]any{"type": "string"}, nil
+			if hasCustomJSONCodec(base.Elem()) {
+				return nil, fmt.Errorf("%w: byte element has a custom JSON codec", ErrSchemaUnsupported)
+			}
+			return nullableInferredSchema(map[string]any{"type": "string"}), nil
 		}
 		items, err := b.schemaForType(base.Elem(), depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("items: %w", err)
 		}
-		return map[string]any{
-			"type":             schemaTypeArray,
-			schemaKeywordItems: items,
-		}, nil
+		return nullableInferredSchema(map[string]any{
+			"type": schemaTypeArray, schemaKeywordItems: items,
+		}), nil
 	case reflect.Array:
 		items, err := b.schemaForType(base.Elem(), depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("items: %w", err)
 		}
 		return map[string]any{
-			"type":  schemaTypeArray,
-			"items": items,
+			"type":     schemaTypeArray,
+			"items":    items,
+			"minItems": base.Len(), "maxItems": base.Len(),
 		}, nil
 	case reflect.String:
 		return map[string]any{"type": "string"}, nil
@@ -84,7 +111,7 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 
 func (b *schemaBuilder) schemaForStructType(t reflect.Type, depth int) (map[string]any, error) {
 	if depth >= maxSchemaDepth || b.active[t] > 0 {
-		return terminalObjectSchema(), nil
+		return nil, fmt.Errorf("%w: recursive or excessive-depth type %s", ErrSchemaUnsupported, t)
 	}
 
 	b.active[t]++
@@ -136,11 +163,23 @@ func (b *schemaBuilder) collectStructFields(
 		if ignore {
 			continue
 		}
+		if hasName && !jsonfield.ValidTagName(name) {
+			return nil, fmt.Errorf(
+				"%w: field %s.%s has unsupported JSON tag name %q",
+				ErrSchemaUnsupported,
+				t,
+				field.Name,
+				name,
+			)
+		}
 
-		baseFieldType := indirectSchemaType(field.Type)
+		baseFieldType, typeErr := normalizedSchemaType(field.Type)
+		if typeErr != nil {
+			return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, typeErr)
+		}
 		if field.Anonymous && !hasName && baseFieldType.Kind() == reflect.Struct {
 			if depth+1 >= maxSchemaDepth || b.active[baseFieldType] > 0 {
-				continue
+				return nil, fmt.Errorf("%w: recursive embedded type %s", ErrSchemaUnsupported, baseFieldType)
 			}
 
 			b.active[baseFieldType]++
@@ -170,10 +209,29 @@ func (b *schemaBuilder) collectStructFields(
 			return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
 		}
 
+		if jsonTagOption(field.Tag.Get("json"), "string") {
+			if baseFieldType.Implements(schemaProviderType) ||
+				reflect.PointerTo(baseFieldType).Implements(schemaProviderType) {
+				return nil, fmt.Errorf(
+					"%w: field %s.%s combines JSONSchema with json string option; provide schema for enclosing type",
+					ErrSchemaUnsupported,
+					t,
+					field.Name,
+				)
+			}
+			schema, err = quotedJSONSchema(baseFieldType)
+			if err != nil {
+				return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
+			}
+		}
+		if isPointerType(field.Type) && jsonTagOption(field.Tag.Get("json"), "string") {
+			schema = nullableInferredSchema(schema)
+		}
+
 		candidates = append(candidates, schemaFieldCandidate{
 			name:     fieldName,
 			schema:   schema,
-			optional: inheritedOptional || omitEmpty || isPointerType(field.Type),
+			optional: inheritedOptional || omitEmpty,
 			tagged:   hasName,
 			depth:    depth,
 			order:    b.nextOrder(),
@@ -186,14 +244,6 @@ func (b *schemaBuilder) nextOrder() int {
 	order := b.order
 	b.order++
 	return order
-}
-
-func terminalObjectSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"properties":           map[string]any{},
-		"additionalProperties": false,
-	}
 }
 
 func shouldSkipSchemaField(field reflect.StructField) bool {
@@ -228,7 +278,7 @@ func parseJSONSchemaTag(tag string) (string, bool, bool, bool) {
 	}
 	omitEmpty := false
 	for opt := range strings.SplitSeq(tail, ",") {
-		if opt == "omitempty" {
+		if opt == "omitempty" || opt == "omitzero" {
 			omitEmpty = true
 		}
 	}
@@ -296,7 +346,10 @@ func resolveSchemaFieldGroup(group []schemaFieldCandidate) (schemaFieldCandidate
 }
 
 func indirectSchemaType(t reflect.Type) reflect.Type {
-	for t.Kind() == reflect.Pointer {
+	for range maxSchemaDepth {
+		if t.Kind() != reflect.Pointer {
+			break
+		}
 		t = t.Elem()
 	}
 	return t
@@ -304,4 +357,53 @@ func indirectSchemaType(t reflect.Type) reflect.Type {
 
 func isPointerType(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Pointer
+}
+
+func jsonTagOption(tag, option string) bool {
+	_, options, _ := strings.Cut(tag, ",")
+	for value := range strings.SplitSeq(options, ",") {
+		if value == option {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCustomJSONCodec(t reflect.Type) bool {
+	for _, candidate := range []reflect.Type{t, reflect.PointerTo(t)} {
+		if candidate.Implements(reflect.TypeFor[json.Marshaler]()) ||
+			candidate.Implements(reflect.TypeFor[json.Unmarshaler]()) ||
+			candidate.Implements(reflect.TypeFor[encoding.TextMarshaler]()) ||
+			candidate.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+			return true
+		}
+	}
+	return false
+}
+
+func quotedJSONSchema(t reflect.Type) (map[string]any, error) {
+	const numericPattern = `^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`
+	if t == reflect.TypeFor[json.Number]() {
+		return map[string]any{"type": "string", "pattern": numericPattern}, nil
+	}
+	var pattern string
+	switch t.Kind() {
+	case reflect.Bool:
+		pattern = "^(true|false)$"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		pattern = "^-?(0|[1-9][0-9]*)$"
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		pattern = "^(0|[1-9][0-9]*)$"
+	case reflect.Float32, reflect.Float64:
+		pattern = numericPattern
+	case reflect.String:
+		pattern = `^"([^"\\\x00-\x1f]|\\(["\\/bfnrt]|u[0-9a-fA-F]{4}))*"$`
+	default:
+		return nil, fmt.Errorf("%w: string option on %s", ErrSchemaUnsupported, t)
+	}
+	return map[string]any{"type": "string", "pattern": pattern}, nil
+}
+
+func nullableInferredSchema(schema map[string]any) map[string]any {
+	return map[string]any{schemaKeywordAnyOf: []any{schema, map[string]any{"type": "null"}}}
 }

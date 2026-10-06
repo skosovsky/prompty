@@ -13,7 +13,7 @@ import (
 
 func TestRemoteregistry_PlanInputFrom_NilOptionals(t *testing.T) {
 	t.Parallel()
-	manifestJSON := `{"id":"nil_optionals","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"flag={{ .Input.flag }} tags={{ len .Input.tags }}"}]}]}`
+	manifestJSON := `{"id":"nil_optionals","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"flag={{if eq .Input.flag nil}}null{{else}}{{.Input.flag}}{{end}} tags={{if eq .Input.tags nil}}null{{else}}{{len .Input.tags}}{{end}}"}]}]}`
 	m := &mockFetcher{data: map[string][]byte{"nil_optionals": []byte(manifestJSON)}}
 	reg, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
@@ -28,5 +28,5 @@ func TestRemoteregistry_PlanInputFrom_NilOptionals(t *testing.T) {
 	exec, err := plan.Execute(ctx)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, "flag=false tags=0", exec.Messages[0].Content[0].(prompty.TextPart).Text)
+	assert.Equal(t, "flag=null tags=null", exec.Messages[0].Content[0].(prompty.TextPart).Text)
 }

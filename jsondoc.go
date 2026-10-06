@@ -32,14 +32,22 @@ func CloneJSONDocument(doc JSONDocument) JSONDocument {
 	return JSONDocument(out)
 }
 
-// JSONDocumentAsMap decodes doc into a map for adapter translation (internal shape).
+// JSONDocumentAsMap decodes one object, preserving dynamic numbers as [json.Number].
 func JSONDocumentAsMap(doc JSONDocument) (map[string]any, error) {
 	if len(doc) == 0 {
 		return map[string]any{}, nil
 	}
 	var out map[string]any
-	if err := json.Unmarshal(doc, &out); err != nil {
+	if !json.Valid(doc) {
+		return nil, errors.New("json document: invalid complete JSON document")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(doc))
+	decoder.UseNumber()
+	if err := decoder.Decode(&out); err != nil {
 		return nil, fmt.Errorf("json document: decode map: %w", err)
+	}
+	if out == nil {
+		return nil, errors.New("json document: expected an object, got null")
 	}
 	return out, nil
 }

@@ -465,7 +465,7 @@ func TestMergeInputSchemas_ConflictingFormatErrors(t *testing.T) {
 	}
 	_, err := MergeInputSchemas(local, imported)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "conflicting type")
+	assert.Contains(t, err.Error(), "conflicting contract")
 }
 
 func TestExpandRawManifest_LayersAndMessagesRejected(t *testing.T) {

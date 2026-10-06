@@ -41,6 +41,7 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		LegacyInputs    *prompty.SchemaDefinition `json:"input_schema"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&wire); err != nil {
 		return err
@@ -79,9 +80,9 @@ func (JSONParser) Unmarshal(in []byte, out any) error {
 		return nil
 	}
 
-	var cfg map[string]any
-	if unmarshalErr := json.Unmarshal(wire.ModelOptionsRaw, &cfg); unmarshalErr != nil {
-		return unmarshalErr
+	cfg, cfgErr := prompty.JSONDocumentAsMap(wire.ModelOptionsRaw)
+	if cfgErr != nil {
+		return cfgErr
 	}
 	opts, err := DecodeModelOptions(cfg)
 	if err != nil {

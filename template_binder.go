@@ -76,12 +76,14 @@ func bindStructFields(typ reflect.Type, val reflect.Value) (map[string]any, []Ch
 	out := make(map[string]any)
 	var history []ChatMessage
 	hasPrompt := false
+	hasHistory := false
 
 	for field := range typ.Fields() {
 		if !field.IsExported() {
 			continue
 		}
 		if isChatMessageSlice(field.Type) {
+			hasHistory = true
 			next, err := appendHistoryField(history, val.FieldByIndex(field.Index))
 			if err != nil {
 				return nil, nil, err
@@ -96,29 +98,23 @@ func bindStructFields(typ reflect.Type, val reflect.Value) (map[string]any, []Ch
 			}
 			continue
 		}
-		if alias == "Tools" {
-			return nil, nil, ErrReservedVariable
-		}
+
 		hasPrompt = true
-		bound, err := bindValue(val.FieldByIndex(field.Index))
-		if err != nil {
+		if err := bindPromptFieldTo(out, field, val.FieldByIndex(field.Index)); err != nil {
 			return nil, nil, err
 		}
-		if _, exists := out[alias]; exists {
-			return nil, nil, fmt.Errorf("%w: duplicate prompt tag %q", ErrInvalidPayload, alias)
-		}
-		out[alias] = bound
 	}
 
-	return finalizeStructBinding(out, history, hasPrompt)
+	return finalizeStructBinding(out, history, hasPrompt, hasHistory)
 }
 
 func finalizeStructBinding(
 	out map[string]any,
 	history []ChatMessage,
 	hasPrompt bool,
+	hasHistory bool,
 ) (map[string]any, []ChatMessage, error) {
-	if !hasPrompt && len(history) == 0 {
+	if !hasPrompt && !hasHistory {
 		return nil, nil, ErrInvalidPayload
 	}
 	if !hasPrompt {
@@ -182,7 +178,12 @@ func bindValue(v reflect.Value) (any, error) {
 	if !v.IsValid() {
 		return nil, nil //nolint:nilnil // template binding: absent invalid value is nil
 	}
-	v = derefValue(v)
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil, nil //nolint:nilnil // A nil pointer is a present JSON null.
+		}
+		v = v.Elem()
+	}
 
 	switch v.Kind() {
 	case reflect.Struct:
@@ -205,7 +206,7 @@ func bindValue(v reflect.Value) (any, error) {
 
 func bindSliceValue(v reflect.Value) (any, error) {
 	if v.IsNil() {
-		return reflect.MakeSlice(v.Type(), 0, 0).Interface(), nil
+		return v.Interface(), nil
 	}
 	elem := v.Type().Elem()
 	for elem.Kind() == reflect.Pointer {
@@ -216,7 +217,13 @@ func bindSliceValue(v reflect.Value) (any, error) {
 	}
 	out := make([]map[string]any, v.Len())
 	for i := range v.Len() {
-		item := derefValue(v.Index(i))
+		item := v.Index(i)
+		for item.Kind() == reflect.Pointer && !item.IsNil() {
+			item = item.Elem()
+		}
+		if item.Kind() == reflect.Pointer && item.IsNil() {
+			continue
+		}
 		m, _, err := bindStructFields(elem, item)
 		if err != nil {
 			return nil, err
@@ -241,4 +248,59 @@ func structTypeOf(v any) (reflect.Type, reflect.Value, bool) {
 		return nil, reflect.Value{}, false
 	}
 	return val.Type(), val, true
+}
+
+func promptFieldOmitted(field reflect.StructField, value reflect.Value) bool {
+	if !jsonTagOption(field.Tag.Get("prompt"), "omitempty") {
+		return false
+	}
+	if value.IsZero() {
+		return true
+	}
+	switch value.Kind() {
+	case reflect.Slice, reflect.Map, reflect.String:
+		return value.Len() == 0
+	default:
+		return false
+	}
+}
+
+func bindPromptFieldTo(out map[string]any, field reflect.StructField, value reflect.Value) error {
+	alias := promptAlias(field)
+	if alias == "Tools" {
+		return ErrReservedVariable
+	}
+	if _, exists := out[alias]; exists {
+		return fmt.Errorf("%w: duplicate prompt tag %q", ErrInvalidPayload, alias)
+	}
+	if promptFieldOmitted(field, value) {
+		return nil
+	}
+	bound, err := bindValue(value)
+	if err != nil {
+		return err
+	}
+	out[alias] = bound
+	return nil
+}
+
+// historySchemaValues retains field presence and null independently of flattened render history.
+func historySchemaValues(payload any) map[string]any {
+	typ, value, ok := structTypeOf(payload)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]any)
+	for field := range typ.Fields() {
+		name := promptAlias(field)
+		if !field.IsExported() || name == "" || !isChatMessageSlice(field.Type) {
+			continue
+		}
+		fieldValue := value.FieldByIndex(field.Index)
+		if promptFieldOmitted(field, fieldValue) {
+			continue
+		}
+		result[name] = fieldValue.Interface()
+	}
+	return cloneMapAny(result)
 }

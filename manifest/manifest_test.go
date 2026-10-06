@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"embed"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -207,11 +208,10 @@ func TestParse_ModelOptions_JSON(t *testing.T) {
 	assert.InDelta(t, 0.8, *tpl.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, []string{"END"}, tpl.ModelOptions.Stop)
 	require.NotNil(t, tpl.ModelOptions.ProviderSettings)
-	assert.InDelta(
+	assert.Equal(
 		t,
-		0.5,
-		prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings)["frequency_penalty"].(float64),
-		1e-9,
+		json.Number("0.5"),
+		prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings)["frequency_penalty"],
 	)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(tpl.ModelOptions.ProviderSettings)["custom_flag"])
 }

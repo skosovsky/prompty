@@ -29,14 +29,19 @@ func failedSchemaReferenceOrigins(
 	document any,
 	dialect string,
 	resources map[string]JSONDocument,
+	sourceURIs ...string,
 ) []SchemaSourceLocation {
+	sourceURI := schemaSourceURI
+	if len(sourceURIs) > 0 {
+		sourceURI = sourceURIs[0]
+	}
 	placeholder := "urn:prompty:reference-diagnostic:" + rand.Text()
 	placeholders := make(map[string]string)
 	var references []*diagnosticReference
 	documents := make(map[string]any, len(resources)+1)
-	documents[schemaSourceURI] = neutralizeDiagnosticReferences(
+	documents[sourceURI] = neutralizeDiagnosticReferences(
 		document,
-		schemaSourceURI,
+		sourceURI,
 		"",
 		placeholder,
 		placeholders,
@@ -59,7 +64,7 @@ func failedSchemaReferenceOrigins(
 	if err != nil {
 		return nil
 	}
-	rootGraph, err := existence.Compile(schemaSourceURI)
+	rootGraph, err := existence.Compile(sourceURI)
 	if err != nil {
 		return nil
 	}
@@ -84,7 +89,7 @@ func failedSchemaReferenceOrigins(
 	if err != nil {
 		return nil
 	}
-	graph, err := compiler.Compile(schemaSourceURI)
+	graph, err := compiler.Compile(sourceURI)
 	if err != nil {
 		return nil
 	}
@@ -168,7 +173,7 @@ func neutralizeDiagnosticReferences(
 		clone := make(map[string]any, len(v))
 		for _, key := range slices.Sorted(maps.Keys(v)) {
 			child := v[key]
-			if text, ok := child.(string); ok && (key == "$ref" || key == "$dynamicRef") {
+			if text, ok := child.(string); ok && (key == schemaKeywordRef || key == schemaKeywordDynamicRef) {
 				uri, exists := placeholders[text]
 				if !exists {
 					uri = placeholder + ":value:" + strconv.Itoa(len(placeholders))

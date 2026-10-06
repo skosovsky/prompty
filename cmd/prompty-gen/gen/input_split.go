@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"fmt"
 	"maps"
 
 	"github.com/skosovsky/prompty"
@@ -18,7 +19,6 @@ func sanitizePropForCodegen(prop map[string]any) map[string]any {
 	out := maps.Clone(prop)
 	delete(out, "late")
 	delete(out, "x-prompty-late")
-	delete(out, "required")
 	return out
 }
 
@@ -46,6 +46,11 @@ func splitEarlyLateInputSchema(schema map[string]any) (map[string]any, map[strin
 		earlyProps[name] = clean
 	}
 
+	if !hasLate {
+		early := maps.Clone(schema)
+		early["properties"] = earlyProps
+		return early, nil, false
+	}
 	early := cloneObjectSchemaWithProps(schema, earlyProps)
 	var late map[string]any
 	if hasLate {
@@ -55,10 +60,9 @@ func splitEarlyLateInputSchema(schema map[string]any) (map[string]any, map[strin
 }
 
 func cloneObjectSchemaWithProps(base map[string]any, props map[string]any) map[string]any {
-	out := map[string]any{
-		"type":       jsonSchemaTypeObject,
-		"properties": props,
-	}
+	out := maps.Clone(base)
+	out["properties"] = props
+	delete(out, "required")
 	required := filterRequired(getRequired(base), props)
 	if len(required) > 0 {
 		out["required"] = required
@@ -87,5 +91,33 @@ func schemaDefinitionFromMap(schema map[string]any) (*prompty.SchemaDefinition, 
 	if err != nil {
 		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: doc}, nil
+	dialect, _ := schema["$schema"].(string)
+	return &prompty.SchemaDefinition{Schema: doc, Dialect: dialect}, nil
+}
+
+// Cross-partition root constraints have no general projection onto individual DTOs.
+func validateSplitRootConstraints(schema map[string]any) error {
+	for _, key := range sortedKeys(schema) {
+		switch key {
+		case "type",
+			"properties",
+			"required",
+			"additionalProperties",
+			"$schema",
+			"$id",
+			"$defs",
+			"definitions",
+			"title",
+			"description",
+			"default",
+			"examples",
+			"deprecated",
+			"readOnly",
+			"writeOnly":
+			continue
+		default:
+			return fmt.Errorf("input schema: root keyword %q cannot be projected onto early/late DTOs", key)
+		}
+	}
+	return nil
 }

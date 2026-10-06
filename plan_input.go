@@ -10,12 +10,18 @@ import (
 type RegistryPlanInput struct {
 	boundVars     map[string]any
 	chatHistory   []ChatMessage
+	historyValues map[string]any
 	composeValues map[string]any
 	composeSet    bool
 }
 
 // PlanInputFrom binds a typed payload for Registry.Plan (fail-fast before registry access).
 func PlanInputFrom[T any](payload T) (RegistryPlanInput, error) {
+	if check, ok := any(payload).(interface{ ValidateSchema() error }); ok {
+		if err := check.ValidateSchema(); err != nil {
+			return RegistryPlanInput{}, fmt.Errorf("plan input schema: %w", err)
+		}
+	}
 	vars, history, err := bindTemplateVars(payload)
 	if err != nil {
 		return RegistryPlanInput{}, fmt.Errorf("plan input: %w", err)
@@ -26,13 +32,14 @@ func PlanInputFrom[T any](payload T) (RegistryPlanInput, error) {
 	return RegistryPlanInput{
 		boundVars:     vars,
 		chatHistory:   history,
+		historyValues: historySchemaValues(payload),
 		composeValues: nil,
 		composeSet:    false,
 	}, nil
 }
 
 func (r RegistryPlanInput) isEmpty() bool {
-	return len(r.boundVars) == 0 && len(r.chatHistory) == 0
+	return len(r.boundVars) == 0 && len(r.chatHistory) == 0 && len(r.historyValues) == 0
 }
 
 func cloneComposeMap(values map[string]any) map[string]any {

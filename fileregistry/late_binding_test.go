@@ -37,7 +37,7 @@ func TestLateBinding_RequiredLateWithLateInput(t *testing.T) {
 	assert.Contains(t, exec.Messages[0].Content[0].(prompty.TextPart).Text, "chart-42")
 }
 
-func TestLateBinding_RequiredLateEmptyWithLateInputFails(t *testing.T) {
+func TestLateBinding_RequiredLateEmptyWithLateInputAllowed(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("testdata", "prompts")
 	reg, err := New(dir, WithParser(yaml.New()))
@@ -57,8 +57,7 @@ func TestLateBinding_RequiredLateEmptyWithLateInputFails(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = plan.Execute(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, prompty.ErrMissingVariable)
+	require.NoError(t, err)
 }
 
 func TestLateBinding_PlanInputFromRejectsLateField(t *testing.T) {

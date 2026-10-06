@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"gopkg.in/yaml.v3"
 
@@ -77,19 +78,19 @@ type rawMessage struct {
 	Content     rawContentSlice      `yaml:"content"`
 	Optional    bool                 `yaml:"optional"`
 	CachePolicy *prompty.CachePolicy `yaml:"cache_policy,omitempty"`
-	Metadata    map[string]any       `yaml:"metadata,omitempty"`
+	Metadata    exactMap             `yaml:"metadata,omitempty"`
 }
 
 type rawTool struct {
-	Dialect      string         `yaml:"dialect,omitempty"`
-	Name         string         `yaml:"name"`
-	Description  string         `yaml:"description"`
-	Parameters   map[string]any `yaml:"parameters"`
-	Capabilities []string       `yaml:"capabilities"`
+	Dialect      string   `yaml:"dialect,omitempty"`
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Parameters   exactMap `yaml:"parameters"`
+	Capabilities []string `yaml:"capabilities"`
 }
 
 type rawCondition struct {
-	Match map[string]any `yaml:"match,omitempty"`
+	Match exactMap `yaml:"match,omitempty"`
 }
 
 type rawImport struct {
@@ -105,7 +106,7 @@ type rawLayer struct {
 	Content     rawContentSlice      `yaml:"content,omitempty"`
 	Optional    bool                 `yaml:"optional,omitempty"`
 	CachePolicy *prompty.CachePolicy `yaml:"cache_policy,omitempty"`
-	Metadata    map[string]any       `yaml:"metadata,omitempty"`
+	Metadata    exactMap             `yaml:"metadata,omitempty"`
 }
 
 type fileManifest struct {
@@ -114,16 +115,16 @@ type fileManifest struct {
 	Description     string            `yaml:"description"`
 	LayerKind       prompty.LayerKind `yaml:"layer_kind,omitempty"`
 	RequiredTools   []string          `yaml:"required_tools"`
-	ModelOptionsRaw map[string]any    `yaml:"model_options"`
-	Metadata        map[string]any    `yaml:"metadata"`
-	InputSchema     map[string]any    `yaml:"inputs"`
+	ModelOptionsRaw exactMap          `yaml:"model_options"`
+	Metadata        exactMap          `yaml:"metadata"`
+	InputSchema     exactMap          `yaml:"inputs"`
 	Tools           []rawTool         `yaml:"tools"`
-	ResponseFormat  map[string]any    `yaml:"response_format"`
+	ResponseFormat  exactMap          `yaml:"response_format"`
 	Messages        []rawMessage      `yaml:"messages"`
 	Imports         []rawImport       `yaml:"imports,omitempty"`
 	Layers          []rawLayer        `yaml:"layers,omitempty"`
-	LegacyModelRaw  map[string]any    `yaml:"model_config"`
-	LegacyInputsRaw map[string]any    `yaml:"input_schema"`
+	LegacyModelRaw  exactMap          `yaml:"model_config"`
+	LegacyInputsRaw exactMap          `yaml:"input_schema"`
 }
 
 // Parser implements manifest.Unmarshaler for YAML manifests.
@@ -134,51 +135,23 @@ func New() *Parser {
 	return &Parser{}
 }
 
-// normalizeValue converts map[any]any and nested structures to map[string]any recursively.
-// Non-string keys in maps are silently dropped (safe for JSON Schema contract).
-func normalizeValue(v any) any {
-	switch x := v.(type) {
-	case map[any]any:
-		m := make(map[string]any, len(x))
-		for k, val := range x {
-			if strKey, ok := k.(string); ok {
-				m[strKey] = normalizeValue(val)
-			}
-		}
-		return m
-	case map[string]any:
-		return normalizeMap(x)
-	case []any:
-		arr := make([]any, len(x))
-		for i, val := range x {
-			arr[i] = normalizeValue(val)
-		}
-		return arr
-	default:
-		return v
-	}
-}
-
-// normalizeMap recursively normalizes values in a map (handles nested map[any]any in values).
-func normalizeMap(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
-	}
-	res := make(map[string]any, len(m))
-	for k, v := range m {
-		res[k] = normalizeValue(v)
-	}
-	return res
-}
+// normalizeMap clones the decoded JSON-compatible object.
+func normalizeMap(m map[string]any) map[string]any { return maps.Clone(m) }
 
 // rawToSchemaDefinition builds SchemaDefinition from a raw map, supporting both flat and nested formats.
 // Nested: {name, description, schema: {type, properties}} -> extracts name/desc, Schema from inner.
 // Flat: {type, properties, required, ...} -> whole map is the JSON schema.
-func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
+func rawToSchemaDefinition(raw map[string]any) (*prompty.SchemaDefinition, error) {
 	if raw == nil {
-		return nil
+		return nil, nil //nolint:nilnil // absent schema is valid.
 	}
+
 	normalized := normalizeMap(raw)
+	if value, exists := normalized["schema"]; exists {
+		if _, ok := value.(map[string]any); !ok {
+			return nil, errors.New("schema wrapper requires an object schema")
+		}
+	}
 	inner, hasSchema := normalized["schema"].(map[string]any)
 	if hasSchema && inner != nil {
 		name, _ := normalized["name"].(string)
@@ -186,15 +159,15 @@ func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
 		dialect, _ := normalized["dialect"].(string)
 		innerDoc, err := prompty.MapToJSONDocument(inner)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return &prompty.SchemaDefinition{Name: name, Description: desc, Dialect: dialect, Schema: innerDoc}
+		return &prompty.SchemaDefinition{Name: name, Description: desc, Dialect: dialect, Schema: innerDoc}, nil
 	}
 	normDoc, err := prompty.MapToJSONDocument(normalized)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: normDoc}
+	return &prompty.SchemaDefinition{Schema: normDoc}, nil
 }
 
 // Unmarshal parses YAML into manifest.RawManifest.
@@ -247,7 +220,10 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 			}
 		}
 	}
-	raw.ResponseFormat = rawToSchemaDefinition(fm.ResponseFormat)
+	raw.ResponseFormat, err = rawToSchemaDefinition(fm.ResponseFormat)
+	if err != nil {
+		return fmt.Errorf("%w: response_format: %w", prompty.ErrInvalidManifest, err)
+	}
 	raw.Tools = make([]prompty.ToolDefinition, len(fm.Tools))
 	for i, tool := range fm.Tools {
 		paramsDoc, docErr := prompty.MapToJSONDocument(normalizeMap(tool.Parameters))
@@ -265,7 +241,10 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.LayerKind = fm.LayerKind
 	raw.LegacyModelConfig = fm.LegacyModelRaw
 	if fm.LegacyInputsRaw != nil {
-		raw.LegacyInputSchema = rawToSchemaDefinition(fm.LegacyInputsRaw)
+		raw.LegacyInputSchema, err = rawToSchemaDefinition(fm.LegacyInputsRaw)
+		if err != nil {
+			return fmt.Errorf("%w: input_schema: %w", prompty.ErrInvalidManifest, err)
+		}
 	}
 	raw.Imports = make([]manifest.RawImport, len(fm.Imports))
 	for i := range fm.Imports {

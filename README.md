@@ -438,3 +438,5 @@ go test -bench=BenchmarkRenderPlanExecute -benchmem ./...
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The [schema and JSON data contract](docs/schema-data-contract.md) defines exact dynamic numbers, reflection errors, input composition and generated presence validation. `ExtractSchema` returns both the schema and an error.

@@ -3,6 +3,7 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,8 +13,31 @@ import (
 const ComposedMain PromptID = "composed_main"
 
 type ComposedMainInput struct {
-	ClinicName *string `json:"clinic_name,omitempty" prompt:"clinic_name"`
-	Query      string  `json:"query" prompt:"query" validate:"required"`
+	ClinicName *string `json:"clinic_name,omitempty" prompt:"clinic_name,omitempty"`
+	Query      string  `json:"query" prompt:"query"`
+}
+
+func (value ComposedMainInput) JSONSchema() prompty.JSONDocument {
+	return prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")
+}
+
+func (value ComposedMainInput) ValidateSchema() error {
+	return prompty.ValidateSchemaValue(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}"), Dialect: "https://json-schema.org/draft/2020-12/schema"}, value)
+}
+
+func (value *ComposedMainInput) UnmarshalJSON(document []byte) error {
+	if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}"), Dialect: "https://json-schema.org/draft/2020-12/schema"}, document); err != nil {
+		return err
+	}
+	type decodedValue ComposedMainInput
+	var decoded decodedValue
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = ComposedMainInput(decoded)
+	return nil
 }
 
 type ComposedMainPrompt struct {
@@ -29,7 +53,7 @@ func NewComposedMainRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCh
 		return ComposedMainRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(ComposedMain), checkpoint.Descriptor.ID)
 	}
 	input := checkpoint.Input
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return ComposedMainRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {
@@ -91,7 +115,7 @@ func (p *ComposedMainPrompt) newRecipe(ctx context.Context, input ComposedMainIn
 	if p.registry == nil {
 		return ComposedMainRecipe{}, fmt.Errorf("%s recipe requires registry", string(ComposedMain))
 	}
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return ComposedMainRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {

@@ -26,9 +26,6 @@ func NewNoVarsRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoi
 		return NoVarsRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(NoVars), checkpoint.Descriptor.ID)
 	}
 	input := checkpoint.Input
-	if err := validate.Struct(&input); err != nil {
-		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
-	}
 	checkpoint.Input = input
 	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[NoVarsInput](checkpoint)
 	if err != nil {
@@ -84,9 +81,6 @@ func (p *NoVarsPrompt) NewRecipe(ctx context.Context, input NoVarsInput) (NoVars
 func (p *NoVarsPrompt) newRecipe(ctx context.Context, input NoVarsInput, options ...prompty.PromptRuntimeOptions) (NoVarsRecipe, error) {
 	if p.registry == nil {
 		return NoVarsRecipe{}, fmt.Errorf("%s recipe requires registry", string(NoVars))
-	}
-	if err := validate.Struct(&input); err != nil {
-		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(NoVars))
 	if err != nil {

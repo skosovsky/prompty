@@ -1,19 +1,16 @@
 package manifest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
-	"math"
-	"math/big"
-	"reflect"
 	"sort"
-	"strconv"
 
 	"github.com/skosovsky/prompty"
-	"github.com/skosovsky/prompty/internal/late"
+	"github.com/skosovsky/prompty/internal/exactjson"
 )
 
 // RawCondition is a structured matcher for conditional imports (MVP: match map only).
@@ -29,16 +26,16 @@ type RawImport struct {
 
 // RawLayer is a declarative prompt layer or import reference.
 //
-//nolint:golines,tagalign // layer wire struct uses wide aligned field columns
+
 type RawLayer struct {
-	ID          string               `json:"id" yaml:"id"`
-	Role        string               `json:"role,omitempty" yaml:"role,omitempty"`
-	LayerKind   prompty.LayerKind    `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"`
-	ImportRef   string               `json:"import_ref,omitempty" yaml:"import_ref,omitempty"`
-	Content     []RawContentPart     `json:"content,omitempty" yaml:"content,omitempty"`
-	Optional    bool                 `json:"optional,omitempty" yaml:"optional,omitempty"`
+	ID          string               `json:"id"                     yaml:"id"`
+	Role        string               `json:"role,omitempty"         yaml:"role,omitempty"`
+	LayerKind   prompty.LayerKind    `json:"layer_kind,omitempty"   yaml:"layer_kind,omitempty"`
+	ImportRef   string               `json:"import_ref,omitempty"   yaml:"import_ref,omitempty"`
+	Content     []RawContentPart     `json:"content,omitempty"      yaml:"content,omitempty"`
+	Optional    bool                 `json:"optional,omitempty"     yaml:"optional,omitempty"`
 	CachePolicy *prompty.CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
-	Metadata    map[string]any       `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Metadata    map[string]any       `json:"metadata,omitempty"     yaml:"metadata,omitempty"`
 }
 
 // ManifestLoader resolves manifests by id for composition and schema merge.
@@ -97,58 +94,8 @@ func matchCondition(match map[string]any, values prompty.ComposeValues) (bool, e
 	return true, nil
 }
 
-func strictEqual(a, b any) bool {
-	if ar, ok := numericRat(a); ok {
-		br, bok := numericRat(b)
-		return bok && ar.Cmp(br) == 0
-	}
-	return reflect.DeepEqual(a, b)
-}
+func strictEqual(a, b any) bool { return equalSchemaValues(a, b) }
 
-func numericRat(v any) (*big.Rat, bool) {
-	switch n := v.(type) {
-	case int:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int8:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int16:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int32:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int64:
-		return new(big.Rat).SetInt64(n), true
-	case uint:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint8:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint16:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint32:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint64:
-		return new(big.Rat).SetUint64(n), true
-	case float32:
-		return finiteFloatRat(float64(n))
-	case float64:
-		return finiteFloatRat(n)
-	case json.Number:
-		r, ok := new(big.Rat).SetString(n.String())
-		return r, ok
-	default:
-		return nil, false
-	}
-}
-
-func finiteFloatRat(n float64) (*big.Rat, bool) {
-	if math.IsNaN(n) || math.IsInf(n, 0) {
-		return nil, false
-	}
-	r, ok := new(big.Rat).SetString(strconv.FormatFloat(n, 'g', -1, 64))
-	return r, ok
-}
-
-// PeekComposeOrError reports whether manifest bytes declare imports or layers.
-// Unmarshal errors return (false, err) — corrupt bytes are not treated as compose.
 func PeekComposeOrError(data []byte, u Unmarshaler) (bool, error) {
 	return PeekComposeFieldsE(data, u)
 }
@@ -179,60 +126,55 @@ func importActive(imp RawImport, values prompty.ComposeValues, allowMissingValue
 	return matchCondition(imp.Condition.Match, values)
 }
 
-// MergeInputSchemas unions local and import input schemas (codegen uses conservative union).
-//
-//nolint:gocognit // import merge walks properties and late-flag propagation rules
+// MergeInputSchemas combines the input namespace without overriding field contracts.
+// Repeated properties and root constraints must match exactly; required names are unioned.
 func MergeInputSchemas(local *prompty.SchemaDefinition, imports ...*RawManifest) (*prompty.SchemaDefinition, error) {
-	localProps, err := inputProperties(local)
-	if err != nil {
-		return nil, err
-	}
-	merged := maps.Clone(localProps)
+	definitions := []*prompty.SchemaDefinition{local}
 	for _, imp := range imports {
-		if imp == nil {
+		if imp != nil {
+			definitions = append(definitions, imp.InputSchema)
+		}
+	}
+	merge := inputSchemaMerge{root: make(map[string]any), properties: make(map[string]any), dialect: ""}
+	for _, definition := range definitions {
+		if definition == nil {
 			continue
 		}
-		impProps, propErr := inputProperties(imp.InputSchema)
-		if propErr != nil {
-			return nil, propErr
-		}
-		for name, prop := range impProps {
-			if existing, ok := merged[name]; ok {
-				if !samePropertyType(existing, prop) {
-					return nil, fmt.Errorf(
-						"merge inputs: property %q has conflicting type between manifests",
-						name,
-					)
-				}
-				exM, _ := existing.(map[string]any)
-				impM, _ := prop.(map[string]any)
-				if late.PropertyIsLate(impM) && !late.PropertyIsLate(exM) {
-					merged[name] = mergeLateFlagIntoProperty(exM, impM)
-				}
-				continue
-			}
-			merged[name] = prop
+		if err := merge.add(definition); err != nil {
+			return nil, err
 		}
 	}
-	if len(merged) == 0 {
-		return local, nil
+	if merge.dialect == "" {
+		return nil, nil //nolint:nilnil // absent input schemas are valid.
 	}
-	required, reqErr := mergeRequired(local, imports...)
-	if reqErr != nil {
-		return nil, reqErr
-	}
-	schema := map[string]any{
-		"type":       "object",
-		"properties": merged,
-	}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	doc, err := prompty.MapToJSONDocument(schema)
+	required, err := mergeRequired(local, imports...)
 	if err != nil {
 		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: doc}, nil
+	if namespaceErr := merge.validateNamespaces(definitions); namespaceErr != nil {
+		return nil, namespaceErr
+	}
+	merged := merge.root
+	properties := merge.properties
+	dialect := merge.dialect
+	merged["properties"] = properties
+	if len(required) > 0 {
+		merged["required"] = required
+	}
+	document, err := prompty.MapToJSONDocument(merged)
+	if err != nil {
+		return nil, err
+	}
+	return &prompty.SchemaDefinition{Schema: document, Dialect: dialect}, nil
+}
+
+func equalSchemaValues(a, b any) bool {
+	left, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(b)
+	return err == nil && exactjson.Equal(left, right)
 }
 
 func inputProperties(schema *prompty.SchemaDefinition) (map[string]any, error) {
@@ -302,39 +244,6 @@ func requiredSet(schema *prompty.SchemaDefinition) (map[string]bool, error) {
 	return out, nil
 }
 
-func samePropertyType(a, b any) bool {
-	am, aOK := a.(map[string]any)
-	bm, bOK := b.(map[string]any)
-	if !aOK || !bOK {
-		return reflect.DeepEqual(a, b)
-	}
-	at, _ := am["type"].(string)
-	bt, _ := bm["type"].(string)
-	if at != bt {
-		return false
-	}
-	af, _ := am["format"].(string)
-	bf, _ := bm["format"].(string)
-	if af != bf {
-		return false
-	}
-	return late.PropertyIsLate(am) == late.PropertyIsLate(bm)
-}
-
-func mergeLateFlagIntoProperty(existing, importProp map[string]any) map[string]any {
-	out := maps.Clone(existing)
-	if out == nil {
-		out = make(map[string]any)
-	}
-	if v, ok := importProp["late"].(bool); ok && v {
-		out["late"] = true
-	}
-	if v, ok := importProp["x-prompty-late"].(bool); ok && v {
-		out["x-prompty-late"] = true
-	}
-	return out
-}
-
 func cloneRawManifest(src *RawManifest) (*RawManifest, error) {
 	if src == nil {
 		return nil, errors.New("compose: manifest is nil")
@@ -344,7 +253,9 @@ func cloneRawManifest(src *RawManifest) (*RawManifest, error) {
 		return nil, fmt.Errorf("compose: clone manifest: %w", err)
 	}
 	var dst RawManifest
-	if err := json.Unmarshal(data, &dst); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&dst); err != nil {
 		return nil, fmt.Errorf("compose: clone manifest: %w", err)
 	}
 	return &dst, nil
@@ -703,4 +614,74 @@ func manifestMessages(
 		return flattenLayers(raw, activeImports, ctx, visiting)
 	}
 	return raw.Messages, nil
+}
+
+type inputSchemaMerge struct {
+	root       map[string]any
+	properties map[string]any
+	dialect    string
+}
+
+func (m *inputSchemaMerge) add(definition *prompty.SchemaDefinition) error {
+	effective := definition.Dialect
+	if effective == "" {
+		effective = prompty.SchemaDialect2020
+	}
+	if m.dialect != "" && effective != m.dialect {
+		return errors.New("merge inputs: conflicting dialects")
+	}
+	m.dialect = effective
+	document, err := prompty.SchemaDocumentAsMap(definition.Schema)
+	if err != nil {
+		return fmt.Errorf("merge inputs: %w", err)
+	}
+	if _, compileErr := prompty.NewJSONSchemaValidator(nil).
+		CompileSchema(definition.Schema, effective); compileErr != nil {
+		return fmt.Errorf("merge inputs: %w", compileErr)
+	}
+	for key, value := range document {
+		if key == "required" || key == "properties" {
+			continue
+		}
+		if previous, exists := m.root[key]; exists && !equalSchemaValues(previous, value) {
+			return fmt.Errorf("merge inputs: conflicting root constraint %q", key)
+		}
+		m.root[key] = value
+	}
+	fields, err := inputProperties(definition)
+	if err != nil {
+		return err
+	}
+	for name, property := range fields {
+		if previous, exists := m.properties[name]; exists && !equalSchemaValues(previous, property) {
+			return fmt.Errorf("merge inputs: property %q has conflicting contract between manifests", name)
+		}
+		m.properties[name] = property
+	}
+	return nil
+}
+func (m *inputSchemaMerge) validateNamespaces(definitions []*prompty.SchemaDefinition) error {
+	for _, definition := range definitions {
+		if definition == nil {
+			continue
+		}
+		document, err := prompty.SchemaDocumentAsMap(definition.Schema)
+		if err != nil {
+			return err
+		}
+		fields, err := inputProperties(definition)
+		if err != nil {
+			return err
+		}
+		if len(fields) == len(m.properties) {
+			continue
+		}
+		if additional, exists := document["additionalProperties"]; exists && additional != true {
+			return errors.New("merge inputs: additionalProperties cannot be preserved while adding fields")
+		}
+		if _, exists := document["unevaluatedProperties"]; exists {
+			return errors.New("merge inputs: unevaluatedProperties cannot be preserved while adding fields")
+		}
+	}
+	return nil
 }

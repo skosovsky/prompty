@@ -2,7 +2,6 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -79,6 +78,7 @@ func runtimePlanFromCheckpoint(
 	input := RegistryPlanInput{
 		boundVars:     inputVars,
 		chatHistory:   nil,
+		historyValues: nil,
 		composeValues: nil,
 		composeSet:    false,
 	}
@@ -189,8 +189,8 @@ func jsonDocumentObject(doc JSONDocument, label string) (map[string]any, error) 
 	if len(doc) == 0 {
 		return make(map[string]any), nil
 	}
-	var out map[string]any
-	if err := json.Unmarshal(doc, &out); err != nil {
+	out, err := JSONDocumentAsMap(doc)
+	if err != nil {
 		return nil, fmt.Errorf("%s: decode JSON object: %w", label, err)
 	}
 	if out == nil {

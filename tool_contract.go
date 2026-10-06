@@ -2,12 +2,12 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/skosovsky/prompty/internal/exactjson"
 )
 
 // ToolManifest is the runtime tool contract visible to prompt materialization.
@@ -243,15 +243,7 @@ func jsonDocumentsEqual(a, b JSONDocument) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}
-	var av any
-	if err := json.Unmarshal(a, &av); err != nil {
-		return string(a) == string(b)
-	}
-	var bv any
-	if err := json.Unmarshal(b, &bv); err != nil {
-		return false
-	}
-	return reflect.DeepEqual(av, bv)
+	return exactjson.Equal(a, b)
 }
 
 // ExecuteWithContract materializes the render plan and validates required tools before returning it.

@@ -49,14 +49,15 @@ func (*nilPointerSchemaProvider) JSONSchema() JSONDocument {
 func TestDualSchemaEngine_Consistency(t *testing.T) {
 	t.Parallel()
 
-	reflectSchema := ExtractSchema(dualSchemaReflectResult{})
+	reflectSchema, err := ExtractSchema(dualSchemaReflectResult{})
+	require.NoError(t, err)
 	fixtureSchema := loadDualSchemaFixture(t)
 
 	require.NotNil(t, reflectSchema)
 	require.NotNil(t, fixtureSchema)
 	assert.Equal(t, fixtureSchema, reflectSchema)
 	assert.Equal(t, false, reflectSchema["additionalProperties"])
-	assert.Equal(t, []string{"id", "name", "tags", "details"}, reflectSchema["required"])
+	assert.Equal(t, []string{"id", "name", "tags", "score", "details"}, reflectSchema["required"])
 }
 
 func TestExtractSchema_EmbeddedStructFlattening(t *testing.T) {
@@ -71,7 +72,8 @@ func TestExtractSchema_EmbeddedStructFlattening(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	schema := ExtractSchema(user{})
+	schema, err := ExtractSchema(user{})
+	require.NoError(t, err)
 	require.NotNil(t, schema)
 	props := schema["properties"].(map[string]any)
 	assert.Contains(t, props, "id")
@@ -91,7 +93,8 @@ func TestExtractSchema_EmbeddedStructWithExplicitJSONNameDoesNotFlatten(t *testi
 		Name string `json:"name"`
 	}
 
-	schema := ExtractSchema(user{})
+	schema, err := ExtractSchema(user{})
+	require.NoError(t, err)
 	require.NotNil(t, schema)
 	props := schema["properties"].(map[string]any)
 	assert.NotContains(t, props, "id")
@@ -105,7 +108,11 @@ func TestExtractSchema_TypedNilPointerMatchesValueType(t *testing.T) {
 	t.Parallel()
 
 	var ptr *dualSchemaReflectResult
-	assert.Equal(t, ExtractSchema(dualSchemaReflectResult{}), ExtractSchema(ptr))
+	value, err := ExtractSchema(dualSchemaReflectResult{})
+	require.NoError(t, err)
+	pointer, err := ExtractSchema(ptr)
+	require.NoError(t, err)
+	assert.Equal(t, value, pointer)
 }
 
 func TestExtractSchema_NilPointerSchemaProviderDoesNotPanic(t *testing.T) {
@@ -113,7 +120,8 @@ func TestExtractSchema_NilPointerSchemaProviderDoesNotPanic(t *testing.T) {
 
 	var ptr *nilPointerSchemaProvider
 	require.NotPanics(t, func() {
-		schema := ExtractSchema(ptr)
+		schema, err := ExtractSchema(ptr)
+		require.NoError(t, err)
 		require.NotNil(t, schema)
 		assert.Equal(t, false, schema["additionalProperties"])
 	})
@@ -127,13 +135,9 @@ func TestExtractSchema_RecursiveStructTerminates(t *testing.T) {
 		Next  *node `json:"next,omitempty"`
 	}
 
-	schema := ExtractSchema(node{})
-	require.NotNil(t, schema)
-	props := schema["properties"].(map[string]any)
-	next := props["next"].(map[string]any)
-	assert.Equal(t, "object", next["type"])
-	assert.Equal(t, false, next["additionalProperties"])
-	assert.Empty(t, next["properties"])
+	schema, err := ExtractSchema(node{})
+	require.ErrorIs(t, err, ErrSchemaUnsupported)
+	require.Nil(t, schema)
 }
 
 func TestExtractSchema_JSONTagDashCommaUsesLiteralDashName(t *testing.T) {
@@ -143,7 +147,8 @@ func TestExtractSchema_JSONTagDashCommaUsesLiteralDashName(t *testing.T) {
 		Value string `json:"-,"` //nolint:staticcheck // literal "-" as JSON key, not omit
 	}
 
-	schema := ExtractSchema(payload{})
+	schema, err := ExtractSchema(payload{})
+	require.NoError(t, err)
 	require.NotNil(t, schema)
 	props := schema["properties"].(map[string]any)
 	assert.Contains(t, props, "-")
@@ -158,11 +163,12 @@ func TestExtractSchema_ByteSliceUsesStringSchema(t *testing.T) {
 		Data []byte `json:"data"`
 	}
 
-	schema := ExtractSchema(payload{})
+	schema, err := ExtractSchema(payload{})
+	require.NoError(t, err)
 	require.NotNil(t, schema)
 	props := schema["properties"].(map[string]any)
 	require.Contains(t, props, "data")
-	assert.Equal(t, "string", props["data"].(map[string]any)["type"])
+	assert.Equal(t, "string", props["data"].(map[string]any)["anyOf"].([]any)[0].(map[string]any)["type"])
 }
 
 func loadDualSchemaFixture(t *testing.T) map[string]any {

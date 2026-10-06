@@ -3,11 +3,14 @@ package prompty
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"net/url"
+	"slices"
 )
 
 const streamBufferPreviewLimit = 1024
@@ -148,9 +151,42 @@ func prepareStructuredStreamExecution[T any](exec *PromptExecution) (*PromptExec
 	if err != nil {
 		return nil, err
 	}
-	document, err := MapToJSONDocument(map[string]any{"anyOf": []any{
-		itemSchema, map[string]any{schemaKeywordType: schemaTypeArray, schemaKeywordItems: itemSchema},
-	}})
+	documentSchema := map[string]any{
+		schemaKeywordAnyOf: []any{
+			itemSchema,
+			map[string]any{schemaKeywordType: schemaTypeArray, schemaKeywordItems: itemSchema},
+		},
+	}
+	if schemaHasReferenceScope(itemSchema) {
+		// Give the item its own resource boundary so its local refs still address
+		// the original item root, and include that resource only once.
+		originalDocument, marshalErr := MapToJSONDocument(itemSchema)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		wrapperURI := fmt.Sprintf("%s?structured-stream=%x", schemaSourceURI, sha256.Sum256(originalDocument))
+		sourceBase, _ := url.Parse(schemaSourceURI)
+		declaredID, _ := itemSchema["$id"].(string)
+		itemID, parseErr := url.Parse(declaredID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("structured stream item id: %w", parseErr)
+		}
+		itemSchema["$id"] = sourceBase.ResolveReference(itemID).String()
+		definitionsKeyword := "$defs"
+		if working.ResponseFormat.Dialect == SchemaDialect7 {
+			definitionsKeyword = "definitions"
+		}
+		reference := map[string]any{schemaKeywordRef: "#/" + definitionsKeyword + "/item"}
+		documentSchema = map[string]any{
+			"$id":              wrapperURI,
+			definitionsKeyword: map[string]any{"item": itemSchema},
+			schemaKeywordAnyOf: []any{
+				reference,
+				map[string]any{schemaKeywordType: schemaTypeArray, schemaKeywordItems: reference},
+			},
+		}
+	}
+	document, err := MapToJSONDocument(documentSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +439,7 @@ func (p *structuredStreamParser[T]) decodeCurrent() (T, error) {
 
 	raw := p.current.String()
 	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&item); err != nil {
 		return item, p.errorf("failed to decode streamed JSON object: %w", err)
@@ -455,4 +492,24 @@ func (p *structuredStreamParser[T]) errorf(format string, args ...any) error {
 	values := append([]any{ErrStructuredStream}, args...)
 	values = append(values, preview)
 	return fmt.Errorf("%w: stream structured output: "+format+"; partial buffer tail: %q", values...)
+}
+
+func schemaHasReferenceScope(value any) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			switch key {
+			case schemaKeywordRef, schemaKeywordDynamicRef, "$recursiveRef", "$id", "$anchor", "$dynamicAnchor":
+				return true
+			}
+			if schemaHasReferenceScope(child) {
+				return true
+			}
+		}
+	case []any:
+		if slices.ContainsFunc(node, schemaHasReferenceScope) {
+			return true
+		}
+	}
+	return false
 }

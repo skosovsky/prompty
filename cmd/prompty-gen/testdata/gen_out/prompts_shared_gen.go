@@ -7,14 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
 	"io"
 )
 
 type PromptID string
-
-var validate = validator.New()
 
 type Recipe interface {
 	PromptID() PromptID
@@ -34,6 +31,7 @@ type PromptCatalog interface {
 	NewComposedMainRecipe(ctx context.Context, input ComposedMainInput) (ComposedMainRecipe, error)
 	NewLateBindingAgentRecipe(ctx context.Context, input LateBindingAgentInput) (LateBindingAgentRecipe, error)
 	NewLateRequiredAgentRecipe(ctx context.Context, input LateRequiredAgentInput) (LateRequiredAgentRecipe, error)
+	NewSchemaFidelityRecipe(ctx context.Context, input SchemaFidelityInput) (SchemaFidelityRecipe, error)
 	NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error)
 }
 
@@ -44,11 +42,12 @@ type promptCatalog struct {
 	ComposedMain            *ComposedMainPrompt
 	LateBindingAgent        *LateBindingAgentPrompt
 	LateRequiredAgent       *LateRequiredAgentPrompt
+	SchemaFidelity          *SchemaFidelityPrompt
 	SupportAgent            *SupportAgentPrompt
 }
 
 func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog {
-	return &promptCatalog{registry: r, ComposedChild: &ComposedChildPrompt{registry: r}, ComposedConditionalMain: &ComposedConditionalMainPrompt{registry: r}, ComposedMain: &ComposedMainPrompt{registry: r}, LateBindingAgent: &LateBindingAgentPrompt{registry: r}, LateRequiredAgent: &LateRequiredAgentPrompt{registry: r}, SupportAgent: &SupportAgentPrompt{registry: r}}
+	return &promptCatalog{registry: r, ComposedChild: &ComposedChildPrompt{registry: r}, ComposedConditionalMain: &ComposedConditionalMainPrompt{registry: r}, ComposedMain: &ComposedMainPrompt{registry: r}, LateBindingAgent: &LateBindingAgentPrompt{registry: r}, LateRequiredAgent: &LateRequiredAgentPrompt{registry: r}, SchemaFidelity: &SchemaFidelityPrompt{registry: r}, SupportAgent: &SupportAgentPrompt{registry: r}}
 }
 
 type PromptEntry struct {
@@ -116,6 +115,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input ComposedChildInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -139,6 +139,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -169,6 +170,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var decoded ComposedConditionalMainRecipePayload
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&decoded); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -195,6 +197,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -225,6 +228,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input ComposedMainInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -248,6 +252,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedMainInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -278,6 +283,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input LateBindingAgentInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -301,6 +307,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeCheckpoint[LateBindingAgentInput, LateBindingAgentLateInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -331,6 +338,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input LateRequiredAgentInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -354,6 +362,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -373,6 +382,61 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			}
 			return recipe, nil
 		}
+	case SchemaFidelity:
+		metadata = prompty.PromptMetadata{ID: "schema_fidelity"}
+		requiredTools = []string{}
+		descriptor = prompty.ManifestDescriptor{ID: "schema_fidelity", Digest: "e4051f2ed2cdcae93b4dc3ee471daa6c9ea2cdcecf97c58a6ab11ccecd954129"}
+		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
+			if i.registry == nil {
+				return nil, fmt.Errorf("prompt index: registry is required for %q", "schema_fidelity")
+			}
+			var input SchemaFidelityInput
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&input); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s input: %w", "schema_fidelity", err)
+			}
+			recipe, err := (&SchemaFidelityPrompt{registry: i.registry}).NewRecipe(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
+		decodeRecipeCheckpoint = func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[SchemaFidelityInput, SchemaFidelityLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "schema_fidelity", err)
+			}
+			recipe, err := NewSchemaFidelityRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}
 	case SupportAgent:
 		metadata = prompty.PromptMetadata{ID: "support_agent", Version: "1.2", Description: "Customer support agent"}
 		requiredTools = []string{}
@@ -384,6 +448,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input SupportAgentInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -407,6 +472,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -449,6 +515,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedChildInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -474,6 +541,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedConditionalMainInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -499,6 +567,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[ComposedMainInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -524,6 +593,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeCheckpoint[LateBindingAgentInput, LateBindingAgentLateInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -549,6 +619,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -569,11 +640,38 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			return recipe, nil
 		}(payload)
 		return recipe, true, err
+	case SchemaFidelity:
+		recipe, err := func(payload []byte) (Recipe, error) {
+			var checkpoint prompty.PromptRecipeCheckpoint[SchemaFidelityInput, SchemaFidelityLateInput]
+			var err error
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
+			decoder.DisallowUnknownFields()
+			if err = decoder.Decode(&checkpoint); err == nil {
+				if err = decoder.Decode(&struct{}{}); err != io.EOF {
+					if err == nil {
+						err = fmt.Errorf("unexpected trailing JSON value")
+					}
+				} else {
+					err = nil
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("decode %s recipe checkpoint: %w", "schema_fidelity", err)
+			}
+			recipe, err := NewSchemaFidelityRecipeFromCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			return recipe, nil
+		}(payload)
+		return recipe, true, err
 	case SupportAgent:
 		recipe, err := func(payload []byte) (Recipe, error) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -634,10 +732,14 @@ func (c *promptCatalog) NewLateRequiredAgentRecipe(ctx context.Context, input La
 	return c.LateRequiredAgent.NewRecipe(ctx, input)
 }
 
+func (c *promptCatalog) NewSchemaFidelityRecipe(ctx context.Context, input SchemaFidelityInput) (SchemaFidelityRecipe, error) {
+	return c.SchemaFidelity.NewRecipe(ctx, input)
+}
+
 func (c *promptCatalog) NewSupportAgentRecipe(ctx context.Context, input SupportAgentInput) (SupportAgentRecipe, error) {
 	return c.SupportAgent.NewRecipe(ctx, input)
 }
 
 func AllPromptIDs() []PromptID {
-	return []PromptID{ComposedChild, ComposedConditionalMain, ComposedMain, LateBindingAgent, LateRequiredAgent, SupportAgent}
+	return []PromptID{ComposedChild, ComposedConditionalMain, ComposedMain, LateBindingAgent, LateRequiredAgent, SchemaFidelity, SupportAgent}
 }

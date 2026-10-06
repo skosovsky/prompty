@@ -16,9 +16,11 @@ type ToolHandler[TArgs any, TResult any] interface {
 
 // TypedTool binds a handler to JSON Schema derived from TArgs.
 type TypedTool[TArgs any, TResult any] struct {
-	name    string
-	handler func(TArgs) (TResult, error)
-	schema  JSONDocument
+	name      string
+	handler   func(TArgs) (TResult, error)
+	schema    JSONDocument
+	dialect   string
+	validator ValueValidator
 }
 
 // NewTypedTool registers a tool with schema inferred from TArgs.
@@ -33,18 +35,24 @@ func NewTypedTool[TArgs any, TResult any](
 		return nil, errors.New("typed tool: handler is nil")
 	}
 	var zero TArgs
-	schemaMap := ExtractSchema(zero)
-	if schemaMap == nil {
-		return nil, fmt.Errorf("typed tool %q: cannot derive schema from %T", name, zero)
+	schemaMap, err := ExtractSchema(zero)
+	if err != nil {
+		return nil, fmt.Errorf("typed tool %q: %w", name, err)
 	}
 	schemaDoc, err := MapToJSONDocument(schemaMap)
 	if err != nil {
 		return nil, fmt.Errorf("typed tool %q: %w", name, err)
 	}
+	compiled, err := NewJSONSchemaValidator(nil).CompileSchema(schemaDoc, schemaDeclaredDialect(schemaMap))
+	if err != nil {
+		return nil, fmt.Errorf("typed tool %q: %w", name, err)
+	}
 	return &TypedTool[TArgs, TResult]{
-		name:    name,
-		handler: handler,
-		schema:  schemaDoc,
+		name:      name,
+		handler:   handler,
+		schema:    schemaDoc,
+		dialect:   schemaDeclaredDialect(schemaMap),
+		validator: compiled,
 	}, nil
 }
 
@@ -61,7 +69,7 @@ func (t *TypedTool[TArgs, TResult]) Definition() ToolDefinition {
 	return ToolDefinition{
 		Name:         t.name,
 		Description:  "",
-		Dialect:      "",
+		Dialect:      t.dialect,
 		Parameters:   CloneJSONDocument(t.schema),
 		Capabilities: nil,
 	}
@@ -71,6 +79,9 @@ func (t *TypedTool[TArgs, TResult]) Definition() ToolDefinition {
 func (t *TypedTool[TArgs, TResult]) ValidateArgs(argsJSON string) error {
 	if t == nil {
 		return errors.New("typed tool: nil")
+	}
+	if err := t.validator.ValidateJSON(JSONDocument(argsJSON)); err != nil {
+		return err
 	}
 	_, err := DecodeToolArgs[TArgs](argsJSON)
 	return err
@@ -101,6 +112,9 @@ func (t *TypedTool[TArgs, TResult]) Invoke(argsJSON string) (TResult, error) {
 	var zero TResult
 	if t == nil {
 		return zero, errors.New("typed tool: nil")
+	}
+	if err := t.ValidateArgs(argsJSON); err != nil {
+		return zero, err
 	}
 	args, err := DecodeToolArgs[TArgs](argsJSON)
 	if err != nil {

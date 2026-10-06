@@ -7,14 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
 	"io"
 )
 
 type PromptID string
-
-var validate = validator.New()
 
 type Recipe interface {
 	PromptID() PromptID
@@ -106,6 +103,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input SupportAgentInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -129,6 +127,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -171,6 +170,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {

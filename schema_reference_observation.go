@@ -24,10 +24,10 @@ func registerDiagnosticObservation(compiler *jsonschema.Compiler, identity strin
 }
 
 func diagnosticObservedTarget(schema *jsonschema.Schema, keyword string) *jsonschema.Schema {
-	if keyword == "$ref" {
+	if keyword == schemaKeywordRef {
 		return schema.Ref
 	}
-	if keyword == "$dynamicRef" && schema.DynamicRef != nil {
+	if keyword == schemaKeywordDynamicRef && schema.DynamicRef != nil {
 		return schema.DynamicRef.Ref
 	}
 	return nil // Ignored keyword in the actual dialect, not an invented edge.

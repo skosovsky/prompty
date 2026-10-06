@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -69,6 +70,9 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 	f.Line()
 
 	m := newSchemaMapper(rootName)
+	if spec.InputSchema != nil {
+		m.dialect = spec.InputSchema.Dialect
+	}
 	lateInputType := rootName + "LateInput"
 	var earlyInputSchema *prompty.SchemaDefinition
 	hasLateInput := false
@@ -81,28 +85,35 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 		if validateErr := validateObjectSchemaForInput(inputSchema); validateErr != nil {
 			return nil, fmt.Errorf("input schema: %w", validateErr)
 		}
+		if _, compileErr := prompty.NewJSONSchemaValidator(nil).
+			CompileSchema(spec.InputSchema.Schema, spec.InputSchema.Dialect); compileErr != nil {
+			return nil, fmt.Errorf("input schema: %w", compileErr)
+		}
 		earlySchema, lateSchema, hasLate := splitEarlyLateInputSchema(inputSchema)
+		if hasLate {
+			if splitErr := validateSplitRootConstraints(inputSchema); splitErr != nil {
+				return nil, splitErr
+			}
+		}
 		hasLateInput = hasLate
 		earlyInputSchema, err = schemaDefinitionFromMap(earlySchema)
 		if err != nil {
 			return nil, fmt.Errorf("input schema: %w", err)
 		}
-		earlyProps, _ := earlySchema["properties"].(map[string]any)
-		if len(earlyProps) > 0 {
-			stmts, genErr := m.GenerateTypes(earlySchema, "Input")
-			if genErr != nil {
-				return nil, fmt.Errorf("input schema: %w", genErr)
-			}
-			for _, stmt := range stmts {
-				f.Add(stmt)
-				f.Line()
-			}
-		} else {
-			f.Type().Id(inputType).Struct()
+
+		earlyInputSchema.Dialect = spec.InputSchema.Dialect
+		stmts, genErr := m.GenerateTypes(earlySchema, "Input")
+		if genErr != nil {
+			return nil, fmt.Errorf("input schema: %w", genErr)
+		}
+		for _, stmt := range stmts {
+			f.Add(stmt)
 			f.Line()
 		}
+
 		if hasLateInput {
 			lateMapper := newSchemaMapper(rootName)
+			lateMapper.dialect = spec.InputSchema.Dialect
 			lateStmts, genErr := lateMapper.GenerateTypes(lateSchema, "LateInput")
 			if genErr != nil {
 				return nil, fmt.Errorf("late input schema: %w", genErr)
@@ -117,8 +128,21 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 		f.Line()
 	}
 
+	if spec.ResponseFormat != nil {
+		if _, compileErr := prompty.NewJSONSchemaValidator(nil).
+			CompileSchema(spec.ResponseFormat.Schema, spec.ResponseFormat.Dialect); compileErr != nil {
+			return nil, fmt.Errorf("response format: %w", compileErr)
+		}
+	}
 	hasOutputSchema := isStructSchema(spec.ResponseFormat)
+	if spec.ResponseFormat != nil && !hasOutputSchema {
+		return nil, errors.New(
+			"response format: generated output requires an object with declared properties; use caller-owned types for other schemas",
+		)
+	}
+
 	if hasOutputSchema {
+		m.dialect = spec.ResponseFormat.Dialect
 		outputSchema, err := schemaAsMap(spec.ResponseFormat.Schema)
 		if err != nil {
 			return nil, fmt.Errorf("response format: %w", err)
@@ -749,26 +773,17 @@ func composeConditionRuntimeTypeGuard(
 			jen.List(jen.Id("_"), jen.Id(okName)).Op(":=").Id(valueName).Assert(jen.String()),
 			jen.Op("!").Id(okName),
 		).Block(composeConditionTypeErrorReturn(recipeType, constName, cond, "string"))
-	case composeConditionKindInt:
-		numberName := "number" + cond.FieldName
-		return jen.If(
-			jen.List(jen.Id(numberName), jen.Id(okName)).
-				Op(":=").
-				Id(valueName).
-				Assert(jen.Float64()),
-			jen.Op("!").
-				Id(okName).
-				Op("||").
-				Qual("math", "Trunc").
-				Call(jen.Id(numberName)).
-				Op("!=").
-				Id(numberName),
-		).Block(composeConditionTypeErrorReturn(recipeType, constName, cond, "integer"))
-	case composeConditionKindFloat:
-		return jen.If(
-			jen.List(jen.Id("_"), jen.Id(okName)).Op(":=").Id(valueName).Assert(jen.Float64()),
-			jen.Op("!").Id(okName),
-		).Block(composeConditionTypeErrorReturn(recipeType, constName, cond, "number"))
+	case composeConditionKindInt, composeConditionKindFloat:
+		kind := "number"
+		if cond.Kind == composeConditionKindInt {
+			kind = "integer"
+		}
+		return jen.If(jen.Id("err").Op(":=").Qual("github.com/skosovsky/prompty", "ValidateSchemaValue").Call(
+			jen.Op("&").
+				Qual("github.com/skosovsky/prompty", "SchemaDefinition").
+				Values(jen.Id("Schema").Op(":").Qual("github.com/skosovsky/prompty", "JSONDocument").Call(jen.Lit(`{"type":"`+kind+`"}`))),
+			jen.Id(valueName)),
+			jen.Id("err").Op("!=").Nil()).Block(composeConditionTypeErrorReturn(recipeType, constName, cond, kind))
 	default:
 		return jen.Empty()
 	}
@@ -856,13 +871,15 @@ func buildRecipeInputValidationBlock(
 		return nil, err
 	}
 	body := append([]jen.Code{}, defaultStmts...)
-	body = append(
-		body,
-		jen.If(jen.Id("err").Op(":=").Id("validate").Dot("Struct").Call(jen.Op("&").Id("input")).Op(";").Id("err").Op("!=").Nil()).
-			Block(
-				jen.Return(jen.List(jen.Id(recipeType).Values(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validate input: %w"), jen.Id("err")))),
-			),
-	)
+	if inputSchema != nil {
+		body = append(
+			body,
+			jen.If(jen.Id("err").Op(":=").Id("input").Dot("ValidateSchema").Call().Op(";").Id("err").Op("!=").Nil()).
+				Block(
+					jen.Return(jen.List(jen.Id(recipeType).Values(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validate input: %w"), jen.Id("err")))),
+				),
+		)
+	}
 	if inputSchemaHasBindableProperties(inputSchema) {
 		body = append(body,
 			jen.If(
@@ -940,33 +957,24 @@ func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, e
 					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
 				),
 			)
-		case jsonSchemaTypeInteger:
-			defNum, ok := toFloat(defVal)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected numeric default value",
-					propName,
-				)
+		case jsonSchemaTypeInteger, jsonSchemaTypeNumber:
+			document, err := prompty.MarshalJSONDocument(defVal)
+			if err != nil {
+				return nil, err
 			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(int64(defNum)),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
-			)
-		case jsonSchemaTypeNumber:
-			defNum, ok := toFloat(defVal)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected numeric default value",
-					propName,
-				)
+			property, err := prompty.MarshalJSONDocument(propSchema)
+			if err != nil {
+				return nil, err
 			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(defNum),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
+			if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: property}, document); err != nil {
+				return nil, fmt.Errorf("input schema default for %q: %w", propName, err)
+			}
+			stmts = append(stmts, jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
+				jen.Id("v").
+					Op(":=").
+					Qual("encoding/json", "Number").
+					Call(jen.Lit(string(document))),
+				jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v")),
 			)
 		case jsonSchemaTypeBoolean:
 			defBool, ok := defVal.(bool)

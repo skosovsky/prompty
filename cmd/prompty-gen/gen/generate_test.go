@@ -60,8 +60,8 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if !strings.Contains(out, "type PromptID string") {
 		t.Error("expected type PromptID string")
 	}
-	if !strings.Contains(out, "var validate = validator.New()") {
-		t.Error("expected package-level validate singleton")
+	if strings.Contains(out, "validator.New()") {
+		t.Error("generated code must validate the original schema")
 	}
 	if !strings.Contains(out, "type PromptCatalog interface") {
 		t.Error("expected PromptCatalog interface")
@@ -203,7 +203,7 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "func (p *SupportAgentPrompt) ID()") {
 		t.Error("expected ID method on SupportAgentPrompt")
 	}
-	if !strings.Contains(out, "validate.Struct") {
+	if !strings.Contains(out, "input.ValidateSchema()") {
 		t.Error("expected input validation")
 	}
 	if strings.Contains(out, "p.registry.Plan") {
@@ -517,7 +517,7 @@ func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
 	if !strings.Contains(out, "type RouterOutputUsersItem struct") {
 		t.Error("expected type RouterOutputUsersItem struct for array-of-object in Output")
 	}
-	if !strings.Contains(out, "Users []RouterOutputUsersItem") {
+	if !strings.Contains(out, "Users *[]RouterOutputUsersItem") {
 		t.Error("expected field Users []RouterOutputUsersItem (not ...OutputItemUsers)")
 	}
 }
@@ -615,8 +615,8 @@ func TestGenerateManifestTypes_Dive(t *testing.T) {
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "dive") {
-		t.Error("expected validate dive tag for array of objects")
+	if !strings.Contains(out, "ValidateSchemaValue") {
+		t.Error("expected schema validation for array of objects")
 	}
 }
 
@@ -714,8 +714,8 @@ func TestGenerateManifestTypes_Oneof(t *testing.T) {
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "oneof=pending done") {
-		t.Error("expected oneof validate tag from enum")
+	if !strings.Contains(out, `\"enum\":[\"pending\",\"done\"]`) {
+		t.Error("expected original enum schema")
 	}
 }
 
@@ -744,8 +744,8 @@ func TestGenerateManifestTypes_RequiredBoolWithFalse(t *testing.T) {
 	if !strings.Contains(out, "*bool") {
 		t.Error("required bool must be *bool for presence semantics")
 	}
-	if !strings.Contains(out, "validate:\"required\"") && !strings.Contains(out, "validate:`required`") {
-		t.Error("required bool must have validate required tag")
+	if !strings.Contains(out, `\"required\":[\"enabled\"]`) {
+		t.Error("required bool must preserve schema presence")
 	}
 	if strings.Contains(out, "vars[") {
 		t.Error("must not generate legacy vars map assignments")
@@ -776,8 +776,8 @@ func TestGenerateManifestTypes_MinItemsMaxItems(t *testing.T) {
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "min=1") || !strings.Contains(out, "max=10") {
-		t.Error("expected minItems/maxItems as min/max validate tags")
+	if !strings.Contains(out, `\"minItems\":1`) || !strings.Contains(out, `\"maxItems\":10`) {
+		t.Error("expected original array bounds")
 	}
 }
 
@@ -1062,10 +1062,10 @@ func TestGenerateManifestTypes_FormatMessages(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "ChatHistory []prompty.ChatMessage") {
+	if !strings.Contains(out, "ChatHistory *[]prompty.ChatMessage") {
 		t.Errorf("expected []prompty.ChatMessage for format messages, got:\n%s", out)
 	}
-	if !strings.Contains(out, `prompt:"chat_history"`) {
+	if !strings.Contains(out, `prompt:"chat_history,omitempty"`) {
 		t.Error("expected prompt tag chat_history")
 	}
 }
@@ -1112,7 +1112,7 @@ func TestGenerateManifestTypes_LateInput(t *testing.T) {
 	if !strings.Contains(out, "type MainAgentLateInput struct") {
 		t.Error("expected MainAgentLateInput")
 	}
-	if !strings.Contains(out, `prompt:"patient_dossier"`) {
+	if !strings.Contains(out, `prompt:"patient_dossier,omitempty"`) {
 		t.Error("expected prompt tag on late field")
 	}
 	if !strings.Contains(out, "func (r MainAgentRecipe) BindLate(") {
@@ -1135,9 +1135,8 @@ func TestGenerateManifestTypes_LateRequiredInput(t *testing.T) {
 				"properties": map[string]any{
 					"user_query": map[string]any{"type": "string"},
 					"patient_dossier": map[string]any{
-						"type":     "string",
-						"late":     true,
-						"required": true,
+						"type": "string",
+						"late": true,
 					},
 				},
 				"required": []any{"user_query", "patient_dossier"},
@@ -1158,7 +1157,8 @@ func TestGenerateManifestTypes_LateRequiredInput(t *testing.T) {
 		t.Fatal("expected LateRequiredAgentLateInput")
 	}
 	lateBlock := out[lateIdx:]
-	if !strings.Contains(lateBlock, "PatientDossier") || !strings.Contains(lateBlock, `validate:"required"`) {
+	if !strings.Contains(lateBlock, "PatientDossier") ||
+		!strings.Contains(lateBlock, `\"required\":[\"patient_dossier\"]`) {
 		t.Errorf("expected required late field with validate tag, got:\n%s", lateBlock)
 	}
 	if !strings.Contains(lateBlock, `prompt:"patient_dossier"`) {

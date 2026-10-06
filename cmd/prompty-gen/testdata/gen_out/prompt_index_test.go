@@ -119,7 +119,7 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsUnknownFields(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown field")
 }
 
-func TestPromptIndex_DecodeRecipeCheckpoint_RejectsUnknownNestedInputFields(t *testing.T) {
+func TestPromptIndex_DecodeRecipeCheckpoint_AllowsSchemaPermittedNestedInputFields(t *testing.T) {
 	t.Parallel()
 	index := NewPromptIndex(registryStub{})
 	payload := []byte(`{"descriptor":{"id":"support_agent","digest":"sha256:test"},"input":{"user_query":"hello","unknown":true}}`)
@@ -127,8 +127,7 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsUnknownNestedInputFields(t *t
 	_, ok, err := index.DecodeRecipeCheckpoint(SupportAgent, payload)
 
 	require.True(t, ok)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown field")
+	require.NoError(t, err)
 }
 
 func TestPromptIndex_DecodeRecipeCheckpoint_RejectsDescriptorIDMismatch(t *testing.T) {
@@ -156,7 +155,7 @@ func TestNewSupportAgentRecipeFromCheckpoint_RejectsDescriptorIDMismatch(t *test
 	assert.Contains(t, err.Error(), "checkpoint descriptor id mismatch")
 }
 
-func TestNewSupportAgentRecipeFromCheckpoint_ValidatesInput(t *testing.T) {
+func TestNewSupportAgentRecipeFromCheckpoint_AllowsRequiredEmptyString(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]{
 		Descriptor: prompty.ManifestDescriptor{ID: string(SupportAgent), Digest: "sha256:test"},
@@ -165,8 +164,7 @@ func TestNewSupportAgentRecipeFromCheckpoint_ValidatesInput(t *testing.T) {
 
 	_, err := NewSupportAgentRecipeFromCheckpoint(checkpoint)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "validate input")
+	require.NoError(t, err)
 }
 
 func TestNewSupportAgentRecipeFromCheckpoint_AppliesDefaults(t *testing.T) {
@@ -201,7 +199,7 @@ func TestNewComposedConditionalMainRecipeFromCheckpoint_RejectsEmptyComposeValue
 	assert.Contains(t, err.Error(), "checkpoint compose context requires")
 }
 
-func TestNewLateRequiredAgentRecipeFromCheckpoint_RejectsInvalidLateInput(t *testing.T) {
+func TestNewLateRequiredAgentRecipeFromCheckpoint_AllowsRequiredEmptyLateInput(t *testing.T) {
 	t.Parallel()
 	checkpoint := prompty.PromptRecipeCheckpoint[LateRequiredAgentInput, LateRequiredAgentLateInput]{
 		Descriptor: prompty.ManifestDescriptor{ID: string(LateRequiredAgent), Digest: "sha256:test"},
@@ -212,8 +210,7 @@ func TestNewLateRequiredAgentRecipeFromCheckpoint_RejectsInvalidLateInput(t *tes
 
 	_, err := NewLateRequiredAgentRecipeFromCheckpoint(checkpoint)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "late input")
+	require.NoError(t, err)
 }
 
 func TestPromptIndex_DecodeRecipeCheckpoint_RejectsInvalidLateInput(t *testing.T) {
@@ -230,7 +227,7 @@ func TestPromptIndex_DecodeRecipeCheckpoint_RejectsInvalidLateInput(t *testing.T
 
 	require.True(t, ok)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "late input")
+	assert.ErrorIs(t, err, prompty.ErrSchemaMismatch)
 }
 
 func TestPromptEntry_MetadataRequiredToolsAndDescriptor(t *testing.T) {
@@ -263,7 +260,7 @@ func TestPromptEntry_NewRecipeFromJSON_RequiresRegistry(t *testing.T) {
 	assert.Contains(t, err.Error(), "registry is required")
 }
 
-func TestPromptIndex_NewRecipeFromJSON_RejectsUnknownFields(t *testing.T) {
+func TestPromptIndex_NewRecipeFromJSON_AllowsSchemaPermittedFields(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	index := NewPromptIndex(registryStub{})
@@ -272,8 +269,7 @@ func TestPromptIndex_NewRecipeFromJSON_RejectsUnknownFields(t *testing.T) {
 	_, ok, err := index.NewRecipeFromJSON(ctx, SupportAgent, payload)
 
 	require.True(t, ok)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown field")
+	require.NoError(t, err)
 }
 
 func TestPromptCatalog_DescriptorRejectsUnknownID(t *testing.T) {

@@ -272,6 +272,7 @@ func marshalJSON(c *Prompt) ([]byte, error) {
 
 func unmarshalJSON(data []byte) (*Prompt, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	var w promptWire
 	if err := dec.Decode(&w); err != nil {

@@ -17,7 +17,7 @@ func TestYAMLParser_PlanInputFrom_NilOptionals(t *testing.T) {
 version: "1"
 messages:
   - role: user
-    content: "flag={{ .Input.flag }} tags={{ len .Input.tags }}"
+    content: "flag={{if eq .Input.flag nil}}null{{else}}{{.Input.flag}}{{end}} tags={{if eq .Input.tags nil}}null{{else}}{{len .Input.tags}}{{end}}"
 `)
 	tpl, err := manifest.Parse(yamlData, New())
 	require.NoError(t, err)
@@ -31,5 +31,5 @@ messages:
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, "flag=false tags=0", exec.Messages[0].Content[0].(prompty.TextPart).Text)
+	assert.Equal(t, "flag=null tags=null", exec.Messages[0].Content[0].(prompty.TextPart).Text)
 }

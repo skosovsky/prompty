@@ -2,9 +2,11 @@ package prompty
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -53,6 +55,25 @@ func NewJSONSchemaValidator(resources map[string]JSONDocument) *JSONSchemaValida
 
 // CompileSchema checks the schema itself before any provider call.
 func (v *JSONSchemaValidator) CompileSchema(source JSONDocument, dialect string) (ValueValidator, error) {
+	sourceURI := schemaSourceURI
+	var root struct {
+		ID string `json:"$id"`
+	}
+	if json.Unmarshal(source, &root) == nil {
+		if id, err := url.Parse(root.ID); err == nil && id.IsAbs() && id.Fragment == "" {
+			// Supplied resources may already own the canonical root identity.
+			// Retain the conventional retrieval address in that case.
+			if v == nil || v.resources[id.String()] == nil {
+				sourceURI = id.String()
+			}
+		}
+	}
+	return v.compileSchemaAt(source, dialect, sourceURI)
+}
+
+// A stream wrapper and its embedded item are distinct schema resources.
+// This changes only the in-memory source address, not reference loading policy.
+func (v *JSONSchemaValidator) compileSchemaAt(source JSONDocument, dialect, sourceURI string) (ValueValidator, error) {
 	if dialect == "" {
 		dialect = SchemaDialect2020
 	}
@@ -75,15 +96,17 @@ func (v *JSONSchemaValidator) CompileSchema(source JSONDocument, dialect string)
 	if v != nil {
 		resources = v.resources
 	}
-	compiler, err := newJSONSchemaCompiler(document, dialect, resources, explicitSchemaLoader{})
+	compiler, err := newJSONSchemaCompiler(document, dialect, resources, explicitSchemaLoader{}, sourceURI)
 	if err != nil {
 		return nil, newSchemaCompilationError(err)
 	}
-	schema, err := compiler.Compile(schemaSourceURI)
+	schema, err := compiler.Compile(sourceURI)
 	if err != nil {
 		failure := newSchemaCompilationError(err)
+		normalizeSchemaSourceLocations(failure.Locations, sourceURI)
 		if isSchemaReferenceFailure(err) {
-			failure.Locations = missingSchemaReferenceOrigins(document, dialect, resources)
+			failure.Locations = missingSchemaReferenceOrigins(document, dialect, resources, sourceURI)
+			normalizeSchemaSourceLocations(failure.Locations, sourceURI)
 			sortSchemaSourceLocations(failure.Locations)
 			failure.Locations = slices.Compact(failure.Locations)
 		}
@@ -97,7 +120,12 @@ func newJSONSchemaCompiler(
 	dialect string,
 	resources map[string]JSONDocument,
 	loader jsonschema.URLLoader,
+	sourceURIs ...string,
 ) (*jsonschema.Compiler, error) {
+	sourceURI := schemaSourceURI
+	if len(sourceURIs) > 0 {
+		sourceURI = sourceURIs[0]
+	}
 	compiler := jsonschema.NewCompiler()
 	if dialect == SchemaDialect7 {
 		compiler.DefaultDraft(jsonschema.Draft7)
@@ -117,7 +145,7 @@ func newJSONSchemaCompiler(
 			}
 		}
 	}
-	if addErr := compiler.AddResource(schemaSourceURI, document); addErr != nil {
+	if addErr := compiler.AddResource(sourceURI, document); addErr != nil {
 		return nil, addErr
 	}
 	return compiler, nil
@@ -140,4 +168,12 @@ func (v compiledJSONValidator) ValidateJSON(value JSONDocument) error {
 		return fmt.Errorf("%w: %w", ErrSchemaMismatch, err)
 	}
 	return nil
+}
+
+func normalizeSchemaSourceLocations(locations []SchemaSourceLocation, sourceURI string) {
+	for index := range locations {
+		if locations[index].Resource == sourceURI {
+			locations[index].Resource = ""
+		}
+	}
 }

@@ -115,7 +115,8 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 		return nil, fmt.Errorf("structured output: %w", err)
 	}
 	workExec.ResponseFormat = &SchemaDefinition{
-		Schema: schemaDoc,
+		Schema:  schemaDoc,
+		Dialect: schemaDeclaredDialect(schema),
 	}
 	return workExec, nil
 }
@@ -128,6 +129,7 @@ func decodeStructuredOutput[T any](raw string) (*T, error) {
 	var result T
 	rawText := strings.TrimSpace(raw)
 	dec := json.NewDecoder(bytes.NewReader([]byte(rawText)))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&result); err != nil {
 		if hasMarkdownCodeFence(rawText) {

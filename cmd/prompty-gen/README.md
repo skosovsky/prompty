@@ -81,7 +81,7 @@ prompty-gen list
 
 ### types mode
 
-- **Shared** `<package>_shared_gen.go`: `type PromptID`, `var validate`, `type Recipe` с `CheckpointJSON()`, `ResponseFormat()` и `JSONSchema()`, `type PromptCatalog` (интерфейс), `PromptIndex` с static `Lookup(id)` entry metadata/required tools/descriptor, `NewRecipeFromJSON`, `DecodeRecipeCheckpoint`, `func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
+- **Shared** `<package>_shared_gen.go`: `type PromptID`, `type Recipe` с `CheckpointJSON()`, `ResponseFormat()` и `JSONSchema()`, `type PromptCatalog` (интерфейс), `PromptIndex` с static `Lookup(id)` entry metadata/required tools/descriptor, `NewRecipeFromJSON`, `DecodeRecipeCheckpoint`, `func NewPromptCatalog(r prompty.PromptCatalogRegistry) PromptCatalog`, `func AllPromptIDs() []PromptID`.
 - **Per-manifest** `<id>_gen.go`: `const Xxx PromptID`, типы Input/Output, `type XxxPrompt struct`, typed `XxxRecipe`, `NewXxxRecipeFromCheckpoint`, `RequiredTools()`, `ID()`. Для prompt без compose conditions генерируется `NewRecipe`; для prompt с `condition.match` генерируются `XxxComposeContext`, `XxxRecipePayload` и `NewRecipeWithComposeContext`.
 
 `NewRecipe` / `NewRecipeWithComposeContext` выполняют: defaults → validate input → fail-fast bind check → `registry.RecommendManifestDescriptor(ctx, id)` → typed recipe. `Checkpoint()` возвращает JSON-safe DTO, `CheckpointJSON()` сериализует DTO для generic `Recipe`, `NewXxxRecipeFromCheckpoint` повторно применяет defaults/validation/bind checks и восстанавливает typed recipe без ручного switch. `RequiredTools()` и `PromptIndex.Lookup(id)` возвращают generated literals без registry IO.
@@ -243,3 +243,5 @@ Golden files in `cmd/prompty-gen/testdata/`:
 - `composed_conditional_main_gen.go.golden`
 
 Without `-golden`, `TestGenerate_GoldenCompare` verifies generated output against these files.
+
+DTO validation follows the [schema data contract](../../docs/schema-data-contract.md). Generated `ValidateSchema()` enforces the source schema; caller domain `Validate()` is independent. Regenerate existing DTOs for the breaking presence and numeric-data contract.

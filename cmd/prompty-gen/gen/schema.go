@@ -1,12 +1,15 @@
 package gen
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/dave/jennifer/jen"
+
+	"github.com/skosovsky/prompty/internal/jsonfield"
 )
 
 // JSON Schema primitive and structural type keywords (draft subset used by prompty-gen).
@@ -22,6 +25,7 @@ const (
 // schemaMapper maps JSON Schema to Go types using jennifer.
 type schemaMapper struct {
 	rootName string
+	dialect  string
 	rootPath string // "Input" or "Output" — empty object allowed only at this path
 	types    map[string]jen.Code
 }
@@ -29,6 +33,7 @@ type schemaMapper struct {
 func newSchemaMapper(rootName string) *schemaMapper {
 	return &schemaMapper{
 		rootName: rootName,
+		dialect:  "",
 		rootPath: "",
 		types:    make(map[string]jen.Code),
 	}
@@ -79,15 +84,15 @@ func validateObjectSchemaForInput(schema map[string]any) error {
 	if schema == nil {
 		return errors.New("input_schema root must be type: object")
 	}
-	typ, _ := schema["type"].(string)
+	typ, _, _ := schemaTypeInfo(schema)
 	if typ != jsonSchemaTypeObject {
 		return fmt.Errorf("input_schema root must be type: object, got %q", typ)
 	}
 	props, _ := schema["properties"].(map[string]any)
-	if len(props) > 0 {
-		return validatePropNames(props)
+	if err := validatePropNames(props); err != nil {
+		return err
 	}
-	return nil
+	return validateObjectProjection(schema, props, []string{"Input"})
 }
 
 // validatePropNames checks property keys for invalid Go identifiers and collisions.
@@ -95,6 +100,9 @@ func validateObjectSchemaForInput(schema map[string]any) error {
 func validatePropNames(props map[string]any) error {
 	seen := make(map[string]string) // goName -> first propName that produced it
 	for _, propName := range sortedKeys(props) {
+		if !jsonfield.ValidTagName(propName) {
+			return fmt.Errorf("property %q cannot be represented by an encoding/json field tag", propName)
+		}
 		goName := pascal(propName)
 		if len(goName) == 0 {
 			return fmt.Errorf("property %q produces empty Go name", propName)
@@ -108,24 +116,6 @@ func validatePropNames(props map[string]any) error {
 		seen[goName] = propName
 	}
 	return nil
-}
-
-// toFloat extracts a numeric value from YAML/JSON (may be float64, int, int64, etc).
-func toFloat(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case uint:
-		return float64(x), true
-	case uint64:
-		return float64(x), true
-	default:
-		return 0, false
-	}
 }
 
 // getRequired returns property names from schema["required"].
@@ -241,8 +231,20 @@ func errStrictSchema(path []string, reason string) error {
 
 // mapSchemaToGo generates Go type code from JSON Schema.
 //
-//nolint:funlen // schema mapping branches per JSON Schema keyword
+
 func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen.Code, error) {
+	code, err := m.mapNonNullableSchemaToGo(schema, path...)
+	if err != nil {
+		return nil, err
+	}
+	_, nullable, _ := schemaTypeInfo(schema)
+	if nullable && !schemaTypeNilable(schema) {
+		code = jen.Op("*").Add(code)
+	}
+	return code, nil
+}
+
+func (m *schemaMapper) mapNonNullableSchemaToGo(schema map[string]any, path ...string) (jen.Code, error) {
 	if schema == nil {
 		return nil, errStrictSchema(path, "schema is nil")
 	}
@@ -253,10 +255,8 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 	switch typ {
 	case jsonSchemaTypeString:
 		return jen.String(), nil
-	case jsonSchemaTypeInteger:
-		return jen.Int64(), nil
-	case jsonSchemaTypeNumber:
-		return jen.Float64(), nil
+	case jsonSchemaTypeInteger, jsonSchemaTypeNumber:
+		return jen.Qual("encoding/json", "Number"), nil
 	case jsonSchemaTypeBoolean:
 		return jen.Bool(), nil
 	case jsonSchemaTypeArray:
@@ -287,7 +287,7 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 			if !ok {
 				return nil, errStrictSchema(path, "additionalProperties must be a schema object with type")
 			}
-			addlTyp, _ := addlSchema["type"].(string)
+			addlTyp, _, _ := schemaTypeInfo(addlSchema)
 			if addlTyp == "" || addlTyp == jsonSchemaTypeObject {
 				return nil, errStrictSchema(path, "additionalProperties must declare a primitive or array item type")
 			}
@@ -309,84 +309,6 @@ func (m *schemaMapper) mapSchemaToGo(schema map[string]any, path ...string) (jen
 	}
 }
 
-// buildValidateTags returns validate tag from schema constraints.
-func buildValidateTags(propSchema map[string]any, required bool) []string {
-	var tags []string
-	if required {
-		tags = append(tags, "required")
-	}
-	if propSchema == nil {
-		return tags
-	}
-	if minLen, ok := toFloat(propSchema["minLength"]); ok && minLen > 0 {
-		tags = append(tags, fmt.Sprintf("min=%d", int(minLen)))
-	}
-	if maxLen, ok := toFloat(propSchema["maxLength"]); ok {
-		tags = append(tags, fmt.Sprintf("max=%d", int(maxLen)))
-	}
-	if minVal, ok := toFloat(propSchema["minimum"]); ok {
-		tags = append(tags, fmt.Sprintf("gte=%d", int(minVal)))
-	}
-	if maxVal, ok := toFloat(propSchema["maximum"]); ok {
-		tags = append(tags, fmt.Sprintf("lte=%d", int(maxVal)))
-	}
-	if enum, ok := propSchema["enum"]; ok {
-		if arr, ok := enum.([]any); ok && len(arr) > 0 {
-			var vals []string
-			skipOneof := false
-			for _, e := range arr {
-				s := fmt.Sprintf("%v", e)
-				// validator oneof uses space as delimiter; comma also breaks tag parsing.
-				if strings.Contains(s, " ") || strings.Contains(s, ",") {
-					skipOneof = true
-					break
-				}
-				vals = append(vals, s)
-			}
-			if !skipOneof && len(vals) > 0 {
-				tags = append(tags, fmt.Sprintf("oneof=%s", strings.Join(vals, " ")))
-			}
-		}
-	}
-	// array: add minItems/maxItems (array-level), then dive and item-level constraints
-	if typ, _ := propSchema["type"].(string); typ == jsonSchemaTypeArray {
-		if minItems, ok := toFloat(propSchema["minItems"]); ok && minItems > 0 {
-			tags = append(tags, fmt.Sprintf("min=%d", int(minItems)))
-		}
-		if maxItems, ok := toFloat(propSchema["maxItems"]); ok {
-			tags = append(tags, fmt.Sprintf("max=%d", int(maxItems)))
-		}
-		items, _ := propSchema["items"].(map[string]any)
-		if items != nil {
-			itemType, _ := items["type"].(string)
-			switch itemType {
-			case jsonSchemaTypeObject:
-				tags = append(tags, "dive")
-			case jsonSchemaTypeString, jsonSchemaTypeInteger, jsonSchemaTypeNumber:
-				// item-level constraints (minLength, maxLength, minimum, maximum) apply after dive
-				tags = append(tags, "dive")
-				if itemMinLen, ok := toFloat(items["minLength"]); ok && itemMinLen > 0 {
-					tags = append(tags, fmt.Sprintf("min=%d", int(itemMinLen)))
-				}
-				if itemMaxLen, ok := toFloat(items["maxLength"]); ok {
-					tags = append(tags, fmt.Sprintf("max=%d", int(itemMaxLen)))
-				}
-				if itemMinVal, ok := toFloat(items["minimum"]); ok {
-					tags = append(tags, fmt.Sprintf("gte=%d", int(itemMinVal)))
-				}
-				if itemMaxVal, ok := toFloat(items["maximum"]); ok {
-					tags = append(tags, fmt.Sprintf("lte=%d", int(itemMaxVal)))
-				}
-			}
-		}
-	}
-	// optional fields with constraints: omitempty skips validation when nil (validator would fail on nil pointer)
-	if !required && len(tags) > 0 {
-		tags = append([]string{"omitempty"}, tags...)
-	}
-	return tags
-}
-
 // typeSpec holds type name and its schema for emission.
 type typeSpec struct {
 	Name     string
@@ -399,6 +321,10 @@ type typeSpec struct {
 func (m *schemaMapper) GenerateTypes(schema map[string]any, rootTypeName string) ([]jen.Code, error) {
 	if schema == nil {
 		return nil, nil
+	}
+	_, nullable, _ := schemaTypeInfo(schema)
+	if nullable {
+		return nil, errStrictSchema([]string{rootTypeName}, "nullable root object requires caller-owned pointer type")
 	}
 	m.rootPath = rootTypeName
 	if _, err := m.mapSchemaToGo(schema, rootTypeName); err != nil {
@@ -431,7 +357,7 @@ func (m *schemaMapper) collectTypeSpecs(
 	if schema == nil {
 		return nil
 	}
-	typ, _ := schema["type"].(string)
+	typ, _, _ := schemaTypeInfo(schema)
 	// array: recurse into items (handles array-of-array, array-of-object)
 	if typ == jsonSchemaTypeArray {
 		items, _ := schema["items"].(map[string]any)
@@ -451,7 +377,7 @@ func (m *schemaMapper) collectTypeSpecs(
 	for _, propName := range sortedKeys(props) {
 		propVal := props[propName]
 		if ps, ok := propVal.(map[string]any); ok {
-			ptype, _ := ps["type"].(string)
+			ptype, _, _ := schemaTypeInfo(ps)
 			goPart := pascal(propName)
 			if ptype == jsonSchemaTypeObject {
 				if err := m.collectTypeSpecs(ps, path+goPart, specs, seen); err != nil {
@@ -467,6 +393,12 @@ func (m *schemaMapper) collectTypeSpecs(
 				}
 			}
 		}
+	}
+	if err := validatePropNames(props); err != nil {
+		return err
+	}
+	if err := validateObjectProjection(schema, props, []string{path}); err != nil {
+		return err
 	}
 	typeName := m.typeName(path)
 	if prev, ok := seen[typeName]; ok && prev != path {
@@ -505,28 +437,18 @@ func (m *schemaMapper) emitStruct(ts typeSpec) (jen.Code, error) {
 			return nil, err
 		}
 		optional := !ts.Required[propName]
-		typ, nullable, union := schemaTypeInfo(propSchema)
-		usePointer := optional || nullable
-		if usePointer && !union {
-			// array: never * (slice is ref type). object with properties: use * for optional struct.
-			// object without properties (map-like): no *.
-			// unknown/union: no * — use json.RawMessage without pointer.
-			switch typ {
-			case jsonSchemaTypeArray:
-				// slice is already a reference type; no pointer
-			case jsonSchemaTypeObject:
-				props, _ := propSchema["properties"].(map[string]any)
-				if props != nil {
-					goType = jen.Op("*").Add(goType)
-				}
-			case jsonSchemaTypeString, jsonSchemaTypeInteger, jsonSchemaTypeNumber, jsonSchemaTypeBoolean:
-				goType = jen.Op("*").Add(goType)
-			}
-		} else if typ == jsonSchemaTypeBoolean && ts.Required[propName] {
-			// required bool: use *bool + validate:"required" for presence semantics (nil=invalid, false=valid)
+		typ, nullable, _ := schemaTypeInfo(propSchema)
+		if optional {
+			goType = jen.Op("*").Add(goType)
+		} else if typ == jsonSchemaTypeBoolean && !nullable {
 			goType = jen.Op("*").Add(goType)
 		}
-		validate := buildValidateTags(propSchema, ts.Required[propName])
+		fieldName := pascal(propName)
+		if fieldName == "UnmarshalJSON" ||
+			(ts.Name == m.typeName(m.rootPath) && (fieldName == "JSONSchema" || fieldName == "ValidateSchema")) {
+			return nil, errStrictSchema([]string{ts.Name, propName}, "field name conflicts with generated method")
+		}
+
 		jsonTag := propName
 		if optional {
 			jsonTag = propName + ",omitempty"
@@ -534,11 +456,163 @@ func (m *schemaMapper) emitStruct(ts typeSpec) (jen.Code, error) {
 		if jsonTag == "-" {
 			jsonTag = "-,"
 		}
-		tags := map[string]string{"json": jsonTag, "prompt": propName}
-		if len(validate) > 0 {
-			tags["validate"] = strings.Join(validate, ",")
+		promptTag := propName
+		if optional {
+			promptTag += ",omitempty"
 		}
+		tags := map[string]string{"json": jsonTag, "prompt": promptTag}
+
 		fields = append(fields, jen.Id(pascal(propName)).Add(goType).Tag(tags))
 	}
-	return jen.Type().Id(ts.Name).Struct(fields...), nil
+	declaration := jen.Type().Id(ts.Name).Struct(fields...)
+	if ts.Name != m.typeName(m.rootPath) {
+		decoder, err := m.emitJSONDecoder(ts, nil)
+		if err != nil {
+			return nil, err
+		}
+		return jen.Add(declaration).Line().Line().Add(decoder), nil
+	}
+	return m.emitSchemaMethods(ts, declaration)
+}
+
+func (m *schemaMapper) emitSchemaMethods(ts typeSpec, declaration *jen.Statement) (jen.Code, error) {
+	document, err := json.Marshal(ts.Schema)
+	if err != nil {
+		return nil, err
+	}
+	definition := func() *jen.Statement {
+		return jen.Op("&").Qual("github.com/skosovsky/prompty", "SchemaDefinition").Values(
+			jen.Id("Schema").
+				Op(":").
+				Qual("github.com/skosovsky/prompty", "JSONDocument").
+				Call(jen.Lit(string(document))),
+			jen.Id("Dialect").Op(":").Lit(m.dialect),
+		)
+	}
+	output := jen.Add(declaration).Line().Line()
+	output.Add(jen.Func().Params(jen.Id("value").Id(ts.Name)).Id("JSONSchema").Params().Qual("github.com/skosovsky/prompty", "JSONDocument").Block(
+		jen.Return(jen.Qual("github.com/skosovsky/prompty", "JSONDocument").Call(jen.Lit(string(document)))),
+	)).
+		Line().
+		Line()
+	output.Add(jen.Func().Params(jen.Id("value").Id(ts.Name)).Id("ValidateSchema").Params().Error().Block(
+		jen.Return(jen.Qual("github.com/skosovsky/prompty", "ValidateSchemaValue").Call(definition(), jen.Id("value"))),
+	)).Line().Line()
+
+	decoder, err := m.emitJSONDecoder(ts, definition())
+	if err != nil {
+		return nil, err
+	}
+	output.Add(decoder)
+	return output, nil
+}
+
+func schemaTypeNilable(schema map[string]any) bool {
+	kind, _, _ := schemaTypeInfo(schema)
+	if kind == jsonSchemaTypeArray {
+		return true
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	return kind == jsonSchemaTypeObject && len(properties) == 0
+}
+
+func (m *schemaMapper) emitJSONDecoder(ts typeSpec, definition jen.Code) (jen.Code, error) {
+	var body []jen.Code
+	if definition != nil {
+		body = append(
+			body,
+			jen.If(jen.Id("err").Op(":=").Qual("github.com/skosovsky/prompty", "ValidateSchemaJSON").Call(definition, jen.Id("document")), jen.Id("err").Op("!=").Nil()).
+				Block(jen.Return(jen.Id("err"))),
+		)
+	}
+	body = append(
+		body,
+		jen.Type().Id("decodedValue").Id(ts.Name),
+		jen.Var().Id("decoded").Id("decodedValue"),
+		jen.Id("decoder").
+			Op(":=").
+			Qual("encoding/json", "NewDecoder").
+			Call(jen.Qual("bytes", "NewReader").Call(jen.Id("document"))),
+		jen.Id("decoder").Dot("UseNumber").Call(),
+		jen.If(jen.Id("err").Op(":=").Id("decoder").Dot("Decode").Call(jen.Op("&").Id("decoded")), jen.Id("err").Op("!=").Nil()).
+			Block(jen.Return(jen.Id("err"))),
+	)
+	initializers, err := m.nullablePresenceInitializers(ts)
+	if err != nil {
+		return nil, err
+	}
+	if len(initializers) > 0 {
+		body = append(
+			body,
+			jen.Var().Id("rawFields").Map(jen.String()).Qual("encoding/json", "RawMessage"),
+			jen.If(jen.Id("err").Op(":=").Qual("encoding/json", "Unmarshal").Call(jen.Id("document"), jen.Op("&").Id("rawFields")), jen.Id("err").Op("!=").Nil()).
+				Block(jen.Return(jen.Id("err"))),
+		)
+		body = append(body, initializers...)
+	}
+	body = append(body, jen.Op("*").Id("value").Op("=").Id(ts.Name).Call(jen.Id("decoded")), jen.Return(jen.Nil()))
+	return jen.Func().
+			Params(jen.Id("value").Op("*").Id(ts.Name)).
+			Id("UnmarshalJSON").
+			Params(jen.Id("document").Index().Byte()).
+			Error().
+			Block(body...),
+		nil
+}
+
+func (m *schemaMapper) nullablePresenceInitializers(ts typeSpec) ([]jen.Code, error) {
+	var initializers []jen.Code
+	basePath := strings.TrimPrefix(ts.Name, m.rootName)
+	for _, name := range sortedKeys(ts.Props) {
+		property, _ := ts.Props[name].(map[string]any)
+		_, nullable, _ := schemaTypeInfo(property)
+		if !nullable || ts.Required[name] {
+			continue
+		}
+		goType, err := m.mapSchemaToGo(property, basePath+pascal(name))
+		if err != nil {
+			return nil, err
+		}
+		localName := "nullable" + pascal(name)
+		initializers = append(
+			initializers,
+			jen.If(jen.String().Call(jen.Qual("bytes", "TrimSpace").Call(jen.Id("rawFields").Index(jen.Lit(name)))).Op("==").Lit("null")).
+				Block(
+					jen.Var().
+						Id(localName).
+						Add(goType),
+					jen.Id("decoded").Dot(pascal(name)).Op("=").Op("&").Id(localName)),
+		)
+	}
+	return initializers, nil
+}
+
+// A declared-field struct cannot preserve unknown fields used by root constraints.
+// Reject such schemas rather than silently changing their accepted value set.
+func validateObjectProjection(schema, props map[string]any, path []string) error {
+	// In draft-07 a $ref ignores siblings; additionalProperties:false does not
+	// prove that a referenced object is closed. Keep reference projection explicit.
+	for _, keyword := range []string{"$ref", "$dynamicRef", "$recursiveRef"} {
+		if _, exists := schema[keyword]; exists {
+			return errStrictSchema(path, "referenced object requires caller-owned type")
+		}
+	}
+
+	for name := range getRequired(schema) {
+		if _, ok := props[name]; !ok {
+			return errStrictSchema(path, "required property "+name+" is not declared in properties")
+		}
+	}
+	if explicit, ok := schema["additionalProperties"].(bool); ok && !explicit && schema["patternProperties"] == nil {
+		return nil
+	}
+	for _, keyword := range []string{"minProperties", "const", "enum", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependencies", "dependentRequired", "dependentSchemas", "$ref", "$dynamicRef", "$recursiveRef", "unevaluatedProperties", "patternProperties", "propertyNames"} {
+		if _, exists := schema[keyword]; exists {
+			return errStrictSchema(
+				path,
+				"open object keyword "+keyword+" requires lossless unknown-field representation; use caller-owned types or closed object schema",
+			)
+		}
+	}
+	return nil
 }

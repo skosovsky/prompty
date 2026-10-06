@@ -279,6 +279,7 @@ func validateCheckpointLateState[TLate any](lateBound bool, lateInput *TLate) er
 
 func strictUnmarshalJSON(data []byte, dst any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		return err
@@ -487,6 +488,7 @@ func registryPlanInputFromRecipe(
 		planInput = RegistryPlanInput{
 			boundVars:     nil,
 			chatHistory:   nil,
+			historyValues: nil,
 			composeValues: nil,
 			composeSet:    false,
 		}

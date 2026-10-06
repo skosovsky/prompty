@@ -33,7 +33,6 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	})
 
 	f.ImportName("github.com/skosovsky/prompty", "prompty")
-	f.ImportName("github.com/go-playground/validator/v10", "validator")
 	f.ImportName("bytes", "bytes")
 	f.ImportName("context", "context")
 	f.ImportName("encoding/json", "json")
@@ -41,9 +40,6 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	f.ImportName("io", "io")
 
 	f.Type().Id("PromptID").String()
-	f.Line()
-
-	f.Var().Id("validate").Op("=").Qual("github.com/go-playground/validator/v10", "New").Call()
 	f.Line()
 
 	f.Type().Id("Recipe").Interface(
@@ -466,6 +462,7 @@ func strictDecodeJSONBody(target string) []jen.Code {
 		jen.Id("decoder").Op(":=").Qual("encoding/json", "NewDecoder").Call(
 			jen.Qual("bytes", "NewReader").Call(jen.Id("payload")),
 		),
+		jen.Id("decoder").Dot("UseNumber").Call(),
 		jen.Id("decoder").Dot("DisallowUnknownFields").Call(),
 		jen.If(jen.Id("err").Op("=").Id("decoder").Dot("Decode").Call(jen.Op("&").Id(target)), jen.Id("err").Op("==").Nil()).
 			Block(
