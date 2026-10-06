@@ -58,6 +58,8 @@ type ValidationError struct {
 
 // ToolCallError is returned when model-generated tool arguments fail validation.
 type ToolCallError struct {
+	// Response retains the known model result when batch validation fails.
+	Response            *Response
 	RawAssistantMessage *ChatMessage
 	ToolResults         []ContentPart
 	Err                 error
@@ -145,3 +147,15 @@ func ValidateID(id string) error {
 	}
 	return nil
 }
+
+// ToolDispatchError retains a known model response that was not accepted for
+// tool execution. The host owns reconciliation and retry policy.
+type ToolDispatchError struct {
+	Response *Response
+	Err      error
+}
+
+func (e *ToolDispatchError) Error() string {
+	return fmt.Sprintf("typed tools: response not accepted: %v", e.Err)
+}
+func (e *ToolDispatchError) Unwrap() error { return e.Err }

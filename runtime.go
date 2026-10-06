@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 )
 
 // RuntimeRecipeState describes whether a raw runtime checkpoint carries late input.
@@ -33,8 +34,8 @@ type RuntimeOverlay struct {
 
 // ToolScope is the runtime allowed/required tool boundary for a prompt execution.
 type ToolScope struct {
-	Required []ToolRequirement `json:"required,omitempty"`
-	Allowed  []ToolManifest    `json:"allowed,omitempty"`
+	Required []ToolRequirement `json:"required"`
+	Allowed  []ToolManifest    `json:"allowed"`
 }
 
 // BindRuntime verifies a checkpoint, applies runtime overlay/tool scope, and returns a materializable plan.
@@ -137,15 +138,23 @@ func bindRuntimeToolScope(
 func ValidateToolScope(desc ManifestDescriptor, scope ToolScope) error {
 	allowed := make(map[string]ToolManifest, len(scope.Allowed))
 	for _, tool := range scope.Allowed {
-		if tool.Name == "" {
+		if strings.TrimSpace(tool.Name) == "" {
 			return toolContractErr(desc, "", "allowed tool name is required", ErrToolContractMismatch)
+		}
+		if _, exists := allowed[tool.Name]; exists {
+			return toolContractErr(desc, tool.Name, "duplicate allowed tool", ErrToolContractMismatch)
 		}
 		allowed[tool.Name] = tool
 	}
+	seen := make(map[string]bool)
 	for _, req := range scope.Required {
-		if req.Name == "" {
+		if strings.TrimSpace(req.Name) == "" {
 			return toolContractErr(desc, "", "required tool name is required", ErrToolContractMismatch)
 		}
+		if seen[req.Name] {
+			return toolContractErr(desc, req.Name, "duplicate required tool", ErrToolContractMismatch)
+		}
+		seen[req.Name] = true
 		tool, ok := allowed[req.Name]
 		if !ok {
 			return toolContractErr(desc, req.Name, "required tool is outside allowed scope", ErrMissingRequiredTool)

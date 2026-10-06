@@ -54,6 +54,7 @@ func TestParse_RequiredTools(t *testing.T) {
 		"id":"doctor_agent",
 		"version":"1",
 		"required_tools":["doctor_search_knowledge_base","get_current_time"],
+ "tools":[{"name":"doctor_search_knowledge_base"},{"name":"get_current_time"}],
 		"messages":[{"role":"system","content":[{"type":"text","text":"Hi"}]}]
 	}`)
 	tpl, err := Parse(data, jsonParser)

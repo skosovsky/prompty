@@ -22,7 +22,7 @@ func TestExplicitMalformedSchemaNeverFallsBack(t *testing.T) {
 	t.Parallel()
 	_, err := ExtractSchema(malformedSchemaDTO{})
 	require.Error(t, err)
-	_, err = NewTypedTool("count", func(malformedSchemaDTO) (string, error) { return "", nil })
+	_, err = NewTypedTool("count", func(_ context.Context, _ malformedSchemaDTO) (string, error) { return "", nil })
 	require.Error(t, err)
 	plan, err := WithResponseFormatFromStruct[malformedSchemaDTO](NewRenderPlan(nil))
 	require.Error(t, err)
@@ -320,7 +320,7 @@ func TestReflectionRejectsFieldProviderStringProjection(t *testing.T) {
 		_, err := ExtractSchema(value)
 		require.ErrorIs(t, err, ErrSchemaUnsupported)
 	}
-	_, err := NewTypedTool("count", func(payload) (string, error) { return "", nil })
+	_, err := NewTypedTool("count", func(_ context.Context, _ payload) (string, error) { return "", nil })
 	require.ErrorIs(t, err, ErrSchemaUnsupported)
 	_, err = ResponseFormatFromStruct[payload]()
 	require.ErrorIs(t, err, ErrSchemaUnsupported)

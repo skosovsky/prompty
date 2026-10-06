@@ -43,7 +43,10 @@ func TestToolBatchUsesOriginalExecutionSchemasBeforeAnyHandler(t *testing.T) {
 			}
 			invoked := 0
 			registry := NewTypedToolRegistry()
-			tool, err := NewTypedTool("lookup", func(input) (string, error) { invoked++; return "fixture", nil })
+			tool, err := NewTypedTool(
+				"lookup",
+				func(_ context.Context, _ input) (string, error) { invoked++; return "fixture", nil },
+			)
 			require.NoError(t, err)
 			require.NoError(t, RegisterTool(registry, tool))
 			exec := SimplePrompt("fixture")

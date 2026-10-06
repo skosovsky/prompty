@@ -95,7 +95,7 @@ func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
 	t.Parallel()
 
 	var invoked bool
-	tool, err := NewTypedTool("lookup", func(_ struct{}) (string, error) {
+	tool, err := NewTypedTool("lookup", func(_ context.Context, _ struct{}) (string, error) {
 		invoked = true
 		return "ok", nil
 	})

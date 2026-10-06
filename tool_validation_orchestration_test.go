@@ -12,7 +12,7 @@ func TestExecuteWithToolValidation_DelegatesToTypedToolsWhenToolInvoker(t *testi
 	t.Parallel()
 
 	var invoked bool
-	tool, err := NewTypedTool("greet", func(_ greetArgs) (string, error) {
+	tool, err := NewTypedTool("greet", func(_ context.Context, _ greetArgs) (string, error) {
 		invoked = true
 		return "ok", nil
 	})

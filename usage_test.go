@@ -136,7 +136,7 @@ func TestToolHelperRejectsMalformedUsageBeforeHandler(t *testing.T) {
 	t.Parallel()
 	// Arrange.
 	invoked := 0
-	tool, err := NewTypedTool("fn", func(struct{}) (string, error) {
+	tool, err := NewTypedTool("fn", func(_ context.Context, _ struct{}) (string, error) {
 		invoked++
 		return "fixture", nil
 	})

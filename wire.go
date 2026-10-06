@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	ExecutionWireFormat       = "prompty.execution"
+	ExecutionWireFormat       = "prompty.execution.v2"
 	ContentPartWireText       = "text"
 	ContentPartWireMedia      = "media"
 	ContentPartWireReasoning  = "reasoning"
@@ -17,6 +17,7 @@ const (
 
 // PromptExecutionWire is the stable JSON-safe wire representation of PromptExecution.
 type PromptExecutionWire struct {
+	ToolScope      *ToolScope            `json:"tool_scope,omitempty"`
 	RequestCache   *CachePolicy          `json:"request_cache,omitempty"`
 	CacheResource  *CacheResourceHandle  `json:"cache_resource,omitempty"`
 	Format         string                `json:"format"`
@@ -94,6 +95,9 @@ func MarshalExecution(exec *PromptExecution, policy WirePolicy) (PromptExecution
 	if exec == nil {
 		return zero, errors.New("prompt execution wire: execution is nil")
 	}
+	if err := ValidateExecutionToolScope(exec); err != nil {
+		return zero, err
+	}
 	if err := ValidateRequestCachePolicy(exec.RequestCache); err != nil {
 		return zero, err
 	}
@@ -128,6 +132,7 @@ func MarshalExecution(exec *PromptExecution, policy WirePolicy) (PromptExecution
 		return zero, err
 	}
 	wire := PromptExecutionWire{
+		ToolScope:      cloneToolScopePtr(exec.toolScope),
 		RequestCache:   cloneCachePolicy(exec.RequestCache),
 		CacheResource:  cloneCacheResource(exec.CacheResource),
 		Format:         ExecutionWireFormat,
@@ -189,7 +194,8 @@ func UnmarshalExecution(wire PromptExecutionWire) (*PromptExecution, error) {
 	if cacheErr := ValidateCachePolicies(messages); cacheErr != nil {
 		return nil, cacheErr
 	}
-	return &PromptExecution{
+	exec := &PromptExecution{
+		toolScope:      cloneToolScopePtr(wire.ToolScope),
 		RequestCache:   cloneCachePolicy(wire.RequestCache),
 		CacheResource:  cloneCacheResource(wire.CacheResource),
 		Requirements:   cloneRequirements(wire.Requirements),
@@ -200,7 +206,11 @@ func UnmarshalExecution(wire PromptExecutionWire) (*PromptExecution, error) {
 		ModelOptions:   modelOptionsFromWire(wire.ModelOptions, wire.Provider),
 		Metadata:       clonePromptMetadata(wire.Metadata),
 		ResponseFormat: responseFormatFromWire(wire.ResponseFormat),
-	}, nil
+	}
+	if err := ValidateExecutionToolScope(exec); err != nil {
+		return nil, err
+	}
+	return exec, nil
 }
 
 func messagesToWire(messages []ChatMessage) ([]MessageWire, error) {

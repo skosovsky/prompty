@@ -28,11 +28,17 @@ func (t *tokenBudgetInvoker) Execute(ctx context.Context, exec *prompty.PromptEx
 		return t.next.Execute(ctx, exec)
 	}
 
+	if scopeErr := prompty.ValidateExecutionToolScope(exec); scopeErr != nil {
+		return nil, scopeErr
+	}
 	messages, err := exttruncate.DropOldest(exec.Messages, t.maxTokens, t.counter)
 	if err != nil {
 		return nil, err
 	}
 	execCopy := exec.WithMessages(messages)
+	if scopeErr := prompty.ValidateExecutionToolScope(execCopy); scopeErr != nil {
+		return nil, scopeErr
+	}
 	return t.next.Execute(ctx, execCopy)
 }
 
@@ -45,10 +51,16 @@ func (t *tokenBudgetInvoker) ExecuteStream(
 		return t.next.ExecuteStream(ctx, exec, mode)
 	}
 
+	if scopeErr := prompty.ValidateExecutionToolScope(exec); scopeErr != nil {
+		return prompty.ErrorStream(ctx, mode, scopeErr)
+	}
 	messages, err := exttruncate.DropOldest(exec.Messages, t.maxTokens, t.counter)
 	if err != nil {
 		return prompty.ErrorStream(ctx, mode, err)
 	}
 	execCopy := exec.WithMessages(messages)
+	if scopeErr := prompty.ValidateExecutionToolScope(execCopy); scopeErr != nil {
+		return prompty.ErrorStream(ctx, mode, scopeErr)
+	}
 	return t.next.ExecuteStream(ctx, execCopy, mode)
 }

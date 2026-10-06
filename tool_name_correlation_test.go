@@ -47,7 +47,10 @@ func TestIDlessToolCorrelationRequiresCheckedUniqueNames(t *testing.T) {
 			invoked := 0
 			registry := NewTypedToolRegistry()
 			for _, name := range []string{"lookup", "weather"} {
-				tool, err := NewTypedTool(name, func(struct{}) (string, error) { invoked++; return "fixture", nil })
+				tool, err := NewTypedTool(
+					name,
+					func(_ context.Context, _ struct{}) (string, error) { invoked++; return "fixture", nil },
+				)
 				require.NoError(t, err)
 				require.NoError(t, RegisterTool(registry, tool))
 			}

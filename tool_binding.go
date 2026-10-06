@@ -2,22 +2,24 @@ package prompty
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // ToolHandler executes a typed tool with decoded arguments.
 type ToolHandler[TArgs any, TResult any] interface {
 	Name() string
-	Handle(args TArgs) (TResult, error)
+	Handle(ctx context.Context, args TArgs) (TResult, error)
 }
 
 // TypedTool binds a handler to JSON Schema derived from TArgs.
 type TypedTool[TArgs any, TResult any] struct {
 	name      string
-	handler   func(TArgs) (TResult, error)
+	handler   func(context.Context, TArgs) (TResult, error)
 	schema    JSONDocument
 	dialect   string
 	validator ValueValidator
@@ -26,9 +28,9 @@ type TypedTool[TArgs any, TResult any] struct {
 // NewTypedTool registers a tool with schema inferred from TArgs.
 func NewTypedTool[TArgs any, TResult any](
 	name string,
-	handler func(TArgs) (TResult, error),
+	handler func(context.Context, TArgs) (TResult, error),
 ) (*TypedTool[TArgs, TResult], error) {
-	if name == "" {
+	if strings.TrimSpace(name) == "" {
 		return nil, errors.New("typed tool: name is required")
 	}
 	if handler == nil {
@@ -108,22 +110,34 @@ func DecodeToolArgs[TArgs any](argsJSON string) (TArgs, error) {
 }
 
 // Invoke decodes args and runs the handler (fail-closed on unknown JSON fields).
-func (t *TypedTool[TArgs, TResult]) Invoke(argsJSON string) (TResult, error) {
+func (t *TypedTool[TArgs, TResult]) Invoke(ctx context.Context, argsJSON string) (TResult, error) {
+	result, _, err := t.invoke(ctx, argsJSON)
+	return result, err
+}
+func (t *TypedTool[TArgs, TResult]) invoke(ctx context.Context, argsJSON string) (TResult, bool, error) {
 	var zero TResult
 	if t == nil {
-		return zero, errors.New("typed tool: nil")
+		return zero, false, errors.New("typed tool: nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, false, err
 	}
 	if err := t.ValidateArgs(argsJSON); err != nil {
-		return zero, err
+		return zero, false, err
 	}
 	args, err := DecodeToolArgs[TArgs](argsJSON)
 	if err != nil {
-		return zero, err
+		return zero, false, err
 	}
-	return t.handler(args)
+	if err := ctx.Err(); err != nil {
+		return zero, false, err
+	}
+	result, handlerErr := t.handler(ctx, args)
+	return result, true, errors.Join(handlerErr, ctx.Err())
 }
 
 // TypedToolRegistry validates and dispatches tool calls for registered typed tools.
+// Complete registration before concurrent invocation; calls do not retain contexts.
 type TypedToolRegistry struct {
 	byName      map[string]toolInvoker
 	definitions []ToolDefinition
@@ -132,7 +146,7 @@ type TypedToolRegistry struct {
 type toolInvoker interface {
 	name() string
 	validateArgs(argsJSON string) error
-	invoke(argsJSON string) (json.RawMessage, error)
+	invoke(ctx context.Context, argsJSON string) (json.RawMessage, error)
 }
 
 type typedToolInvoker[TArgs any, TResult any] struct {
@@ -145,12 +159,13 @@ func (w typedToolInvoker[TArgs, TResult]) validateArgs(argsJSON string) error {
 	return w.tool.ValidateArgs(argsJSON)
 }
 
-func (w typedToolInvoker[TArgs, TResult]) invoke(argsJSON string) (json.RawMessage, error) {
-	result, err := w.tool.Invoke(argsJSON)
-	if err != nil {
+func (w typedToolInvoker[TArgs, TResult]) invoke(ctx context.Context, argsJSON string) (json.RawMessage, error) {
+	result, started, err := w.tool.invoke(ctx, argsJSON)
+	if !started {
 		return nil, err
 	}
-	return encodeToolResult(result)
+	raw, encodeErr := encodeToolResult(result)
+	return raw, errors.Join(err, encodeErr)
 }
 
 // NewTypedToolRegistry creates an empty registry.
@@ -190,7 +205,7 @@ func (r *TypedToolRegistry) ValidateToolCall(name string, argsJSON string) error
 }
 
 // InvokeTool decodes args and executes the registered handler.
-func (r *TypedToolRegistry) InvokeTool(name string, argsJSON string) (json.RawMessage, error) {
+func (r *TypedToolRegistry) InvokeTool(ctx context.Context, name string, argsJSON string) (json.RawMessage, error) {
 	if r == nil {
 		return nil, errors.New("typed tool registry: nil")
 	}
@@ -198,7 +213,7 @@ func (r *TypedToolRegistry) InvokeTool(name string, argsJSON string) (json.RawMe
 	if !ok {
 		return nil, fmt.Errorf("typed tool registry: unknown tool %q", name)
 	}
-	return inv.invoke(argsJSON)
+	return inv.invoke(ctx, argsJSON)
 }
 
 func encodeToolResult[T any](result T) (json.RawMessage, error) {
@@ -231,5 +246,5 @@ func (r *TypedToolRegistry) Definitions() []ToolDefinition {
 	if r == nil {
 		return nil
 	}
-	return append([]ToolDefinition(nil), r.definitions...)
+	return cloneToolDefinitions(r.definitions)
 }

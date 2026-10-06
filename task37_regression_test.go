@@ -45,7 +45,7 @@ func TestToolExecutionScopeFailsBeforeAnyHandler(t *testing.T) {
 			invoked := 0
 			reg := NewTypedToolRegistry()
 			for _, name := range []string{"lookup", "delete_all"} {
-				tool, err := NewTypedTool(name, func(struct{}) (string, error) {
+				tool, err := NewTypedTool(name, func(_ context.Context, _ struct{}) (string, error) {
 					invoked++
 					return "fixture", nil
 				})

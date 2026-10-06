@@ -47,7 +47,8 @@ func StreamStructuredOutput[T any](
 			yield(zero, err)
 			return
 		}
-		validator, err := workExec.Validator.CompileSchema(
+		validator, err := compileSchemaSnapshot(
+			workExec.Validator,
 			workExec.ResponseFormat.Schema,
 			workExec.ResponseFormat.Dialect,
 		)
@@ -64,7 +65,11 @@ func StreamStructuredOutput[T any](
 		defer cancel()
 
 		parser := newStructuredStreamParser[T]()
-		stream := invoker.ExecuteStream(streamCtx, workExec, mode)
+		if boundaryErr := validateDispatchBoundary(streamCtx, workExec); boundaryErr != nil {
+			yield(zero, boundaryErr)
+			return
+		}
+		stream := invoker.ExecuteStream(streamCtx, workExec.Clone(), mode)
 		if stream == nil {
 			yield(zero, ErrStreamProtocol)
 			return

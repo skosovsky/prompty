@@ -41,7 +41,7 @@ func TestSchemaPolicyWireRejectsInvalidModeAndPermissions(t *testing.T) {
 	} {
 		// Arrange.
 		wire := JSONDocument(
-			`{"format":"prompty.execution","messages":[],"metadata":{"id":"fixture"},"requirements":{"schema":` + policy + `}}`,
+			`{"format":"prompty.execution.v2","messages":[],"metadata":{"id":"fixture"},"requirements":{"schema":` + policy + `}}`,
 		)
 		// Act.
 		_, err := DecodeExecutionJSON(wire)
@@ -56,7 +56,7 @@ func TestSchemaPolicyWireRejectsWhitespacePermissionSemantically(t *testing.T) {
 	exec := SimplePrompt("fixture")
 	exec.Requirements.Schema = SchemaPolicy{Mode: SchemaLowering, AllowedTransforms: []string{" "}}
 	invalid := JSONDocument(
-		`{"format":"prompty.execution","messages":[],"metadata":{"id":"fixture"},"requirements":{"schema":{"mode":"lowering","allowed_transforms":[" "]}}}`,
+		`{"format":"prompty.execution.v2","messages":[],"metadata":{"id":"fixture"},"requirements":{"schema":{"mode":"lowering","allowed_transforms":[" "]}}}`,
 	)
 	// Act.
 	_, encodeErr := MarshalExecution(exec, WirePolicy{State: StatePreserve})

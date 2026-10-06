@@ -172,7 +172,7 @@ func TestToolLoweringDoesNotPermitInvalidArgumentsToReachHandler(t *testing.T) {
 			}
 			tool, err := prompty.NewTypedTool(
 				"lookup",
-				func(input) (string, error) { invoked++; return "fixture", nil },
+				func(_ context.Context, _ input) (string, error) { invoked++; return "fixture", nil },
 			)
 			require.NoError(t, err)
 			require.NoError(t, prompty.RegisterTool(registry, tool))

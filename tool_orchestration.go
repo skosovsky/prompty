@@ -12,7 +12,7 @@ import (
 // ToolInvoker validates and executes typed tool calls.
 type ToolInvoker interface {
 	ToolValidator
-	InvokeTool(name string, argsJSON string) (json.RawMessage, error)
+	InvokeTool(ctx context.Context, name string, argsJSON string) (json.RawMessage, error)
 }
 
 // ExecuteWithTypedTools performs one model call, validates tool args, and invokes handlers.
@@ -31,44 +31,54 @@ func ExecuteWithTypedTools(
 	if tools == nil {
 		return nil, errors.New("typed tools: tool invoker is nil")
 	}
-	if exec.ForcedTool != "" {
-		if _, ok := toolDefinitionsByName(exec.Tools)[exec.ForcedTool]; !ok {
-			return nil, &ToolScopeError{Tool: exec.ForcedTool, Reason: "forced tool is outside execution scope"}
-		}
-	}
 
 	workExec := clonePromptExecution(exec)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return workExec, contextErr
+	}
+	if err := ValidateExecutionToolScope(workExec); err != nil {
+		return workExec, err
+	}
 	schemas, err := compileToolSchemas(workExec)
 	if err != nil {
 		return workExec, err
 	}
-	resp, err := invoker.Execute(ctx, workExec)
-	if err != nil {
-		return nil, err
+	if contextErr := ctx.Err(); contextErr != nil {
+		return workExec, contextErr
+	}
+	if scopeErr := ValidateExecutionToolScope(workExec); scopeErr != nil {
+		return workExec, scopeErr
+	}
+	resp, err := invoker.Execute(ctx, workExec.Clone())
+	if dispatchErr := errors.Join(err, ctx.Err()); dispatchErr != nil {
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: dispatchErr}
 	}
 	if resp == nil {
-		return nil, errors.New("typed tools: nil response")
+		return workExec, errors.New("typed tools: nil response")
 	}
 	if metadataErr := ValidateResponseMetadata(resp); metadataErr != nil {
-		return workExec, metadataErr
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: metadataErr}
 	}
 	if resp.Outcome == OutcomeRefusal || resp.Outcome == OutcomeIncomplete {
-		return workExec, &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason}
+		return workExec, &ToolDispatchError{
+			Response: cloneResponse(resp),
+			Err:      &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason},
+		}
 	}
 	if scopeErr := validateResponseToolScope(workExec, resp); scopeErr != nil {
-		return workExec, scopeErr
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: scopeErr}
 	}
 
 	assistantMsg, err := resp.AssistantMessage()
 	if err != nil {
-		return nil, err
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: err}
 	}
 	toolCalls, err := toolCallsFromContent(resp.Content)
 	if err != nil {
-		return nil, err
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: err}
 	}
 	if len(toolCalls) == 0 {
-		return workExec.AddMessage(assistantMsg), nil
+		return workExec.AddMessage(assistantMsg), ctx.Err()
 	}
 
 	callErrs, batchErr := validateToolBatch(toolCalls, schemas, tools)
@@ -76,7 +86,8 @@ func ExecuteWithTypedTools(
 		return workExec, &ToolCallError{
 			RawAssistantMessage: &assistantMsg,
 			ToolResults:         toolValidationResults(toolCalls, callErrs),
-			Err:                 batchErr,
+			Err:                 errors.Join(batchErr, ctx.Err()),
+			Response:            cloneResponse(resp),
 		}
 	}
 
@@ -89,21 +100,32 @@ func invokeToolBatch(
 	toolCalls []ToolCallPart,
 	tools ToolInvoker,
 ) (*PromptExecution, error) {
-	invokeErrs := make([]error, len(toolCalls))
-	for i, toolCall := range toolCalls {
+	invokeErrs := make([]error, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
 		if err := ctx.Err(); err != nil {
-			return updated, err
+			return updated, errors.Join(append(invokeErrs, err)...)
 		}
-		result, invokeErr := tools.InvokeTool(toolCall.Name, toolCall.Args)
+		if err := ValidateExecutionToolScope(updated); err != nil {
+			return updated, errors.Join(append(invokeErrs, err)...)
+		}
+		result, invokeErr := tools.InvokeTool(ctx, toolCall.Name, toolCall.Args)
+		invokeErr = errors.Join(invokeErr, ctx.Err())
+		invokeErrs = append(invokeErrs, invokeErr)
 		var resultPart ContentPart
 		if invokeErr != nil {
-			invokeErrs[i] = invokeErr
-			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, invokeErr.Error(), true)
+			text := toolResultText(result)
+			if len(result) == 0 {
+				text = invokeErr.Error()
+			}
+			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, text, true)
 		} else {
 			text := toolResultText(result)
 			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, text, false)
 		}
 		updated = updated.AddMessage(newToolMessageWithContent([]ContentPart{resultPart}))
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return updated, errors.Join(append(invokeErrs, cancelErr)...)
+		}
 	}
 	if joined := errors.Join(invokeErrs...); joined != nil {
 		return updated, fmt.Errorf("typed tools: invoke failed: %w", joined)
@@ -147,7 +169,7 @@ func compileToolSchemas(exec *PromptExecution) (map[string]ValueValidator, error
 		if len(source) == 0 {
 			source = JSONDocument(`{"type":"object"}`)
 		}
-		validator, err := compiler.CompileSchema(source, definition.Dialect)
+		validator, err := compileSchemaSnapshot(compiler, source, definition.Dialect)
 		if err != nil {
 			return nil, fmt.Errorf("tool %q schema: %w", definition.Name, err)
 		}
@@ -159,7 +181,7 @@ func compileToolSchemas(exec *PromptExecution) (map[string]ValueValidator, error
 	return compiled, nil
 }
 
-// ErrToolScope indicates that the model requested a tool outside the execution contract.
+// ErrToolScope indicates that definitions or calls violate the execution boundary.
 var ErrToolScope = errors.New("prompty: tool call violates execution scope")
 
 // ToolScopeError describes an execution-scoped contract violation, not an authorization decision.

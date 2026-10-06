@@ -31,6 +31,7 @@ type ValueValidator interface {
 
 // SchemaValidator is an application-injectable schema compiler, separate from domain Validate.
 // Implementations must not fetch external references without explicit caller policy.
+// Source documents are read-only; compilation must not mutate their constraints.
 // Successful compilation promises enforcement of the selected schema contract.
 // Return an error rather than silently ignoring unsupported validation constraints,
 // and never return a nil ValueValidator with a nil error.
@@ -176,4 +177,21 @@ func normalizeSchemaSourceLocations(locations []SchemaSourceLocation, sourceURI 
 			locations[index].Resource = ""
 		}
 	}
+}
+
+// Runtime compiler ports receive an isolated source; detected contract mutation
+// is not accepted as successful compilation of the original schema.
+func compileSchemaSnapshot(compiler SchemaValidator, source JSONDocument, dialect string) (ValueValidator, error) {
+	document := CloneJSONDocument(source)
+	validator, err := compiler.CompileSchema(document, dialect)
+	if err != nil {
+		return nil, err
+	}
+	if !jsonDocumentsEqual(source, document) {
+		return nil, fmt.Errorf("%w: schema compiler changed its source contract", ErrSchemaUnsupported)
+	}
+	if validator == nil {
+		return nil, ErrSchemaValidatorRequired
+	}
+	return validator, nil
 }

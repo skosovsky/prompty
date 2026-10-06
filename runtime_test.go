@@ -43,7 +43,7 @@ func TestBindRuntime_AppliesOverlayAndToolScope(t *testing.T) {
 		LateInput: MustJSONDocumentFromMap(map[string]any{"suffix": "world"}),
 	}
 	scope := ToolScope{
-		Required: []ToolRequirement{{Name: "lookup"}},
+		Required: nil,
 		Allowed:  []ToolManifest{{Name: "lookup"}},
 	}
 
@@ -106,7 +106,7 @@ func TestBindRuntime_AttachedToolScopeFailsClosedOnExecution(t *testing.T) {
 	require.NoError(t, err)
 	_, err = plan.Execute(ctx)
 
-	require.ErrorIs(t, err, ErrMissingRequiredTool)
+	require.ErrorIs(t, err, ErrToolScope)
 	assert.Contains(t, err.Error(), "lookup")
 }
 
@@ -125,7 +125,7 @@ func TestBindRuntime_EmptyToolScopeFailsClosedForRequiredTools(t *testing.T) {
 	require.NoError(t, err)
 	_, err = plan.Execute(ctx)
 
-	require.ErrorIs(t, err, ErrMissingRequiredTool)
+	require.ErrorIs(t, err, ErrToolScope)
 	assert.Contains(t, err.Error(), "agent@digest")
 	assert.Contains(t, err.Error(), "lookup")
 }

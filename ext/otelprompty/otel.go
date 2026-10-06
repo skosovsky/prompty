@@ -55,6 +55,13 @@ func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecut
 	defer func() {
 		span.SetAttributes(attribute.Int64("prompty.latency_ms", time.Since(start).Milliseconds()))
 	}()
+	if exec != nil {
+		if scopeErr := prompty.ValidateExecutionToolScope(exec); scopeErr != nil {
+			span.RecordError(scopeErr)
+			span.SetStatus(codes.Error, scopeErr.Error())
+			return nil, scopeErr
+		}
+	}
 	resp, err := t.next.Execute(ctx, exec)
 	if err != nil {
 		span.RecordError(err)
@@ -77,7 +84,7 @@ func (t *tracingInvoker) ExecuteStream(
 	exec *prompty.PromptExecution,
 	mode prompty.StreamMode,
 ) *prompty.Stream {
-	stream := t.next.ExecuteStream(ctx, exec, mode)
+	stream := t.scopedStream(ctx, exec, mode)
 	if stream == nil {
 		return prompty.ErrorStream(ctx, mode, prompty.ErrStreamProtocol)
 	}
@@ -117,4 +124,18 @@ func execAttrs(exec *prompty.PromptExecution) []attribute.KeyValue {
 		attrs = append(attrs, attribute.String("prompty.model", exec.ModelOptions.Model))
 	}
 	return attrs
+}
+
+// Rejected declarations still enter the same observed stream lifecycle.
+func (t *tracingInvoker) scopedStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	if exec != nil {
+		if scopeErr := prompty.ValidateExecutionToolScope(exec); scopeErr != nil {
+			return prompty.ErrorStream(ctx, mode, scopeErr)
+		}
+	}
+	return t.next.ExecuteStream(ctx, exec, mode)
 }

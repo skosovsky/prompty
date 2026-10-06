@@ -151,7 +151,7 @@ func TestSDKPrecisionFailurePreventsToolHandler(t *testing.T) {
 		WithProfiles(server.URL, profile)))
 	registry := prompty.NewTypedToolRegistry()
 	invoked := 0
-	tool, err := prompty.NewTypedTool("lookup", func(struct {
+	tool, err := prompty.NewTypedTool("lookup", func(_ context.Context, _ struct {
 		ID int64 `json:"id"`
 	}) (string, error) {
 		invoked++

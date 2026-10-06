@@ -99,11 +99,11 @@ func ValidateExecution(exec *prompty.PromptExecution) error {
 		return err
 	}
 	if exec.ForcedTool == "" {
-		return nil
+		return prompty.ValidateExecutionToolScope(exec)
 	}
 	for _, tool := range exec.Tools {
 		if tool.Name == exec.ForcedTool {
-			return nil
+			return prompty.ValidateExecutionToolScope(exec)
 		}
 	}
 	return fmt.Errorf("%w: %s", ErrForcedToolNotFound, exec.ForcedTool)

@@ -47,7 +47,7 @@ func TestRequestCacheRejectsBlockAndOmissionMechanisms(t *testing.T) {
 			// Act.
 			_, marshalErr := MarshalExecution(exec, WirePolicy{State: StatePreserve})
 			_, restoreErr := UnmarshalExecution(PromptExecutionWire{
-				Format: "prompty.execution", RequestCache: exec.RequestCache,
+				Format: "prompty.execution.v2", RequestCache: exec.RequestCache,
 			})
 			// Assert.
 			require.ErrorIs(t, marshalErr, ErrCachePolicy)

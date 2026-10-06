@@ -53,7 +53,7 @@ func TestCacheRejectsLegacyAndInvalidControls(t *testing.T) {
 	}
 	// Arrange.
 	legacy := JSONDocument(
-		`{"format":"prompty.execution","messages":[{"role":"user","content":[],"cache_policy":{"type":"ephemeral"}}]}`,
+		`{"format":"prompty.execution.v2","messages":[{"role":"user","content":[],"cache_policy":{"type":"ephemeral"}}]}`,
 	)
 	// Act.
 	_, err := DecodeExecutionJSON(legacy)

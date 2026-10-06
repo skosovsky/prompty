@@ -261,3 +261,35 @@ func (i *invokerStub) ExecuteStream(
 		return i.generateStream(ctx, exec)
 	})
 }
+
+func TestTracingRejectsChangedToolScopeBeforeNext(t *testing.T) {
+	t.Parallel()
+	// Arrange: tracing cannot defer this core boundary to a custom next invoker.
+	calls := 0
+	next := &invokerStub{
+		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
+			calls++
+			return prompty.NewResponse([]prompty.ContentPart{prompty.TextPart{Text: "ok"}}), nil
+		},
+		generateStream: func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+			calls++
+			return func(func(*prompty.ResponseChunk, error) bool) {}
+		},
+	}
+	execution := prompty.SimplePrompt("work")
+	execution.Tools = []prompty.ToolDefinition{{Name: "read"}}
+	execution, err := execution.WithToolScope(prompty.ToolScope{Allowed: []prompty.ToolManifest{{Name: "read"}}})
+	require.NoError(t, err)
+	execution.Tools[0].Name = "delete_all"
+	invoker := WithTracing()(next)
+	// Act.
+	_, err = invoker.Execute(context.Background(), execution)
+	stream := invoker.ExecuteStream(context.Background(), execution, prompty.StreamNative)
+	for _, streamErr := range stream.Events() {
+		require.ErrorIs(t, streamErr, prompty.ErrToolScope)
+	}
+	// Assert.
+	require.ErrorIs(t, stream.Status().Err, prompty.ErrToolScope)
+	require.ErrorIs(t, err, prompty.ErrToolScope)
+	require.Zero(t, calls)
+}

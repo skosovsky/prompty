@@ -57,7 +57,7 @@ func TestCheckedIDlessToolCallsPreserveNameThroughContinuation(t *testing.T) {
 			registry := prompty.NewTypedToolRegistry()
 			tool, err := prompty.NewTypedTool(
 				"lookup",
-				func(struct{}) (string, error) { invoked++; return "fixture", nil },
+				func(_ context.Context, _ struct{}) (string, error) { invoked++; return "fixture", nil },
 			)
 			require.NoError(t, err)
 			require.NoError(t, prompty.RegisterTool(registry, tool))

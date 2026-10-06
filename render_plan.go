@@ -231,14 +231,13 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 	applyManifestProvenanceOnMessages(rendered, p.template.Metadata.ID)
 	exec.Messages = spliceHistory(rendered, cloneMessages(prepared.history))
 	p.applyRuntimeOverrides(exec)
-	if p.toolScope != nil {
+	exec.toolScope = cloneToolScopePtr(p.toolScope)
+	if scopeErr := ValidateExecutionToolScope(exec); scopeErr != nil {
 		desc := p.toolScopeDescriptor
 		if desc.ID == "" {
 			desc.ID = templateID
 		}
-		if err := ValidateExecutionManifestContract(exec, desc, toolScopeContract(*p.toolScope)); err != nil {
-			return nil, err
-		}
+		return nil, toolContractErr(desc, "", "execution boundary", scopeErr)
 	}
 	return exec, nil
 }

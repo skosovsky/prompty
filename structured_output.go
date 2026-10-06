@@ -32,14 +32,21 @@ func ExecuteWithStructuredOutput[T any](
 	if err != nil {
 		return nil, err
 	}
-	validator, err := workExec.Validator.CompileSchema(workExec.ResponseFormat.Schema, workExec.ResponseFormat.Dialect)
+	validator, err := compileSchemaSnapshot(
+		workExec.Validator,
+		workExec.ResponseFormat.Schema,
+		workExec.ResponseFormat.Dialect,
+	)
 	if err != nil {
 		return nil, err
 	}
 	if validator == nil {
 		return nil, ErrSchemaValidatorRequired
 	}
-	resp, err := invoker.Execute(ctx, workExec)
+	if boundaryErr := validateDispatchBoundary(ctx, workExec); boundaryErr != nil {
+		return nil, boundaryErr
+	}
+	resp, err := invoker.Execute(ctx, workExec.Clone())
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +106,9 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 	}
 
 	workExec := clonePromptExecution(exec)
+	if scopeErr := ValidateExecutionToolScope(workExec); scopeErr != nil {
+		return nil, scopeErr
+	}
 	if workExec.Validator == nil {
 		workExec.Validator = NewJSONSchemaValidator(nil)
 	}

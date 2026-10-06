@@ -54,7 +54,8 @@ func TestStructuredControlAndTerminalConformance(t *testing.T) {
 			}
 			if test.canceled {
 				require.Zero(t, sourceCalls)
-				require.Equal(t, StreamCanceled, invoker.stream.Status().State)
+				require.Nil(t, invoker.stream)
+				require.Zero(t, invoker.observations)
 			} else {
 				require.Equal(t, 1, sourceCalls)
 				require.Equal(t, 9, invoker.stream.Status().Result.Usage.TotalTokens)

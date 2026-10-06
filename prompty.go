@@ -151,6 +151,7 @@ type ModelOptions struct {
 
 // PromptExecution is the result of formatting a template; immutable after creation.
 type PromptExecution struct {
+	toolScope *ToolScope
 	// RequestCache selects whole-request controls, never a block marker or remote resource.
 	RequestCache *CachePolicy `json:"request_cache,omitempty" yaml:"request_cache,omitempty"`
 

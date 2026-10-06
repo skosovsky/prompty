@@ -15,6 +15,7 @@ func clonePromptExecution(exec *PromptExecution) *PromptExecution {
 		return nil
 	}
 	return &PromptExecution{
+		toolScope:      cloneToolScopePtr(exec.toolScope),
 		RequestCache:   cloneCachePolicy(exec.RequestCache),
 		CacheResource:  cloneCacheResource(exec.CacheResource),
 		Messages:       cloneMessages(exec.Messages),
@@ -35,6 +36,7 @@ func cloneExecutionWithMessages(exec *PromptExecution, messages []ChatMessage) *
 		return nil
 	}
 	return &PromptExecution{
+		toolScope:      cloneToolScopePtr(exec.toolScope),
 		RequestCache:   cloneCachePolicy(exec.RequestCache),
 		CacheResource:  cloneCacheResource(exec.CacheResource),
 		Messages:       messages,

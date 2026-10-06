@@ -81,7 +81,7 @@ func (s stubToolInvoker) ValidateToolCall(name, argsJSON string) error {
 	return nil
 }
 
-func (s stubToolInvoker) InvokeTool(name, argsJSON string) (json.RawMessage, error) {
+func (s stubToolInvoker) InvokeTool(_ context.Context, name, argsJSON string) (json.RawMessage, error) {
 	if s.invoke != nil {
 		return s.invoke(name, argsJSON)
 	}

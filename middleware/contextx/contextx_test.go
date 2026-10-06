@@ -546,3 +546,29 @@ func (i *invokerFunc) ExecuteStream(
 		}
 	})
 }
+
+func TestTokenBudgetRejectsChangedToolScopeBeforeNext(t *testing.T) {
+	t.Parallel()
+	// Arrange: a BYOT next invoker has no adapter gate.
+	calls := 0
+	next := &invokerFunc{generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
+		calls++
+		return prompty.NewResponse([]prompty.ContentPart{prompty.TextPart{Text: "ok"}}), nil
+	}}
+	execution := prompty.SimplePrompt("work")
+	execution.Tools = []prompty.ToolDefinition{{Name: "read"}}
+	execution, err := execution.WithToolScope(prompty.ToolScope{Allowed: []prompty.ToolManifest{{Name: "read"}}})
+	require.NoError(t, err)
+	execution.Tools[0].Name = "delete_all"
+	invoker := WithTokenBudget(100, &mockCounter{})(next)
+	// Act.
+	_, err = invoker.Execute(context.Background(), execution)
+	stream := invoker.ExecuteStream(context.Background(), execution, prompty.StreamNative)
+	for _, streamErr := range stream.Events() {
+		require.ErrorIs(t, streamErr, prompty.ErrToolScope)
+	}
+	// Assert.
+	require.ErrorIs(t, stream.Status().Err, prompty.ErrToolScope)
+	require.ErrorIs(t, err, prompty.ErrToolScope)
+	require.Zero(t, calls)
+}
