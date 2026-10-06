@@ -109,6 +109,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		return nil, cacheErr
 	}
 	working := adapter.PrepareTranslateExecution(exec)
+	if err := validateGeminiCorrelation(working.Messages); err != nil {
+		return nil, err
+	}
 	if stateErr := a.ValidateProviderState(working, a.destinationIdentity(working)); stateErr != nil {
 		return nil, stateErr
 	}
@@ -319,7 +322,9 @@ func (a *Adapter) assistantContent(parts []prompty.ContentPart) (*genai.Content,
 				return nil, argsErr
 			}
 			var args map[string]any
-			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			decoder := json.NewDecoder(strings.NewReader(argsJSON))
+			decoder.UseNumber()
+			if err := decoder.Decode(&args); err != nil {
 				return nil, fmt.Errorf("%w: invalid tool call args JSON: %w", adapter.ErrMalformedArgs, err)
 			}
 			if args == nil {
@@ -369,7 +374,13 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 		if err != nil {
 			return nil, err
 		}
-		genParts = append(genParts, genai.NewPartFromFunctionResponse(tr.Name, map[string]any{"result": text}))
+		key := "output"
+		if tr.IsError {
+			key = "error"
+		}
+		part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{key: text})
+		part.FunctionResponse.ID = tr.ToolCallID
+		genParts = append(genParts, part)
 	}
 	if len(genParts) == 0 {
 		return nil, fmt.Errorf("%w: tool message missing ToolResultPart", adapter.ErrUnsupportedContentType)

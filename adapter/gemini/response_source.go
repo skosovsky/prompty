@@ -8,12 +8,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"reflect"
-	"slices"
 
 	"google.golang.org/genai"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/adapter"
 )
 
 type responseSourceKey struct{}
@@ -108,6 +107,10 @@ func (a *Adapter) executeObservedResponse(
 	if a.responseClient == nil || a.responseLimit <= 0 {
 		return nil, prompty.ErrProviderState
 	}
+	request, err := exactGenerationRequest(request)
+	if err != nil {
+		return nil, err
+	}
 	source := &responseSource{limit: a.responseLimit}
 	ctx = context.WithValue(ctx, responseSourceKey{}, source)
 	response, err := a.generateObservedContent(ctx, request, source)
@@ -182,13 +185,18 @@ func hasSignedGeminiResponse(response *genai.GenerateContentResponse) bool {
 	return false
 }
 
-func originalSignedGeminiPart(raw *genai.GenerateContentResponse, index int, part *genai.Part) (*genai.Part, error) {
-	if part == nil || len(part.ThoughtSignature) == 0 {
+func originalGeminiPart(raw *genai.GenerateContentResponse, index int, part *genai.Part) (*genai.Part, error) {
+	if part == nil || (len(part.ThoughtSignature) == 0 && part.FunctionCall == nil) {
 		return part, nil
 	}
 	if raw.SDKHTTPResponse == nil || raw.SDKHTTPResponse.Body == "" {
-		if part.FunctionCall != nil && containsSDKFloat(part.FunctionCall.Args) {
-			return nil, prompty.ErrProviderState
+		if part.FunctionCall != nil {
+			if _, err := json.Marshal(part.FunctionCall.Args); err != nil {
+				return nil, errors.Join(prompty.ErrProviderState, adapter.ErrMalformedArgs)
+			}
+			if containsSDKFloat(part.FunctionCall.Args) {
+				return nil, prompty.ErrProviderState
+			}
 		}
 		return part, nil
 	}
@@ -207,9 +215,10 @@ func originalSignedGeminiPart(raw *genai.GenerateContentResponse, index int, par
 		len(document.Candidates[0].Content.Parts) != len(raw.Candidates[0].Content.Parts) {
 		return nil, prompty.ErrProviderState
 	}
-	original, err := decodeGeminiState(prompty.PartState{Envelope: prompty.ProviderEnvelope{
-		Payload: document.Candidates[0].Content.Parts[index],
-	}})
+	original, err := decodeOriginalGeminiPart(
+		document.Candidates[0].Content.Parts[index],
+		len(part.ThoughtSignature) > 0,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -217,30 +226,42 @@ func originalSignedGeminiPart(raw *genai.GenerateContentResponse, index int, par
 	if err != nil {
 		return nil, prompty.ErrProviderState
 	}
-	var sdkValue map[string]any
 	originalBytes, err := json.Marshal(original)
-	if err != nil || json.Unmarshal(originalBytes, &sdkValue) != nil {
+	if err != nil {
 		return nil, prompty.ErrProviderState
 	}
-	normalized, err := json.Marshal(sdkValue)
-	if err != nil || !reflect.DeepEqual(geminiJSONValue(encoded), geminiJSONValue(normalized)) {
+	if exactGeminiSDKJSONEqual(encoded, originalBytes) {
+		return original, nil
+	}
+	if part.FunctionCall == nil || original.FunctionCall == nil ||
+		!matchesGeminiSDKArguments(original.FunctionCall.Args, part.FunctionCall.Args) {
+		return nil, prompty.ErrProviderState
+	}
+	// Bind every other native field independently of numeric argument projection.
+	copyPart, copyOriginal := *part, *original
+	copyCall, copyOriginalCall := *part.FunctionCall, *original.FunctionCall
+	copyCall.Args, copyOriginalCall.Args = nil, nil
+	copyPart.FunctionCall, copyOriginal.FunctionCall = &copyCall, &copyOriginalCall
+	encoded, err = json.Marshal(&copyPart)
+	originalBytes, originalErr := json.Marshal(&copyOriginal)
+	if err != nil || originalErr != nil || !exactGeminiSDKJSONEqual(encoded, originalBytes) {
 		return nil, prompty.ErrProviderState
 	}
 	return original, nil
 }
 
-func containsSDKFloat(value any) bool {
-	switch v := value.(type) {
-	case float32, float64:
-		return true
-	case map[string]any:
-		for _, child := range v {
-			if containsSDKFloat(child) {
-				return true
-			}
-		}
-	case []any:
-		return slices.ContainsFunc(v, containsSDKFloat)
+func containsSDKFloat(value any) bool { return adapter.HasUnverifiedJSONNumbers(value) }
+
+func decodeOriginalGeminiPart(payload []byte, signed bool) (*genai.Part, error) {
+	if signed {
+		return decodeGeminiState(prompty.PartState{Envelope: prompty.ProviderEnvelope{Payload: payload}})
 	}
-	return false
+	var part genai.Part
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&part); err != nil {
+		return nil, prompty.ErrProviderState
+	}
+	return &part, nil
 }

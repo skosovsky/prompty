@@ -10,8 +10,8 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-// Match the SDK's deepMarshal step and its final JSON encoder. The DTO codec
-// deliberately uses Number, whereas SDK request normalization uses float64.
+// Verify that SDK normalization can encode the shape. Exact contents are
+// restored after this lossy normalization by the dispatch encoding callback.
 func validateGeminiSDKStateEncoding(part *genai.Part) error {
 	original, err := json.Marshal(part)
 	if err != nil {
@@ -22,7 +22,7 @@ func validateGeminiSDKStateEncoding(part *genai.Part) error {
 		return prompty.ErrProviderState
 	}
 	encoded, err := json.Marshal(normalized)
-	if err != nil || !exactGeminiSDKJSONEqual(original, encoded) {
+	if err != nil || !json.Valid(encoded) {
 		return prompty.ErrProviderState
 	}
 	return nil

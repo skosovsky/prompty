@@ -39,6 +39,7 @@ func TestSourceCleanupDoesNotCancelCaptureObservation(t *testing.T) {
 				require.NoError(t, ctx.Err())
 				require.ErrorIs(t, sourceErr, sentinel)
 				require.Len(t, status.Result.Content, 1)
+				require.True(t, status.Result.ContinuationUnavailable)
 				status.Result.Content[0] = TextPart{Text: "mutated"}
 				report := validFixtureCaptureReport()
 				return &report, nil

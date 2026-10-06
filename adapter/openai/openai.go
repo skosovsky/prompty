@@ -430,6 +430,9 @@ func (a *Adapter) toolResultMessages(parts []prompty.ContentPart) ([]openai.Chat
 		default:
 			return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
 		}
+		if tr.IsError {
+			return nil, adapter.ErrUnsupportedContentType
+		}
 		// SDK tool message content: string or array of text parts; fail-fast on MediaPart (SDK OfArrayOfContentParts type is text-only).
 		for _, cp := range tr.Content {
 			if _, ok := cp.(prompty.MediaPart); ok {

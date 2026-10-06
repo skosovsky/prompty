@@ -3,6 +3,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -179,6 +180,10 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 		return nil
 	})
 	if err != nil {
+		if partial, ok := errors.AsType[*partialChatDecodeError](err); ok {
+			// Defer this parse failure to ParseResponse, which returns the known prefix.
+			return &partial.response, nil
+		}
 		return nil, err
 	}
 	return &lastResp, nil
@@ -238,6 +243,10 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 				)
 			}
 		}
+		thinking, thinkingErr := ollamaThinking(msg.Content)
+		if thinkingErr != nil {
+			return nil, thinkingErr
+		}
 		var toolCalls []api.ToolCall
 		var tcIndex int
 		for _, p := range msg.Content {
@@ -265,7 +274,7 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 		if err != nil {
 			return nil, err
 		}
-		return []api.Message{{Role: "assistant", Content: text, ToolCalls: toolCalls}}, nil
+		return []api.Message{{Role: "assistant", Content: text, Thinking: thinking, ToolCalls: toolCalls}}, nil
 	case prompty.RoleTool:
 		messages := make([]api.Message, 0, len(msg.Content))
 		for _, p := range msg.Content {
@@ -276,6 +285,9 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 					adapter.ErrUnsupportedContentType,
 				)
 			case prompty.ToolResultPart:
+				if x.IsError {
+					return nil, adapter.ErrUnsupportedContentType
+				}
 				for _, cp := range x.Content {
 					if _, ok := cp.(prompty.MediaPart); ok {
 						return nil, fmt.Errorf(
@@ -295,7 +307,7 @@ func (a *Adapter) translateMessage(msg prompty.ChatMessage) ([]api.Message, erro
 					ToolName:   x.Name,
 				})
 			case *prompty.ToolResultPart:
-				if x == nil {
+				if x == nil || x.IsError {
 					return nil, adapter.ErrUnsupportedContentType
 				}
 				for _, cp := range x.Content {
@@ -368,15 +380,11 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 	for _, tc := range msg.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
 		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
-			return nil, fmt.Errorf(
-				"%w: empty tool call args for %q",
-				adapter.ErrMalformedArgs,
-				tc.Function.Name,
-			)
+			return partialOllamaFailure(resp, out, adapter.ErrMalformedArgs)
 		}
 		b, err := json.Marshal(argsMap)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
+			return partialOllamaFailure(resp, out, adapter.ErrMalformedArgs)
 		}
 		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: string(b)})
 	}
@@ -436,11 +444,11 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 	for _, tc := range chunk.Message.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
 		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
-			return nil, adapter.ErrMalformedArgs
+			return out, adapter.ErrMalformedArgs
 		}
 		b, err := json.Marshal(argsMap)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to marshal tool call args: %w", adapter.ErrMalformedArgs, err)
+			return out, adapter.ErrMalformedArgs
 		}
 		out = append(out, prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Args: string(b)})
 	}
@@ -498,4 +506,39 @@ func applyOllamaProviderSettings(options map[string]any, settings map[string]any
 		options["repeat_penalty"] = float64(repeatPenalty)
 	}
 	return nil
+}
+
+// Ollama has one Thinking field; accept a contiguous reasoning prefix only.
+func ollamaThinking(parts []prompty.ContentPart) (string, error) {
+	var result strings.Builder
+	ordinary := false
+	for _, part := range parts {
+		switch value := part.(type) {
+		case prompty.ReasoningPart:
+			if ordinary {
+				return "", adapter.ErrUnsupportedContentType
+			}
+			result.WriteString(value.Text)
+		case *prompty.ReasoningPart:
+			if value == nil || ordinary {
+				return "", adapter.ErrUnsupportedContentType
+			}
+			result.WriteString(value.Text)
+		default:
+			ordinary = true
+		}
+	}
+	return result.String(), nil
+}
+
+func partialOllamaFailure(raw *api.ChatResponse, parts []prompty.ContentPart, cause error) (*prompty.Response, error) {
+	if len(parts) == 0 {
+		return nil, cause
+	}
+	response := prompty.NewResponse(parts)
+	response.Outcome = "" // Failed argument decoding cannot confirm completion.
+	response.ContinuationUnavailable = true
+	usage, err := usageFromOllama(raw)
+	response.Usage = usage
+	return response, errors.Join(cause, err)
 }

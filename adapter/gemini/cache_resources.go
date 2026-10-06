@@ -152,8 +152,13 @@ func (m *CacheResources) Create(
 		Tools: translated.Config.Tools, ToolConfig: translated.Config.ToolConfig,
 		TTL: input.Expiry.TTL, ExpireTime: input.Expiry.ExpiresAt,
 	}
+	config.HTTPOptions, err = exactContentOptions(config.HTTPOptions, config.Contents, "contents")
+	if err != nil {
+		return nil, err
+	}
 	immutable := *config
 	immutable.TTL, immutable.ExpireTime = 0, time.Time{}
+	immutable.HTTPOptions = nil // Dispatch encoding is not immutable cache content.
 	encoded, err := json.Marshal(immutable)
 	if err != nil {
 		return nil, prompty.ErrCacheResource

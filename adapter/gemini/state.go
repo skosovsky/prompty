@@ -53,18 +53,18 @@ func parseGeminiResponse(
 	}
 	if candidate.Content != nil {
 		for sourceIndex, sdkPart := range candidate.Content.Parts {
-			part, sourceErr := originalSignedGeminiPart(raw, sourceIndex, sdkPart)
+			part, sourceErr := originalGeminiPart(raw, sourceIndex, sdkPart)
 			if sourceErr != nil {
-				return nil, sourceErr
+				return partialGeminiFailure(response, sourceErr)
 			}
 			canonical, err := canonicalGeminiPart(part)
 			if err != nil {
-				return nil, err
+				return partialGeminiFailure(response, err)
 			}
 			index := len(response.Content)
 			response.Content = append(response.Content, canonical)
 			if len(part.ThoughtSignature) != 0 {
-				payload, err := json.Marshal(part)
+				payload, err := encodeExactGeminiPart(part)
 				if err != nil {
 					return nil, fmt.Errorf("%w: part encoding", prompty.ErrProviderState)
 				}
@@ -80,6 +80,10 @@ func parseGeminiResponse(
 				)
 			}
 		}
+	}
+	history := []prompty.ChatMessage{{Role: prompty.RoleAssistant, Content: response.Content}}
+	if err := validateGeminiCorrelation(history); err != nil {
+		return partialGeminiFailure(response, err)
 	}
 	if len(response.Content) == 0 && response.Outcome != prompty.OutcomeRefusal && response.FinishReason == "" &&
 		candidate.CitationMetadata == nil && candidate.GroundingMetadata == nil {
@@ -270,7 +274,7 @@ func decodeGeminiState(state prompty.PartState) (*genai.Part, error) {
 	if err := decoder.Decode(&part); err != nil || len(part.ThoughtSignature) == 0 {
 		return nil, prompty.ErrProviderState
 	}
-	reencoded, err := json.Marshal(&part)
+	reencoded, err := encodeExactGeminiPart(&part)
 	if err != nil || !reflect.DeepEqual(geminiJSONValue(payload), geminiJSONValue(reencoded)) {
 		return nil, prompty.ErrProviderState
 	}
@@ -451,4 +455,14 @@ func geminiUsageKnown(value int32, raw json.RawMessage) bool {
 	}
 	parsed, err := number.Int64()
 	return err == nil && parsed == int64(value)
+}
+
+func partialGeminiFailure(response *prompty.Response, err error) (*prompty.Response, error) {
+	if len(response.Content) == 0 {
+		return nil, err
+	}
+	response.Outcome = "" // Unknown: failed decoding cannot confirm completion.
+	response.FinishReason = ""
+	response.ContinuationUnavailable = true
+	return response, err
 }

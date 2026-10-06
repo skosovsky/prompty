@@ -75,7 +75,11 @@ func TestCheckedIDlessToolCallsPreserveNameThroughContinuation(t *testing.T) {
 					require.ErrorIs(t, err, adapter.ErrCapabilityRequirement)
 					require.Zero(t, fixture.calls)
 				} else {
-					require.ErrorIs(t, err, prompty.ErrToolScope)
+					if scenario == "duplicate" {
+						require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
+					} else {
+						require.ErrorIs(t, err, prompty.ErrToolScope)
+					}
 					require.Equal(t, 1, fixture.calls)
 				}
 				return

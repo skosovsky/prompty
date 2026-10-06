@@ -272,6 +272,9 @@ func (s *Stream) startLifecycleObserver(observer StreamLifecycleObserver) (func(
 }
 
 func (s *Stream) observeCapture(sourceErr error) error {
+	if sourceErr != nil {
+		s.revokeFailedContinuation()
+	}
 	if s.captureObserver == nil {
 		return sourceErr
 	}
@@ -518,11 +521,24 @@ func (s *Stream) materialize() error {
 	return nil
 }
 
+// Failed or canceled accumulated exchanges retain evidence, but are not admitted
+// as continuation history. This also covers failures before a provider callback.
+func (s *Stream) revokeFailedContinuation() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State == StreamRunning && len(s.status.Result.Content) != 0 {
+		s.status.Result.ContinuationUnavailable = true
+	}
+}
+
 func (s *Stream) complete(state StreamState, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.status.State != StreamCreated && s.status.State != StreamRunning {
 		return
+	}
+	if state != StreamCompleted && len(s.status.Result.Content) != 0 {
+		s.status.Result.ContinuationUnavailable = true
 	}
 	s.status.State, s.status.Err = state, err
 }

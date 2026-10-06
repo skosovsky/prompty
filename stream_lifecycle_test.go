@@ -84,6 +84,7 @@ func TestStreamEarlyStopRetainsPartialAndCancels(t *testing.T) {
 	}
 	// Assert.
 	require.True(t, released)
+	require.True(t, stream.Status().Result.ContinuationUnavailable)
 	select {
 	case <-sourceDone:
 	default:

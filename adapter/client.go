@@ -240,9 +240,13 @@ func (c *clientImpl[Req, Resp]) bufferedEvents(
 			yield(nil, ErrInvalidResponse)
 			return
 		}
+		kind := prompty.StreamFinish
+		if err != nil && resp.Outcome == "" {
+			kind = prompty.StreamDelta
+		}
 		if !yield(&prompty.ResponseChunk{
 			Identity: prompty.StreamIdentity{MessageID: "", PartIDs: bufferedPartIDs(len(resp.Content))},
-			Content:  resp.Content, Usage: resp.Usage, Kind: prompty.StreamFinish,
+			Content:  resp.Content, Usage: resp.Usage, Kind: kind,
 			ProviderState: resp.ProviderState, Annotations: resp.Annotations,
 			MessageAnnotations:      resp.MessageAnnotations,
 			ContinuationUnavailable: resp.ContinuationUnavailable,

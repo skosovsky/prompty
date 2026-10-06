@@ -179,7 +179,7 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 					ToolCallID: "call_2",
 					Name:       "get_time",
 					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
-					IsError:    true,
+					IsError:    false,
 				},
 			}},
 		},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 
 	"google.golang.org/genai"
 
@@ -40,7 +41,11 @@ func (a *Adapter) StreamEventsForProfile(
 			yield(nil, prompty.ErrProviderState)
 			return
 		}
-		request := copyNativeRequest(req)
+		request, err := exactGenerationRequest(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		source := &streamSource{limit: a.responseLimit, validate: validateNativeSource}
 		streamContext := context.WithValue(ctx, streamSourceKey{}, source)
 		state := generateStreamState{destination: destination, toolRefs: make(map[string]string)}
@@ -199,6 +204,7 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 		return nil, adapter.ErrInvalidResponse
 	}
 	frame := &prompty.ResponseChunk{Kind: prompty.StreamUsage}
+	var frameErr error
 	groundingChunks := s.groundingChunks
 	if len(raw.Candidates) == 1 {
 		groundingChunks, err = validateCandidateMetadata(raw.Candidates[0], groundingChunks)
@@ -224,7 +230,11 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 		}
 		response, parseErr := parseGeminiResponse(raw, s.destination, s.groundingChunks)
 		if parseErr != nil && !errors.Is(parseErr, adapter.ErrEmptyResponse) {
-			return nil, parseErr
+			if response == nil {
+				return nil, parseErr
+			}
+			frameErr = parseErr
+			frame.ContinuationUnavailable = true
 		}
 		if response != nil {
 			if s.finished && (len(response.Content) != 0 || response.FinishReason != "") {
@@ -240,6 +250,9 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 			frame.Annotations = append(frame.Annotations, normalized.annotations...)
 			frame.Annotations = append(frame.Annotations, provenance...)
 			frame.StateUpdates = normalized.updates
+			if frameErr != nil {
+				trimFailedFrameAssociations(frame)
+			}
 			if len(frame.Content) != 0 {
 				frame.Kind = prompty.StreamDelta
 			}
@@ -277,7 +290,7 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 	raw.SDKHTTPResponse = &genai.HTTPResponse{Body: string(payload)}
 	frame.Usage = geminiUsage(raw)
 	s.groundingChunks = groundingChunks
-	return frame, nil
+	return frame, frameErr
 }
 
 func (s *generateStreamState) nextRef() string {
@@ -298,3 +311,14 @@ func (*Adapter) CaptureCoverage(mode prompty.StreamMode) prompty.CaptureCoverage
 
 var _ adapter.StreamerAdapter[*Request] = (*Adapter)(nil)
 var _ adapter.ProfileStreamerAdapter[*Request] = (*Adapter)(nil)
+
+// Associations for rejected later native parts cannot be attached to a prefix.
+func trimFailedFrameAssociations(frame *prompty.ResponseChunk) {
+	count := len(frame.Content)
+	frame.Annotations = slices.DeleteFunc(frame.Annotations, func(annotation prompty.PartAnnotation) bool {
+		return annotation.PartIndex >= count
+	})
+	frame.StateUpdates = slices.DeleteFunc(frame.StateUpdates, func(state prompty.PartState) bool {
+		return state.PartIndex >= count
+	})
+}

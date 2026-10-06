@@ -219,7 +219,7 @@ func batchExactContents(requests []*genai.InlinedRequest) *batchContentEncoding 
 	encoding := new(batchContentEncoding)
 	exact := make([]any, len(requests))
 	for i, request := range requests {
-		encoded, _ := json.Marshal(request.Contents) // Prepared canonical content is JSON-serializable.
+		encoded, _ := encodeExactGeminiContents(request.Contents) // Prepared canonical content is serializable.
 		exact[i] = geminiJSONValue(encoded)
 	}
 	encoding.provider = func(body map[string]any) map[string]any {

@@ -22,9 +22,10 @@ func TestActualSDKIngressPreservesSignedNumbersBeforeContinuation(t *testing.T) 
 		name, args  string
 		canContinue bool
 	}{
-		{"rounded integer", `{"big":9007199254740993}`, false},
-		{"rounded decimal", `{"decimal":0.10000000000000001}`, false},
+		{"rounded integer", `{"big":9007199254740993}`, true},
+		{"rounded decimal", `{"decimal":0.10000000000000001}`, true},
 		{"exact integer", `{"big":9007199254740992}`, true},
+		{"empty args", `{}`, true},
 		{"nested caller data", `{"Name":"caller","nested":[{"decimal":0.1}]}`, true},
 	} {
 		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered} {
@@ -73,7 +74,8 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 		Identity:   identity,
 		Provenance: "local SDK ingress fixture, not live evidence",
 		Capabilities: map[string]prompty.CapabilitySupport{
-			prompty.CapabilityProviderState: prompty.CapabilitySupported,
+			prompty.CapabilityProviderState:       prompty.CapabilitySupported,
+			prompty.CapabilityToolNameCorrelation: prompty.CapabilitySupported,
 		},
 	}
 	client := adapter.NewClient(New(WithClient(sdk), WithModel("fixture"), WithProfiles(server.URL, profile)))

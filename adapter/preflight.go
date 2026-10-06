@@ -187,6 +187,9 @@ func requiredCapabilities(exec *prompty.PromptExecution, mode prompty.StreamMode
 			break
 		}
 	}
+	if historyNeedsNameCorrelation(exec.Messages) {
+		required = append(required, prompty.CapabilityToolNameCorrelation)
+	}
 	slices.Sort(required)
 	return slices.Compact(required)
 }
@@ -298,4 +301,24 @@ func mimeCheck(direction, mime string, allowed []string, provenance string) prom
 		status = prompty.CapabilitySupported
 	}
 	return prompty.RequirementCheck{Requirement: direction + ":" + mime, Status: status, Reason: ""}
+}
+
+func historyNeedsNameCorrelation(messages []prompty.ChatMessage) bool {
+	return slices.ContainsFunc(messages, func(message prompty.ChatMessage) bool {
+		return slices.ContainsFunc(message.Content, partNeedsNameCorrelation)
+	})
+}
+func partNeedsNameCorrelation(part prompty.ContentPart) bool {
+	switch value := part.(type) {
+	case prompty.ToolCallPart:
+		return value.ID == ""
+	case *prompty.ToolCallPart:
+		return value != nil && value.ID == ""
+	case prompty.ToolResultPart:
+		return value.ToolCallID == ""
+	case *prompty.ToolResultPart:
+		return value != nil && value.ToolCallID == ""
+	default:
+		return false
+	}
 }

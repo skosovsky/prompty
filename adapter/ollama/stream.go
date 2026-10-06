@@ -49,12 +49,19 @@ func (a *Adapter) StreamEvents(ctx context.Context, req *api.ChatRequest) iter.S
 		state := nativeStreamState{toolRefs: make(map[string]string)}
 		stopped := false
 		err = a.client.Chat(ctx, request, func(raw api.ChatResponse) error {
-			data, marshalErr := json.Marshal(raw)
-			if marshalErr != nil {
-				return adapter.ErrInvalidResponse
-			}
-			captureErr := adapter.CaptureProviderChunk(ctx, string(data), prompty.CaptureRecordMetadata{})
 			frame, parseErr := state.frame(a, raw)
+			if parseErr != nil && frame == nil && !state.finished {
+				// A later failed frame may have no parts of its own. Revoke continuation
+				// for the already accumulated prefix before publishing the error.
+				frame = &prompty.ResponseChunk{Kind: prompty.StreamDelta, ContinuationUnavailable: true}
+			}
+			data, marshalErr := json.Marshal(raw)
+			var captureErr error
+			if marshalErr != nil {
+				captureErr = adapter.ErrInvalidResponse
+			} else {
+				captureErr = adapter.CaptureProviderChunk(ctx, string(data), prompty.CaptureRecordMetadata{})
+			}
 			if frame != nil && !yield(frame, nil) {
 				stopped = true
 				return errNativeConsumerStop
@@ -91,7 +98,7 @@ func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.Re
 		return nil, prompty.ErrStreamProtocol
 	}
 	parts, err := a.ParseStreamChunk(&raw)
-	if err != nil {
+	if err != nil && len(parts) == 0 {
 		return nil, err
 	}
 	usage, usageErr := usageFromOllama(&raw)
@@ -122,6 +129,10 @@ func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.Re
 			return nil, adapter.ErrUnsupportedContentType
 		}
 		frame.Identity.PartIDs = append(frame.Identity.PartIDs, ref)
+	}
+	if err != nil {
+		frame.ContinuationUnavailable = true
+		return frame, errors.Join(err, usageErr)
 	}
 	if raw.Done {
 		s.finished = true

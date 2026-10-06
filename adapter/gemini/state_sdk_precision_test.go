@@ -23,11 +23,11 @@ func TestSignedNumbersAreExactOnSDKWireOrRejectedBeforeDispatch(t *testing.T) {
 		supported            bool
 	}{
 		{"large exact integer", `{"big":9007199254740992}`, `{"big":9007199254740992}`, true},
-		{"numeric spelling", `{"decimal":1.00,"exponent":1e2}`, `{"decimal":1,"exponent":100}`, true},
+		{"numeric spelling", `{"decimal":1.00,"exponent":1e2}`, `{"decimal":1.00,"exponent":1e2}`, true},
 		{"nested caller keys", `{"Name":"caller","nested":[{"name":0.1,"exact":9007199254740994}]}`,
 			`{"Name":"caller","nested":[{"name":0.1,"exact":9007199254740994}]}`, true},
-		{"rounded integer", `{"big":9007199254740993}`, "", false},
-		{"rounded decimal", `{"nested":[{"decimal":0.10000000000000001}]}`, "", false},
+		{"large preserved integer", `{"big":9007199254740993}`, `{"big":9007199254740993}`, true},
+		{"preserved decimal", `{"nested":[{"decimal":0.10000000000000001}]}`, `{"nested":[{"decimal":0.10000000000000001}]}`, true},
 		{"overflow", `{"huge":1e1000}`, "", false},
 	} {
 		for _, mode := range []string{"sync", "buffered"} {
@@ -69,7 +69,8 @@ func checkSignedSDKNumber(t *testing.T, args, wireArgs string, supported bool, m
 		Identity:   identity,
 		Provenance: "local SDK transport fixture, not live evidence",
 		Capabilities: map[string]prompty.CapabilitySupport{
-			prompty.CapabilityProviderState: prompty.CapabilitySupported,
+			prompty.CapabilityProviderState:       prompty.CapabilitySupported,
+			prompty.CapabilityToolNameCorrelation: prompty.CapabilitySupported,
 		},
 	}
 	fixture := &sdkPrecisionTranslationFixture{Adapter: New(

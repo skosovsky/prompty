@@ -224,7 +224,7 @@ func validateToolMappingPorts(
 	if err := validateForcedToolAdapter(adp, report, requiredCapabilities(exec, mode)); err != nil {
 		return err
 	}
-	if slices.Contains(exec.Requirements.Capabilities, prompty.CapabilityToolNameCorrelation) {
+	if slices.Contains(requiredCapabilities(exec, mode), prompty.CapabilityToolNameCorrelation) {
 		correlator, exists := adp.(ToolNameCorrelationAdapter)
 		if !exists || !correlator.SupportsToolNameCorrelation() {
 			return fmt.Errorf("%w: adapter has no tool-name correlation mapping", ErrUnsupportedCapability)

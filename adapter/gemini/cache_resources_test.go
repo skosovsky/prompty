@@ -396,3 +396,42 @@ func TestAcceptedCacheCreateSDKDecodeFailureRetainsIdentity(t *testing.T) {
 	require.Equal(t, prompty.CacheResourceUnknown, result.Handle.State)
 	require.NoError(t, prompty.ValidateCacheResourceHandle(*result.Handle))
 }
+
+func TestCacheCreatePreservesExactContinuationContentsOnSDKWire(t *testing.T) {
+	t.Parallel()
+	// Arrange: cache creation is another existing SDK serialization path.
+	requestBody := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read", http.StatusInternalServerError)
+			return
+		}
+		requestBody <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(
+			w,
+			`{"name":"cachedContents/fixture","model":"models/fixture","expireTime":%q}`,
+			time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano),
+		)
+	}))
+	t.Cleanup(server.Close)
+	manager := cacheResourceFixtureManager(t, server)
+	args := `{"nested":[{"integer":9007199254740993,"fraction":0.10000000000000001}]}`
+	execution := prompty.SimplePrompt("fixture").
+		AddMessage(prompty.ChatMessage{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{prompty.ToolCallPart{ID: "call", Name: "lookup", Args: args}}})
+	// Act.
+	result, err := manager.Create(
+		t.Context(),
+		prompty.CacheResourceCreateRequest{Execution: execution, Expiry: prompty.CacheResourceExpiry{TTL: time.Hour}},
+	)
+	// Assert: the actual SDK cache body retains exact values and ID.
+	require.NoError(t, err)
+	require.NotNil(t, result.Handle)
+	native := geminiJSONValue(<-requestBody).(map[string]any)
+	contents := native["contents"].([]any)
+	require.Len(t, contents, 2)
+	call := contents[1].(map[string]any)["parts"].([]any)[0].(map[string]any)["functionCall"].(map[string]any)
+	require.Equal(t, "call", call["id"])
+	require.Equal(t, geminiJSONValue([]byte(args)), call["args"])
+}

@@ -75,6 +75,9 @@ func (c *HTTPChatClient) Chat(ctx context.Context, request *api.ChatRequest, con
 		if len(bytes.TrimSpace(frame)) > 0 {
 			response, decodeErr := decodeChatFrame(frame)
 			if decodeErr != nil {
+				if partial, ok := errors.AsType[*partialChatDecodeError](decodeErr); ok {
+					return errors.Join(decodeErr, consume(partial.response))
+				}
 				return decodeErr
 			}
 			if consumeErr := consume(response); consumeErr != nil {
@@ -108,17 +111,18 @@ func decodeChatFrame(frame []byte) (api.ChatResponse, error) {
 	}
 	var message map[string]json.RawMessage
 	var calls []map[string]json.RawMessage
+	var callsErr error
 	if raw := root["message"]; len(raw) != 0 {
 		if json.Unmarshal(raw, &message) != nil || message == nil {
 			return empty, adapter.ErrInvalidResponse
 		}
-		if rawCalls := message["tool_calls"]; len(rawCalls) != 0 && json.Unmarshal(rawCalls, &calls) != nil {
-			return empty, adapter.ErrInvalidResponse
+		if rawCalls := message["tool_calls"]; len(rawCalls) != 0 {
+			callsErr = json.Unmarshal(rawCalls, &calls)
 		}
 	}
 	// Decode the ordinary SDK fields without ever sending argument numbers through
 	// the SDK's float-based ordered-map decoder.
-	if len(calls) != 0 {
+	if len(message["tool_calls"]) != 0 {
 		message["tool_calls"] = json.RawMessage("[]")
 		encoded, _ := json.Marshal(message)
 		root["message"] = encoded
@@ -127,14 +131,17 @@ func decodeChatFrame(frame []byte) (api.ChatResponse, error) {
 	if err != nil || json.Unmarshal(data, &empty) != nil {
 		return api.ChatResponse{}, adapter.ErrInvalidResponse
 	}
+	if callsErr != nil {
+		return failedChatArguments(empty)
+	}
 	for _, raw := range calls {
 		var function map[string]json.RawMessage
 		if json.Unmarshal(raw["function"], &function) != nil || function == nil {
-			return api.ChatResponse{}, adapter.ErrMalformedArgs
+			return failedChatArguments(empty)
 		}
 		arguments, argsErr := decodeExactToolArguments(function["arguments"])
 		if argsErr != nil {
-			return api.ChatResponse{}, argsErr
+			return failedChatArguments(empty)
 		}
 		function["arguments"] = json.RawMessage("{}")
 		encoded, _ := json.Marshal(function)
@@ -142,10 +149,22 @@ func decodeChatFrame(frame []byte) (api.ChatResponse, error) {
 		encoded, _ = json.Marshal(raw)
 		var call api.ToolCall
 		if json.Unmarshal(encoded, &call) != nil {
-			return api.ChatResponse{}, adapter.ErrMalformedArgs
+			return failedChatArguments(empty)
 		}
 		call.Function.Arguments = arguments
 		empty.Message.ToolCalls = append(empty.Message.ToolCalls, call)
 	}
 	return empty, nil
+}
+
+// A rejected call is represented by an invalid SDK call only inside this adapter,
+// so both canonical parsers can retain the preceding parts without success finish.
+type partialChatDecodeError struct{ response api.ChatResponse }
+
+func (*partialChatDecodeError) Error() string { return "ollama: malformed tool arguments" }
+func (*partialChatDecodeError) Unwrap() error { return adapter.ErrMalformedArgs }
+func failedChatArguments(response api.ChatResponse) (api.ChatResponse, error) {
+	response.Done, response.DoneReason = false, ""
+	response.Message.ToolCalls = append(response.Message.ToolCalls, api.ToolCall{})
+	return response, &partialChatDecodeError{response: response}
 }

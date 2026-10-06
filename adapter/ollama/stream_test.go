@@ -99,6 +99,7 @@ func TestNativeFaultsRetainPartial(t *testing.T) {
 			require.Equal(t, int32(1), calls.Load())
 			require.Equal(t, prompty.StreamFailed, stream.Status().State)
 			require.NotEmpty(t, stream.Status().Result.Content)
+			require.True(t, stream.Status().Result.ContinuationUnavailable)
 			require.Equal(t, "partial", stream.Status().Result.Content[0].(prompty.TextPart).Text)
 		})
 	}

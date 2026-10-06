@@ -258,7 +258,7 @@ func encodeFileGeneration(
 	if err != nil {
 		return nil, errors.Join(prompty.ErrBatch, ctx.Err())
 	}
-	contents, err := json.Marshal(request.Contents)
+	contents, err := encodeExactGeminiContents(request.Contents)
 	if err != nil {
 		return nil, prompty.ErrBatch
 	}

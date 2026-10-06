@@ -95,8 +95,11 @@ func TestGeminiMixedAndUnsupportedPartsFailClosed(t *testing.T) {
 				}}}
 				// Act.
 				response, err := New().ParseResponse(raw)
-				// Assert: an invalid sync response is not a successful shortened response.
-				require.Nil(t, response)
+				// Assert: retain the known prefix with an error and unavailable continuation.
+				require.NotNil(t, response)
+				require.Equal(t, []prompty.ContentPart{prompty.TextPart{Text: "accepted prefix"}}, response.Content)
+				require.Empty(t, response.Outcome)
+				require.True(t, response.ContinuationUnavailable)
 				require.ErrorIs(t, err, test.want)
 				require.NotContains(t, err.Error(), "private")
 			}

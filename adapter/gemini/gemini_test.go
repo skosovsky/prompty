@@ -375,7 +375,7 @@ func TestTranslate_ToolResult(t *testing.T) {
 	require.Len(t, req.Contents[0].Parts, 1)
 	assert.NotNil(t, req.Contents[0].Parts[0].FunctionResponse)
 	assert.Equal(t, "get_weather", req.Contents[0].Parts[0].FunctionResponse.Name)
-	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["result"])
+	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["output"])
 }
 
 func TestTranslate_BatchedToolResults(t *testing.T) {
@@ -406,9 +406,9 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 	require.NotNil(t, req.Contents[0].Parts[0].FunctionResponse)
 	require.NotNil(t, req.Contents[0].Parts[1].FunctionResponse)
 	assert.Equal(t, "get_weather", req.Contents[0].Parts[0].FunctionResponse.Name)
-	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["result"])
+	assert.Equal(t, "Sunny", req.Contents[0].Parts[0].FunctionResponse.Response["output"])
 	assert.Equal(t, "get_time", req.Contents[0].Parts[1].FunctionResponse.Name)
-	assert.Equal(t, "12:00", req.Contents[0].Parts[1].FunctionResponse.Response["result"])
+	assert.Equal(t, "12:00", req.Contents[0].Parts[1].FunctionResponse.Response["error"])
 }
 
 func TestTranslate_ModelOptions(t *testing.T) {
