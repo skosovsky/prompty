@@ -51,3 +51,8 @@ The [ownership table](README.md#ownership-and-concurrency) specifies admissible 
 NewRenderPlan is a convenience constructor requiring a non-nil template; nil is programmer misuse and panics immediately. Error-returning NewRenderPlanFromPlanInput remains the checked input boundary. A zero RenderPlan is not initialized. Scratch map pooling retains only projections of at most 1024 entries; larger projections are per-call allocations. The limit bounds retained entry count, not a universal heap-byte cap.
 
 Template randomHex and escapeXML format delimiters/markup; they do not prevent model prompt injection. randomHex propagates an RNG-port failure as a render error instead of returning an empty delimiter. truncate_tokens uses the configured counter (heuristic by default), assumes prefix monotonicity for binary search and does not certify the complete billed request or an optimal prefix for a non-monotonic tokenizer.
+
+Anonymous embedding cycles are skipped during JSON field metadata discovery, as
+encoding/json does; only surviving fields undergo schema inference. This metadata
+walk is separate from selected-value recursion admission: a recursive named value
+that survives dominance still requires an explicit SchemaProvider or fails.

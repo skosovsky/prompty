@@ -525,3 +525,41 @@ func TestCanonicalSchemaSourceRetainsLocalErrorLocations(t *testing.T) {
 func (r *exactRuntimeRegistry) CaptureManifest(ctx context.Context, id string) (*ManifestSnapshot, error) {
 	return captureRecipeFixture(ctx, id, r)
 }
+
+type task45RecursiveEmbedded struct {
+	*task45RecursiveEmbedded
+
+	Value chan int
+}
+
+type task45RecursiveNamed struct {
+	*task45RecursiveNamed
+
+	Next *task45RecursiveNamed `json:"next"`
+}
+
+func TestSchemaDominanceSkipsAnonymousEmbeddingCycles(t *testing.T) {
+	t.Parallel()
+	// Arrange: recursive anonymous metadata loses to the outer JSON field.
+	value := struct {
+		task45RecursiveEmbedded
+
+		Value string
+	}{Value: "known"}
+	encoded, err := json.Marshal(value) //nolint:musttag // Exercise tag-free encoding/json field dominance.
+	require.NoError(t, err)
+	require.JSONEq(t, `{"Value":"known"}`, string(encoded))
+	// Act.
+	schema, err := ExtractSchema(value)
+	// Assert: infer only the selected string; unsupported selected controls fail.
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"Value": map[string]any{"type": "string"}}, schema["properties"])
+	selected := task45RecursiveEmbedded{}
+	require.Nil(t, selected.task45RecursiveEmbedded)
+	_, err = ExtractSchema(selected)
+	require.Error(t, err)
+	recursive := task45RecursiveNamed{}
+	require.Nil(t, recursive.task45RecursiveNamed)
+	_, err = ExtractSchema(recursive)
+	require.ErrorIs(t, err, ErrSchemaUnsupported)
+}

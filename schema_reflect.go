@@ -123,7 +123,7 @@ func (b *schemaBuilder) schemaForStructType(t reflect.Type, depth int) (map[stri
 		}
 	}()
 
-	fields, err := b.collectStructFields(t, depth, false)
+	fields, err := b.collectStructFields(t, depth, false, map[reflect.Type]bool{t: true})
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +157,7 @@ func (b *schemaBuilder) collectStructFields(
 	t reflect.Type,
 	depth int,
 	inheritedOptional bool,
+	embeddingPath map[reflect.Type]bool,
 ) ([]schemaFieldCandidate, error) {
 	candidates := make([]schemaFieldCandidate, 0, t.NumField())
 	for field := range t.Fields() {
@@ -170,20 +171,21 @@ func (b *schemaBuilder) collectStructFields(
 		}
 		baseFieldType := indirectSchemaType(field.Type)
 		if field.Anonymous && !hasName && baseFieldType.Kind() == reflect.Struct {
-			if depth+1 >= maxSchemaDepth || b.active[baseFieldType] > 0 {
+			if embeddingPath[baseFieldType] {
+				continue
+			}
+			if depth+1 >= maxSchemaDepth {
 				return nil, fmt.Errorf("%w: recursive embedded type %s", ErrSchemaUnsupported, baseFieldType)
 			}
 
-			b.active[baseFieldType]++
+			embeddingPath[baseFieldType] = true
 			embedded, err := b.collectStructFields(
 				baseFieldType,
 				depth+1,
 				inheritedOptional || isPointerType(field.Type),
+				embeddingPath,
 			)
-			b.active[baseFieldType]--
-			if b.active[baseFieldType] == 0 {
-				delete(b.active, baseFieldType)
-			}
+			delete(embeddingPath, baseFieldType)
 			if err != nil {
 				return nil, err
 			}

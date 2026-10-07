@@ -153,3 +153,15 @@ Stage6 accepted after repeated independent reviews:
 - Actual12-module candidate standalone release graph PASS with GOWORK=off, no local replacements or required go.mod edits. Only disposable bare remote published (`/tmp/prompty-task45-stage6-current-release.log`). Eleven release/workspace tests include exact root/nested license bytes.
 
 Stage6 commit: `fix: api consistency`. Committed-HEAD regeneration, full final workspace gates and final independent double acceptance remain post-commit work. No real release/live provider calls.
+
+## Final acceptance
+
+Independent whole-task acceptance after the S1 follow-up:
+
+- `/root/final_completeness`:100%,181/181 obligations (20 defect rows including P3,141 design decisions,11 documentation/API requirements,9 DoD entries). Original requirements, positive/negative controls and local release artifacts inspected independently.
+- `/root/final_correctness`:PASS without open confirmed defects. Independently ran uncached race suites in core/source, all four providers, Git and OTel; novel public overlays cover ownership, template scope/partials, field dominance and mutual anonymous cycles.
+- Final review found recursive anonymous embedding rejected before JSON field dominance. Metadata discovery now tracks its own embedding path and skips anonymous cycles; selected recursive values still fail. Public regression includes the outer winning string, selected unsupported channel and selected named recursion controls. Follow-up commit: `fix: recursive field dominance`.
+- Repeated full `make lint` (12 modules plus generated consumer), `make test` under race, `make gen-check` and11 release/workspace tests PASS. Logs: `/tmp/prompty-task45-final-repeat-lint.log`, `/tmp/prompty-task45-final-repeat-test.log`, `/tmp/prompty-task45-final-repeat-generation-release-check.log`.
+- Actual patched-candidate12-module standalone GOWORK=off graph, unchanged prepared manifests, exact local-only refs and licenses PASS (`/tmp/prompty-task45-final-candidate-release.log`). Final committed-source provenance check uses `/tmp/prompty-task45-final-release-smoke.log` and an exact public probe; this is repeated after committing the reviewed correction.
+
+Verification is local macOS/Go1.27.1 and offline provider fixtures, not live model certification or a claim about every OS/minimum toolchain. No real release refs or provider calls are performed.
