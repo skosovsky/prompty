@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Capture conformance inventory
 
 Capture is optional synchronous observation, not a recorder backend or attempt coordinator. Core owns requirements/session/report and injected sink/projector ports; the generic adapter executor owns checked sync/buffered binding. The first actual raw native SDK hook is OpenAI Chat Completions. SDK JSON is semantic capture, not original HTTP/SSE bytes. No current adapter promises transport byte capture or physical attempt identity; requests requiring that coverage fail before dispatch.

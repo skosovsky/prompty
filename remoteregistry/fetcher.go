@@ -8,7 +8,7 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-// Fetcher fetches raw YAML manifest bytes by template id.
+// Fetcher fetches raw YAML/JSON manifest bytes by template id.
 // Registry uses it to obtain manifest content; HTTP and Git are typical implementations.
 //
 // Return ErrNotFound when the template does not exist; Registry translates it to prompty.ErrTemplateNotFound.
@@ -34,7 +34,7 @@ func ValidateID(id string) error {
 }
 
 // ValidatePathForFetch validates path for internal fetcher use. Allows env suffix (id.env).
-// Used when registry passes candidate ids like "internal/router.prod" for env fallback.
+// Used when registry passes candidate ids like "internal/router.prod" for strict environment resolution (no base-ID fallback).
 func ValidatePathForFetch(id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id must not be empty", prompty.ErrInvalidName)

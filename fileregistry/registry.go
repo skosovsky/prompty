@@ -275,7 +275,8 @@ func underPartialsDir(path, partialsPattern string) bool {
 
 // List returns all template ids (base slash path, env suffix stripped) under r.dir, unique and sorted.
 // agent.prod.yaml and agent.yaml both yield "agent"; internal/router.prod.yaml yields "internal/router".
-// Paths under partials directory are excluded.
+// Paths under the root-relative partials directory are excluded. Nested
+// manifest-relative partial directories can remain in this base-ID catalog.
 func (r *Registry) List(ctx context.Context) ([]string, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()

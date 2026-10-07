@@ -13,9 +13,12 @@ jobs:
       modules: ${{ steps.set-matrix.outputs.modules }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
       - id: set-matrix
         run: |
-          MODULES=$(find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \; | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          MODULES=$(python3 scripts/workspace.py --json)
           echo "modules=$MODULES" >> $GITHUB_OUTPUT
 
   lint:
@@ -54,3 +57,14 @@ jobs:
       - name: Run tests
         working-directory: ${{ matrix.module }}
         run: go test -v -race ./...
+
+  generated-consumer:
+    name: Deterministic generated consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make gen-check
+      - run: make release-check

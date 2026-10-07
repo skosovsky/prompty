@@ -30,13 +30,16 @@ type HTTPChatClient struct {
 	maxFrame int
 }
 
+// ErrInvalidHTTPConfig identifies invalid transport construction before response IO.
+var ErrInvalidHTTPConfig = errors.New("ollama: invalid HTTP chat configuration")
+
 // NewHTTPChatClient creates a number-preserving chat transport with a positive
 // per-frame byte limit. HTTP client configuration is copied, never modified.
 // It does not inherit SDK automatic authentication; the host supplies auth.
 func NewHTTPChatClient(endpoint *url.URL, client *http.Client, maxFrame int) (*HTTPChatClient, error) {
 	if endpoint == nil || client == nil || maxFrame <= 0 || endpoint.Host == "" ||
 		(endpoint.Scheme != "https" && endpoint.Scheme != "http") {
-		return nil, adapter.ErrInvalidResponse
+		return nil, ErrInvalidHTTPConfig
 	}
 	return &HTTPChatClient{endpoint: *endpoint, client: *client, maxFrame: maxFrame}, nil
 }

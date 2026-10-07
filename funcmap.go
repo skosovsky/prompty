@@ -81,7 +81,7 @@ func toolNamesFromAny(allowedTools any) ([]string, bool) {
 }
 
 // escapeXML escapes text so that XML/HTML tags are not interpreted (e.g. for isolating user input in prompts).
-// Uses [html.EscapeString]: <, >, &, ", ' are replaced so the LLM does not treat the text as markup.
+// Uses [html.EscapeString]: <, >, &, ", ' are replaced for markup formatting; this does not prevent model prompt injection.
 func escapeXML(text string) string {
 	return html.EscapeString(text)
 }
@@ -90,16 +90,16 @@ func escapeXML(text string) string {
 var randRead = rand.Read
 
 // randomHex returns a cryptographically random hex string of length*2 characters (length bytes).
-// Used for randomized delimiters in prompts (e.g. <data_a8f9c2>). On error returns empty string.
-func randomHex(length int) string {
+// Used for randomized delimiters in prompts (e.g. <data_a8f9c2>). RNG errors fail rendering.
+func randomHex(length int) (string, error) {
 	if length <= 0 {
-		return ""
+		return "", nil
 	}
 	b := make([]byte, length)
 	if _, err := randRead(b); err != nil {
-		return ""
+		return "", err
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // truncateChars truncates text to at most maxChars runes.

@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Task37 implementation checkpoint
 
 This is implementation evidence, not final acceptance. The original task and its full scope remain authoritative.

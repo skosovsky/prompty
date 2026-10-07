@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"mime"
 	"slices"
 	"strings"
 
@@ -288,13 +289,13 @@ func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatComplet
 
 func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletionMessageParamUnion, error) {
 	var contentParts []openai.ChatCompletionContentPartUnionParam
-	hasImage := false
+	hasMedia := false
 	for _, p := range parts {
 		switch x := p.(type) {
 		case prompty.TextPart:
 			contentParts = append(contentParts, openai.TextContentPart(x.Text))
 		case prompty.MediaPart:
-			hasImage = true
+			hasMedia = true
 			part, err := mediaPartToOpenAI(x)
 			if err != nil {
 				return openai.ChatCompletionMessageParamUnion{}, err
@@ -304,7 +305,7 @@ func (a *Adapter) userMessage(parts []prompty.ContentPart) (openai.ChatCompletio
 			return openai.ChatCompletionMessageParamUnion{}, adapter.ErrUnsupportedContentType
 		}
 	}
-	if !hasImage {
+	if !hasMedia {
 		text, err := prompty.JoinAdapterTextParts(parts)
 		if err != nil {
 			return openai.ChatCompletionMessageParamUnion{}, err
@@ -327,7 +328,10 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 			}
 			return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
 		}
-		format := openAIInputAudioFormat(mime)
+		format, err := openAIInputAudioFormat(mime)
+		if err != nil {
+			return openai.ChatCompletionContentPartUnionParam{}, err
+		}
 		return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
 			Data:   base64.StdEncoding.EncodeToString(p.Data),
 			Format: format,
@@ -364,25 +368,18 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 	}), nil
 }
 
-func openAIInputAudioFormat(mime string) string {
-	switch mime {
+func openAIInputAudioFormat(value string) (string, error) {
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", adapter.ErrUnsupportedContentType
+	}
+	switch mediaType {
 	case "audio/mp3", "audio/mpeg":
-		return "mp3"
+		return "mp3", nil
 	case "audio/wav", "audio/wave", "audio/x-wav":
-		return "wav"
+		return "wav", nil
 	default:
-		subtype := mime
-		if i := strings.IndexByte(mime, '/'); i >= 0 && i+1 < len(mime) {
-			subtype = mime[i+1:]
-		}
-		if i := strings.IndexByte(subtype, ';'); i >= 0 {
-			subtype = subtype[:i]
-		}
-		subtype = strings.TrimSpace(subtype)
-		if subtype == "" {
-			return "mp3"
-		}
-		return subtype
+		return "", adapter.ErrUnsupportedContentType
 	}
 }
 

@@ -131,8 +131,25 @@ Candidate evidence:
 
 Stage 5 accepted; commit: `fix: source consistency`.
 
-## Remaining stages (strict order)
+## Stage 6 — API/docs/simplification checklist
 
-6. All appendix design items with leave/change/remove, rationale and spec/test reference; API/docs/examples/migration/CI and performance evidence where needed.
+| ID | Requirement / proving evidence |
+| --- | --- |
+| AD1 | All eight appendix decision registers have exact item inventory, leave/change/remove, rationale and normative/test reference. Changed items implemented; performance hypotheses supported by benchmarks, never assumed. |
+| AD2 | Remove ToolHandler, private toolInvoker.name, ExecuteWithToolValidation/ErrToolInvokerRequired; update consumers and migration. Retain whole-batch side-effect preflight and BYOT ToolInvoker. Share validated recipe paths where justified; retain fidelity guards. |
+| AD3 | README direct runnable BYOT quickstart and complete optional manifest/codegen workflow; basic_chat correct cwd; allocation claims limited to measured paths. doc.go/current-contract index and superseded historical docs. |
+| AD4 | Ownership/concurrency table and executor decision: immutable snapshot vs mutable DTO, serial helper, single-consumer lazy stream/Close cancellation, registry/cache lifecycle. Full model/profile/raw/checked/native/buffered/evidence/media/schema distinctions. |
+| AD5 | Public limits/privacy/boundaries accurate: cancellation not rollback, unknown outcome/reconciliation/retries, usage unknown, estimator approximation, retention versus transport memory, callbacks/backpressure, auth/egress/source trust. Naming/setup/comment corrections from all appendices. |
+| AD6 | Declared module inventory equals go.work/Makefile/CI; explicit committed generated consumer, deterministic regeneration diff; standalone publishable graph, supported release platforms/major migration, module license packaging evidence. |
+| AD7 | Stage6 current scope race/lint/docs/examples/benchmarks PASS; independent completeness100% and correctnessPASS then short commit. Final workspace DoD and final dual acceptance follow separately. |
 
-Final gates: make lint; make test across all modules and explicit generated consumer; deterministic regeneration; GOWORK=off publishability; final two independent reviews. Diagnostic tests that assert old defects must become expected-contract regressions. All 19 main defects plus GO-F02 must have valid and negative controls. No real release/live provider calls.
+Stage6 accepted after repeated independent reviews:
+
+- `/root/stage6_completeness`:100%,141/141 appendix items; exact inventory and all AD1–AD7 requirements verified independently.
+- `/root/stage6_correctness`:PASS; no confirmed open errors. Initial singleton-object schema and compose example findings fixed; repeated public probes and race suites pass. Unknown event fixtures and handwritten generated-consumer tests rechecked.
+- Current `make lint`:PASS for12 workspace modules plus explicit generated consumer,13×0 issues (`/tmp/prompty-task45-stage6-repeat-lint.log`). Current `make test`:PASS across the same scope under race (`/tmp/prompty-task45-stage6-repeat-test.log`).
+- Current public CLI regeneration:11 files unchanged by SHA256, including ownership inventory (`/tmp/prompty-task45-stage6-final-regeneration.log`); reviewers also regenerated independent copies.
+- Benchmarks and scoped design rationale: [decision register](task45-design-decisions.md) and [performance report](task45-performance.md). All141 appendix items have explicit leave/change/remove with evidence.
+- Actual12-module candidate standalone release graph PASS with GOWORK=off, no local replacements or required go.mod edits. Only disposable bare remote published (`/tmp/prompty-task45-stage6-current-release.log`). Eleven release/workspace tests include exact root/nested license bytes.
+
+Stage6 commit: `fix: api consistency`. Committed-HEAD regeneration, full final workspace gates and final independent double acceptance remain post-commit work. No real release/live provider calls.

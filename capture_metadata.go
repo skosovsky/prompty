@@ -24,6 +24,8 @@ type CaptureRecordMetadata struct {
 }
 
 // Validate rejects malformed known usage/outcome/status before sink delivery.
+// SchemaDigests and IDs are opaque trusted diagnostic strings, not admitted
+// portable schema references; the host projector selects and redacts them.
 func (m CaptureRecordMetadata) Validate() error {
 	if m.HTTPStatus != nil && (*m.HTTPStatus < 100 || *m.HTTPStatus > 599) {
 		return ErrCaptureUnsupported

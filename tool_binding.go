@@ -10,12 +10,6 @@ import (
 	"strings"
 )
 
-// ToolHandler executes a typed tool with decoded arguments.
-type ToolHandler[TArgs any, TResult any] interface {
-	Name() string
-	Handle(ctx context.Context, args TArgs) (TResult, error)
-}
-
 // TypedTool binds a handler to JSON Schema derived from TArgs.
 type TypedTool[TArgs any, TResult any] struct {
 	name      string
@@ -41,6 +35,9 @@ func NewTypedTool[TArgs any, TResult any](
 	if err != nil {
 		return nil, fmt.Errorf("typed tool %q: %w", name, err)
 	}
+	if !isObjectOnlySchemaType(schemaMap["type"]) {
+		return nil, fmt.Errorf("typed tool %q: arguments require an object-root schema", name)
+	}
 	schemaDoc, err := MapToJSONDocument(schemaMap)
 	if err != nil {
 		return nil, fmt.Errorf("typed tool %q: %w", name, err)
@@ -56,6 +53,20 @@ func NewTypedTool[TArgs any, TResult any](
 		dialect:   schemaDeclaredDialect(schemaMap),
 		validator: compiled,
 	}, nil
+}
+
+func isObjectOnlySchemaType(value any) bool {
+	const objectType = "object"
+	switch typed := value.(type) {
+	case string:
+		return typed == objectType
+	case []any:
+		return len(typed) == 1 && typed[0] == objectType
+	case []string:
+		return len(typed) == 1 && typed[0] == objectType
+	default:
+		return false
+	}
 }
 
 // Name returns the tool name exposed to the model.
@@ -144,7 +155,6 @@ type TypedToolRegistry struct {
 }
 
 type toolInvoker interface {
-	name() string
 	validateArgs(argsJSON string) error
 	invoke(ctx context.Context, argsJSON string) (json.RawMessage, error)
 }
@@ -152,8 +162,6 @@ type toolInvoker interface {
 type typedToolInvoker[TArgs any, TResult any] struct {
 	tool *TypedTool[TArgs, TResult]
 }
-
-func (w typedToolInvoker[TArgs, TResult]) name() string { return w.tool.Name() }
 
 func (w typedToolInvoker[TArgs, TResult]) validateArgs(argsJSON string) error {
 	return w.tool.ValidateArgs(argsJSON)
@@ -224,14 +232,14 @@ func encodeToolResult[T any](result T) (json.RawMessage, error) {
 		if len(v) > 0 && !json.Valid(v) {
 			return nil, errors.New("typed tool: tool result JSON is invalid")
 		}
-		return v, nil
+		return bytes.Clone(v), nil
 	case string:
 		return json.Marshal(v)
 	case []byte:
 		if !json.Valid(v) {
 			return nil, errors.New("typed tool: tool result bytes are not valid JSON")
 		}
-		return json.RawMessage(v), nil
+		return json.RawMessage(bytes.Clone(v)), nil
 	default:
 		data, err := json.Marshal(v)
 		if err != nil {

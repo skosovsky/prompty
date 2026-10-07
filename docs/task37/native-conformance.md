@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Native profile conformance inventory
 
 This is a source/evidence inventory, not final acceptance or a live provider capability catalogue. Caller-owned profiles describe knowledge for the actual endpoint/model; the host is responsible for that knowledge. No adapter installs built-in supported native profiles. All four initial native transports, signed/unsigned Gemini incremental arguments and ordered message-level candidate metadata now exist. Expanded conformance and IA10 independent acceptance remain pending. A chunk parser is not a native transport implementation.

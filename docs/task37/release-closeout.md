@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Task37 release and issue closeout
 
 Status: preparation only. No release, tag, GitHub comment or issue closure is authorized by this document. The owner reply selects all five directions now. Expanded implementation is not complete; historical audits certify only their named snapshots/old scope.

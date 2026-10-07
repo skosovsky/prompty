@@ -17,7 +17,9 @@ const (
 	RuntimeRecipeStateLateBound   RuntimeRecipeState = "late_bound"
 )
 
-// RuntimeRecipeCheckpoint is a JSON-safe raw checkpoint for runtime recipe binding.
+// RuntimeRecipeCheckpoint is a JSON-safe prompt-materialization checkpoint.
+// Its raw input/late-input surface is distinct from generic typed recipes;
+// it is not an agent-run/session checkpoint and carries no runtime ports.
 type RuntimeRecipeCheckpoint struct {
 	Descriptor     ManifestDescriptor   `json:"descriptor"`
 	Input          JSONDocument         `json:"input,omitempty"`
@@ -26,7 +28,8 @@ type RuntimeRecipeCheckpoint struct {
 	RuntimeOptions PromptRuntimeOptions `json:"runtime_options,omitzero"`
 }
 
-// RuntimeOverlay carries late-bound runtime values applied over a checkpoint.
+// RuntimeOverlay carries request-local late/compose bindings over a checkpoint.
+// It does not represent a session or conversation-context overlay.
 type RuntimeOverlay struct {
 	LateInput JSONDocument  `json:"late_input,omitempty"`
 	Values    ComposeValues `json:"-"`

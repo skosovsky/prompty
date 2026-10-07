@@ -202,7 +202,12 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 	streamOff := false
 	request.Stream = &streamOff
 	var lastResp api.ChatResponse
+	callbacks := 0
 	err := a.client.Chat(ctx, &request, func(r api.ChatResponse) error {
+		callbacks++
+		if callbacks != 1 {
+			return adapter.ErrInvalidResponse
+		}
 		lastResp = r
 		return nil
 	})
@@ -212,6 +217,9 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 			return &partial.response, nil
 		}
 		return nil, err
+	}
+	if callbacks != 1 {
+		return nil, adapter.ErrInvalidResponse
 	}
 	return &lastResp, nil
 }
@@ -460,6 +468,8 @@ func usageFromOllama(resp *api.ChatResponse) (prompty.Usage, error) {
 
 // ParseStreamChunk maps a single SDK callback. Tool arguments are complete
 // snapshots in Args, never concatenated JSON in ArgsChunk.
+// This is a parts-only decoder, without finish, correlation or lifecycle events.
+// Use StreamEvents/checked ExecuteStream for authoritative completed outcomes.
 func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	chunk, ok := rawChunk.(*api.ChatResponse)
 	if !ok || chunk == nil {

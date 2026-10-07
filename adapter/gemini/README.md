@@ -43,7 +43,7 @@ go get github.com/skosovsky/prompty/adapter/gemini
 ## Configuration
 
 - **API key / client:** create and inject a `google.golang.org/genai` client with `WithClient`. Checked `adapter.NewClient` performs preflight, translation, SDK execution and parsing. Raw SDK primitives remain available without checked guarantees.
-- **Default model:** `New()` uses `gemini-2.0-flash`. Override with `WithModel(...)`, or set per execution via `exec.ModelOptions.Model`.
+- **Default model:** `New()` uses `gemini-2.0-flash` as an example convenience, not capability evidence; select the deployed model explicitly with `WithModel`. Override with `WithModel(...)`, or set per execution via `exec.ModelOptions.Model`.
 - **Provider settings:** use `PromptExecution.ModelOptions.ProviderSettings` for provider-specific options (e.g. `gemini_search_grounding` for grounding).
 
 ## Implemented mappings

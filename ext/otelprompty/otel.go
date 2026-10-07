@@ -22,18 +22,16 @@ type tracingInvoker struct {
 func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
 	obs := invocationObservation(exec)
 	spanCtx, span := begin(ctx, t.cfg, obs)
-	defer func() { span.finish(obs) }()
+	defer span.finishOnReturn(&obs)
 	if exec != nil {
 		if err := prompty.ValidateExecutionToolScope(exec); err != nil {
 			obs.Err = err
 			obs.ErrorCategory = "preflight_rejection"
-			span.finish(obs)
 			return nil, err
 		}
 	}
 	resp, err := t.next.Execute(spanCtx, exec)
 	obs.Response, obs.Err = resp, err
-	span.finish(obs)
 	return resp, err
 }
 

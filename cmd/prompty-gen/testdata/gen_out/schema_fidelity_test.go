@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/skosovsky/prompty"
 	"github.com/stretchr/testify/require"
+
+	"github.com/skosovsky/prompty"
 )
 
 func TestGeneratedSchemaValidationPresenceAndFractionalBounds(t *testing.T) {

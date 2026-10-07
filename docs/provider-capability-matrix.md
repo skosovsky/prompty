@@ -20,6 +20,52 @@ that does not confer the guarantees of the checked path. Explicit `StreamBuffere
 uses synchronous execution; it never satisfies `native_stream`. No port implements
 agent loops, model discovery, automatic resume/polling or host retry policy.
 
+## Pinned native event admission
+
+Anthropic Messages support below is pinned to anthropic-sdk-go v1.26.0. Additional
+optional source fields may survive; unknown semantic event/block/delta variants
+fail before successful canonical publication. SDK upgrades require replaying the
+existing local SDK SSE fixtures and adding explicit mapping fixtures for newly
+supported semantics, not treating unknown variants as pings.
+
+| Native source | Admitted interpretation |
+| --- | --- |
+| ping | No semantic output; ignored before stop |
+| message_start | One assistant message with empty starting content and observed model/usage |
+| content_block_start | text, tool_use, thinking, redacted_thinking; checked hosted server_tool_use plus web_search_tool_result/web_fetch_tool_result |
+| content_block_delta | text_delta/citations_delta on text; input_json_delta on local/hosted calls; thinking_delta/signature_delta on thinking |
+| content_block_stop | Closes the same open indexed block and publishes verified finalization/state |
+| message_delta | Observed usage/stop reason after blocks close; known outcome mappings only |
+| message_stop | Finalizes a known finish exactly once; EOF without it fails |
+| SDK error or unknown variant | Propagates failure; accepted prefix remains partial and cannot certify continuation |
+
+Offline upgrade evidence: [source fixtures](../adapter/anthropic/native_stream_source_test.go),
+[protocol fixtures](../adapter/anthropic/stream_test.go),
+[hosted fixtures](../adapter/anthropic/hosted_stream_test.go), and
+[unknown semantic variants](../adapter/anthropic/task45_unknown_event_test.go).
+OpenAI support below is pinned to openai-go/v3 v3.24.0. Chat uses
+ChatCompletionChunk rather than the Responses named-event protocol.
+
+| OpenAI source | Admitted interpretation |
+| --- | --- |
+| Chat single choice index 0 | Content/refusal text and indexed tool-call ID/name/argument deltas; multiple/nonzero choices fail |
+| Chat empty choices | Model/usage observations, including usage-only chunks after finish |
+| Chat finish_reason | stop, length/content_filter, tool_calls map to known outcomes; unknown finishes retain OutcomeIncomplete and the original finish reason, allowing observed trailing usage; EOF without finish fails |
+| Responses response.created / response.in_progress | One in-progress response identity, model and lifecycle usage; increasing sequence numbers |
+| response.output_item.added / done | Ordered message, reasoning, function_call, web_search_call and file_search_call items; checked final snapshots |
+| response.content_part.added / done; response.reasoning_summary_part.added / done | Indexed text/refusal or reasoning-summary parts, verified closure |
+| response.output_text, response.refusal, response.function_call_arguments, response.reasoning_summary_text .delta / .done | Correlated provisional deltas plus exact final snapshots |
+| response.output_text.annotation.added | Bound supported citations |
+| response.web_search_call / response.file_search_call .in_progress / .searching / .completed | Status for the matching hosted item; never a local handler |
+| response.completed / response.failed / response.incomplete | One terminal response with authoritative checked outcome and retained evidence |
+| error; unknown Responses event | Failure, never an ignored ping or successful completion |
+
+Replay [Chat choice/protocol tests](../adapter/openai/stream_contract_test.go),
+[Responses event machine](../adapter/openai/responses_sse_machine.go),
+[unknown-event fixtures](../adapter/openai/responses_stream_errors_test.go) and
+[source-type fixtures](../adapter/openai/responses_stream_source_types_test.go)
+after SDK upgrades. Widening one protocol does not authorize widening the other.
+
 | Adapter / API / pinned SDK | Operation and stream | Local / hosted tools | Reasoning controls and continuation | Output / media and result shapes | Batch / cache | Code and offline evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI Chat Completions; openai-go/v3 v3.24.0 | Checked sync, buffered and native SDK SSE; lazy single-use native lifecycle | Native functions and named ForcedTool; hosted unsupported; results text-only, IsError unsupported | `reasoning_effort` requires reasoning + profile ModelOptionsSchema; no opaque reasoning-state mapper | Native strict JSON schema with explicit named lowering permissions when selected; final original validation; user image/audio/file MIME mapping | Separate Chat batch; implicit-prefix request controls | [mapper](../adapter/openai/openai.go), [schema](../adapter/openai/schema.go), [checked SDK example](../adapter/openai/checked_example_test.go), [native protocol](../adapter/openai/stream_contract_test.go), [result rejection](../adapter/openai/tool_error_contract_test.go) |

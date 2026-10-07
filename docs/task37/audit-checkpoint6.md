@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Independent checkpoint6 — not final acceptance
 
 Both reviewers checked frozen manifest `6007e6844eab9607e28e1369837762f2874ce8a77e6742ac311330f188ed5d9b`

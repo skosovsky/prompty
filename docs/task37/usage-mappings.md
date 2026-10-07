@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Canonical usage mapping inventory
 
 This inventories actual module mappings, not provider/model support guarantees. Counts are SDK-observed values; core does not infer billable tokens, cache misses or hidden reasoning from them. `Known` distinguishes explicit observed zero from absence. All mapped responses use cumulative mode. A custom source may explicitly use delta; core adds only its known counter fields with checked arithmetic, never adds breakdowns to total, and commits accepted stream updates atomically.

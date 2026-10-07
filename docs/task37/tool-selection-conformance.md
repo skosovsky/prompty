@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Native named local-tool selection
 
 ForcedTool is not an instruction hint or the conditional forced-tool structured-output mode. Checked execution infers `CapabilityForcedToolSelection` separately from ordinary tools and requires an actual `ForcedToolAdapter` port. Caller profiles are destination-specific knowledge; overrides cannot add a mapping. Native request selection does not establish account/model support or promise provider infallibility. The execution-scoped helper independently validates all returned calls before any handler.

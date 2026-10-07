@@ -15,7 +15,7 @@ import (
 type registryStub struct{}
 
 func (registryStub) Plan(context.Context, string, prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
-	return nil, nil
+	return nil, errors.New("stub plan is not configured")
 }
 
 func (registryStub) DescribePrompt(_ context.Context, id string) (prompty.TemplateDescriptor, error) {
@@ -211,7 +211,7 @@ func TestNewComposedConditionalMainRecipeFromCheckpoint_RejectsEmptyComposeValue
 		},
 		Input: ComposedConditionalMainInput{Query: "hello"},
 		RuntimeOptions: prompty.PromptRuntimeOptions{
-			ComposeValues: prompty.MustJSONDocumentFromMap(map[string]interface{}{}),
+			ComposeValues: prompty.MustJSONDocumentFromMap(map[string]any{}),
 		},
 	}
 

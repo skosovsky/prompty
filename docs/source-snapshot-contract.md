@@ -49,3 +49,64 @@ HTTP logical IDs are decoded application path names, not pre-escaped URL syntax.
 Mutable Git refresh errors fail closed by default, including missing remote, auth and unavailable refresh. There is no warning-only stale success. Cancellation/deadline wins at admission, after lock acquisition/refresh and before returning local or immutable-revision bytes; canceled operations return no successful bytes. This applies to Fetch and the corresponding ListIDs/Stat/revision paths. Stale availability, if ever added, requires explicit host policy and visible freshness/error evidence; task45 chooses no stale mode. No refresh retry, watcher or background renewal is introduced.
 
 For mutable Git, `file://` intentionally selects a frozen local checkout (even if that checkout has an origin); other configured URLs refresh on each mutable operation. Binding a commit selects immutable blob reads. Opening a persistent mutable checkout requires successful refresh; a fresh clone does not perform a redundant pull. All source metadata/list operations preserve cancellation as cancellation, including file/embed Stat.
+
+Git WithDir accepts the repository root (empty or dot) or an unambiguous relative
+slash path with no empty/parent segments, backslashes or absolute prefix. This is
+configuration admission, not symlink confinement of trusted working trees.
+WithCloneDir never silently adopts a foreign persistent checkout: before refresh,
+its current branch must match WithBranch and its sole origin URL must equal the
+configured URL exactly. A frozen file:// URL pointing to that same local checkout
+needs no origin, but still checks its branch. Detached/mismatched checkouts reject
+without sending configured credentials. Hosts reconcile/reset their trusted clone
+explicitly; the fetcher does not rewrite remotes or switch branches.
+
+See [ownership and concurrency](README.md#ownership-and-concurrency) for supported clone-domain and borrow-until-plan rules. Captured snapshots/JSON defaults own their supported material; mutable recipe/checkpoint DTOs are not sealed arbitrary-object snapshots. Registry instances carry source/credential trust; per-caller context values are not forwarded into shared capture.
+
+File/embed List is a base-ID catalog across stored environments, not a promise that every listed ID resolves in the currently configured environment. Plan/Stat environment resolution remains strict. File Stat Version is advisory RFC3339 metadata (subseconds omitted), not content identity; captured descriptors supply identity. HTTP/Git candidates include .yaml, .yml and .json.
+
+File partial globs are relative to each main manifest directory, but List excludes
+only the configured partial directory relative to the registry root. A nested
+`feature/_partials/example.yaml` can therefore appear as a catalog ID. Prefer
+non-manifest extensions for partial text, or explicitly filter that catalog in
+the host; List does not inspect YAML semantics or certify standalone prompts.
+
+CachedRegistry has a fixed wrapper method set. For a base lacking List, Stat,
+DescribePrompt, ResolveManifest or captured materialization, those operations return
+ErrRegistryCapabilityUnavailable; unsupported enumeration is not an empty catalog,
+and unsupported metadata is not a missing ID. Raw bytes retain their dedicated
+ErrManifestBytesUnavailable sentinel. Capability errors do not certify support
+from a Go type assertion alone; inspect the operation result. Cancellation at
+admission remains cancellation even when the base lacks that capability.
+
+Built-in file/Git sources read trusted files/blobs without configurable per-source
+or aggregate capture byte caps. HTTP/media limits do not extend to them. Hosts
+bound trusted tree/blob size and admission, or supply a bounded Fetcher before
+capture/parsing. Deadline checks do not interrupt os.ReadFile or schema compilation
+and are not universal allocation limits. No unbounded source is called sandboxed.
+
+File cold captures serialize through the registry lock; immutable cached captures
+are retained until Reload. Embedded construction eagerly validates/captures the
+available selected catalog, then captures reuse those immutable snapshots. This
+keeps parser publication simple and safe; no per-ID worker/dedupe layer is added
+without measured need. Local eight-ID capture evidence is in task45-performance.md.
+
+Constructor policy is intentional: missing required structural dependencies
+(remote Fetcher/cache base) are programmer misuse and panic; invalid source/parser
+configuration returns errors. Pass non-nil concrete dependencies; typed-nil ports
+are caller misuse unless a particular constructor explicitly checks them. The
+checked nil-template constructor and convenience nil-template panic follow the
+same distinction, without a universal reflective dependency validator.
+
+Portable RemoteResponseHandle/CacheResource wire validation admits canonical
+shape, scope and supported format. It does not authenticate identities or attest
+adapter support for arbitrary HostedTools/status combinations. A receiving adapter
+performs its capability/state gates and the host authorizes the destination before
+operations. Nested maps/slices are cloned at designated handle boundaries; wire
+restore does not turn mutable DTOs into permanently sealed snapshots.
+
+The [custom file-port example](../adapter/gemini/batch_file_example_test.go) supplies
+BatchFileTransport directly: bounded single upload, explicit destination binding
+and a transferred download ReadCloser closed once by the operation. It contains
+no file store or renewal worker. Binding is not an accuracy declaration: required
+original-source capture additionally needs an honest BatchFileCaptureDescriber.
+Upload unknown acceptance remains host reconciliation, never an implicit retry.

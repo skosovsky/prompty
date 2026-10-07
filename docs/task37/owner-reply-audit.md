@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Owner reply reconciliation audit
 
 Source: https://github.com/skosovsky/prompty/issues/4#issuecomment-6008749968, received 6 October 2026. This is specification reconciliation, not implementation acceptance.

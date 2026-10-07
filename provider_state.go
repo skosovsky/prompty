@@ -127,13 +127,15 @@ func ValidatePartAssociations(parts []ContentPart, states []PartState, annotatio
 		if err := ValidateEndpointIdentity(envelope.Scope.Endpoint); err != nil {
 			return fmt.Errorf("%w: invalid endpoint identity", ErrProviderState)
 		}
-		if envelope.Format != ProviderStateFormat || envelope.Scope.Provider == "" || envelope.Scope.Endpoint == "" ||
-			(envelope.Scope.Model == "" && envelope.Scope.ModelFamily == "") || envelope.Codec == "" || len(envelope.Payload) == 0 {
+		if envelope.Format != ProviderStateFormat || strings.TrimSpace(envelope.Scope.Provider) == "" ||
+			strings.TrimSpace(envelope.Scope.Endpoint) == "" ||
+			(strings.TrimSpace(envelope.Scope.Model) == "" && strings.TrimSpace(envelope.Scope.ModelFamily) == "") ||
+			strings.TrimSpace(envelope.Codec) == "" || len(envelope.Payload) == 0 {
 			return fmt.Errorf("%w: envelope format/scope/codec/payload", ErrProviderState)
 		}
 	}
 	for _, annotation := range annotations {
-		if annotation.PartIndex < 0 || annotation.PartIndex >= len(parts) || annotation.Kind == "" ||
+		if annotation.PartIndex < 0 || annotation.PartIndex >= len(parts) || strings.TrimSpace(annotation.Kind) == "" ||
 			!json.Valid(annotation.Value) {
 			return fmt.Errorf("%w: invalid annotation association/value", ErrProviderState)
 		}

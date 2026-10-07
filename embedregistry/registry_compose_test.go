@@ -211,10 +211,11 @@ func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "x"})
 	require.NoError(t, err)
-	input = prompty.PlanInputWithComposeContext(
+	input, err = prompty.PlanInputWithComposeContext(
 		input,
 		workspaceComposeContext{enabled: false},
 	)
+	require.NoError(t, err)
 
 	plan, err := reg.Plan(context.Background(), "composed_conditional_main", input)
 	require.NoError(t, err)

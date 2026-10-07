@@ -39,7 +39,11 @@ func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 }
 
 // NewRenderPlan builds a deferred render plan with no template input (.Input is empty).
+// It panics for a nil template. Use NewRenderPlanFromPlanInput for a checked constructor.
 func NewRenderPlan(tpl *ChatPromptTemplate) *RenderPlan {
+	if tpl == nil {
+		panic("render plan: template must not be nil")
+	}
 	return newRenderPlan(tpl, nil)
 }
 
@@ -269,8 +273,10 @@ func (p *RenderPlan) clone() *RenderPlan {
 		return nil
 	}
 	out := &RenderPlan{
-		sourceDescriptor:    p.sourceDescriptor,
-		template:            CloneTemplate(p.template),
+		sourceDescriptor: p.sourceDescriptor,
+		// Constructors own this snapshot; all plan methods treat it read-only.
+		// Template() keeps the external defensive-copy boundary.
+		template:            p.template,
 		typedInput:          p.typedInput,
 		lateVars:            cloneMapAny(p.lateVars),
 		responseFormat:      cloneSchemaDefinition(p.responseFormat),

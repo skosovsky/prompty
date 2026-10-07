@@ -27,13 +27,13 @@ func (t *responseOperations) Create(
 	obs := invocationObservation(request.Execution)
 	obs.ResourceKind = responseResource
 	ctx, span := begin(ctx, t.cfg, obs)
+	defer span.finishOnReturn(&obs)
 	result, err := t.next.Create(ctx, request)
 	obs.Err, obs.Resource = err, ownedOperationResource(result)
 	if result != nil {
 		obs.Response = result.Response
 		remoteObservation(&obs, result)
 	}
-	span.finish(obs)
 	return result, err
 }
 
@@ -67,13 +67,13 @@ func (t *responseOperations) resource(
 	obs.Operation, obs.Provider, obs.RequestModel, obs.ResourceKind = operation, handle.Identity.Provider, handle.Identity.Model, responseResource
 	obs.SuppressGenerationUsage = true
 	ctx, span := begin(ctx, t.cfg, obs)
+	defer span.finishOnReturn(&obs)
 	result, err := call(ctx)
 	obs.Err, obs.Resource = err, ownedOperationResource(result)
 	if result != nil {
 		obs.Response = result.Response
 		remoteObservation(&obs, result)
 	}
-	span.finish(obs)
 	return result, err
 }
 
@@ -224,13 +224,13 @@ func (t *batchOperations) call(
 	var obs Observation
 	obs.Operation, obs.Provider, obs.ResourceKind = operation, provider, "batch"
 	ctx, span := begin(ctx, t.cfg, obs)
+	defer span.finishOnReturn(&obs)
 	result, err := call(ctx)
 	obs.Err, obs.Resource = err, ownedOperationResource(result)
 	if result != nil && result.Handle != nil {
 		obs.Provider = result.Handle.Provider
 		obs.ResourceStatus = string(result.Handle.Status)
 	}
-	span.finish(obs)
 	return result, err
 }
 
@@ -311,6 +311,7 @@ func (t *cacheOperations) call(
 	var obs Observation
 	obs.Operation, obs.Provider, obs.ResourceKind = operation, provider, "cache"
 	ctx, span := begin(ctx, t.cfg, obs)
+	defer span.finishOnReturn(&obs)
 	result, err := call(ctx)
 	obs.Err, obs.Resource = err, ownedOperationResource(result)
 	if result != nil {
@@ -320,7 +321,6 @@ func (t *cacheOperations) call(
 			obs.ResourceStatus = string(result.Handle.State)
 		}
 	}
-	span.finish(obs)
 	return result, err
 }
 

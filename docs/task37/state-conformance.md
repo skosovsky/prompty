@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Provider state and result conformance
 
 This inventory records current implementation evidence, not independent final acceptance or live endpoint/model certification. Core carries explicit canonical associations and opaque state; SDK modules interpret their codecs. Hidden reasoning, credentials, account authorization and unsupported response variants are not fabricated.

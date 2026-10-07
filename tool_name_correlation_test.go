@@ -73,7 +73,7 @@ func TestIDlessToolCorrelationRequiresCheckedUniqueNames(t *testing.T) {
 				generate: func(context.Context, *PromptExecution) (*Response, error) { return response, nil },
 			}
 			// Act.
-			updated, err := ExecuteWithToolValidation(context.Background(), invoker, execution, registry)
+			updated, err := ExecuteWithTypedTools(context.Background(), invoker, execution, registry)
 			// Assert: the whole batch is admitted/rejected before any local side effect.
 			if !test.allowed {
 				require.ErrorIs(t, err, ErrToolScope)

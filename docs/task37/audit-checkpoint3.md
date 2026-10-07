@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Independent ingress checkpoint
 
 Historical frozen snapshot, before IA-05/06 correction: tracked/nonignored-untracked manifest SHA-256 `f81685cb966744570341209a06cc47fae7935bf82cac972843b2092d27f2a382`; original task SHA-256 `80b0255e735b03df0335c781ce6dae13f2c3087e5dcf8f10472c5a50f086cfbe`. Manifest command: `git ls-files -c -o --exclude-standard -z | sort -zu | xargs -0 shasum -a 256 | shasum -a 256`. Both agents read the same frozen source/tests/docs and made no workspace changes. This is not a final acceptance report.

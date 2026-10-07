@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 
 class ReleaseAcceptance(unittest.TestCase):
@@ -24,6 +25,7 @@ class ReleaseAcceptance(unittest.TestCase):
         scripts = Path(__file__).resolve().parent
         self.write('scripts/release.sh', (scripts / 'release.sh').read_text())
         self.write('scripts/release.py', (scripts / 'release.py').read_text())
+        self.write('LICENSE', (scripts.parent / 'LICENSE').read_text())
         self.write('go.mod', 'module example.test/prompty\n\ngo 1.26.3\n')
         self.write('core.go', 'package prompty\nconst Value = 1\n')
         self.write('sdk/go.mod', 'module example.test/prompty/sdk\n\ngo 1.26.3\nrequire example.test/prompty v0.0.0\nreplace example.test/prompty => ..\n')
@@ -85,6 +87,12 @@ class ReleaseAcceptance(unittest.TestCase):
         self.assertIn('example.test/prompty v0.0.1', module)
         self.assertNotIn('replace', module)
         self.assertTrue((self.repo / '.git/prompty-release/proxy/example.test/prompty/@v/v0.0.1.zip').exists())
+        # Module proxy archives inherit the tracked root license for nested modules.
+        expected_license = (self.repo / 'LICENSE').read_bytes()
+        for module in ('prompty', 'prompty/sdk'):
+            path = self.repo / '.git/prompty-release/proxy/example.test' / module / '@v/v0.0.1.zip'
+            with zipfile.ZipFile(path) as archive:
+                self.assertEqual(archive.read('example.test/' + module + '@v0.0.1/LICENSE'), expected_license)
 
     def test_failed_push_preserves_detached_checkout_and_resumes_same_version(self):
         # Arrange rejected remote and detached starting state.

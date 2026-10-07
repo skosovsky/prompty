@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Initial independent audits
 
 These reports describe the implementation slice before consumer-capture fixes. They are not final approval for subsequently changed code. Both agents read the original task and inspected the implementation independently; neither changed the workspace or made external writes. No immutable tree fingerprint was recorded for this initial pass, so its verdict must not be reused as final-snapshot evidence.

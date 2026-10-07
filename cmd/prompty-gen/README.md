@@ -6,6 +6,13 @@ prompty-gen — генератор Go-кода для prompty-манифесто
 
 - **SRP:** генератор = typed prompt contract + recipe/checkpoint/index; runtime = registry + invoker.
 - Генератор не внедряет LLM-клиент и не генерирует provider call — только typed API для создания и восстановления prompt execution.
+
+Генерация опциональна: прямые caller-owned types и checked execution работают без
+каталога. Typed/NoLate варианты сохраняют статические контракты Go; повторение в
+выходном коде обслуживается общими emitters, а shared core admission отвечает за
+валидацию materialization. Генератор не добавляет reflection fallback или общий
+agent runtime ради сокращения файла. Размер текущего fixture и публичной поверхности
+зафиксирован в [измерениях task45](../../docs/task45-performance.md).
 - Исполнение промптов: `recipe, _ := catalog.NewXxxRecipe(ctx, input)` → `exec, _ := recipe.ExecuteWithContract(ctx, registry, contract)` → `invoker.Execute(ctx, exec)`.
 
 ## Установка

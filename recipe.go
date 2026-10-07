@@ -14,7 +14,8 @@ type ManifestDescriptorVerifier interface {
 	VerifyManifestDescriptor(ctx context.Context, desc ManifestDescriptor) error
 }
 
-// PromptRuntimeOptions stores runtime values that belong to the prompt contract.
+// PromptRuntimeOptions stores compose-condition values for prompt materialization.
+// It carries no session state, agent scheduling or persisted runtime ports.
 type PromptRuntimeOptions struct {
 	ComposeValues JSONDocument `json:"compose_values,omitempty"`
 }
@@ -33,15 +34,11 @@ func PromptRuntimeOptionsFromComposeValues(values ComposeValues) (PromptRuntimeO
 
 // PromptRuntimeOptionsFromComposeContext builds JSON-safe runtime options from a typed compose context.
 func PromptRuntimeOptionsFromComposeContext(ctx ComposeContext) (PromptRuntimeOptions, error) {
-	if ctx == nil {
-		return PromptRuntimeOptions{}, nil
+	values, err := admittedComposeValues(ctx)
+	if err != nil {
+		return PromptRuntimeOptions{}, err
 	}
-	if validator, ok := ctx.(interface{ ValidateComposeContext() error }); ok {
-		if err := validator.ValidateComposeContext(); err != nil {
-			return PromptRuntimeOptions{}, err
-		}
-	}
-	return PromptRuntimeOptionsFromComposeValues(ctx.ComposeValues())
+	return PromptRuntimeOptionsFromComposeValues(values)
 }
 
 func (o PromptRuntimeOptions) composeValues() (ComposeValues, error) {
@@ -168,18 +165,7 @@ func (r PromptRecipe[TInput, TLate]) Plan(
 	if err := r.validateState(); err != nil {
 		return nil, err
 	}
-	if registry == nil {
-		return nil, errors.New("prompt recipe: registry is required")
-	}
-	input, err := registryPlanInputFromRecipe(r.Input, r.RuntimeOptions)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := VerifiedManifestPlan(ctx, registry, r.Descriptor, input)
-	if err != nil {
-		return nil, fmt.Errorf("prompt recipe: build render plan: %w", err)
-	}
-	return plan, nil
+	return verifiedRecipePlan(ctx, registry, r.Descriptor, r.Input, r.RuntimeOptions)
 }
 
 // Execute verifies, rebuilds, binds late input, and materializes a prompt execution.
@@ -190,7 +176,7 @@ func (r PromptRecipe[TInput, TLate]) Execute(
 	if err := r.validateState(); err != nil {
 		return nil, err
 	}
-	plan, err := r.verifiedPlan(ctx, registry)
+	plan, err := r.Plan(ctx, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +192,7 @@ func (r PromptRecipe[TInput, TLate]) ExecuteWithContract(
 	if err := r.validateState(); err != nil {
 		return nil, err
 	}
-	plan, err := r.verifiedPlan(ctx, registry)
+	plan, err := r.Plan(ctx, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -220,13 +206,6 @@ func (r PromptRecipe[TInput, TLate]) ExecuteWithContract(
 		}
 	}
 	return plan.ExecuteWithManifestContract(ctx, r.Descriptor, contract)
-}
-
-func (r PromptRecipe[TInput, TLate]) verifiedPlan(
-	ctx context.Context,
-	registry ManifestSnapshotRegistry,
-) (*RenderPlan, error) {
-	return r.Plan(ctx, registry)
 }
 
 func (r PromptRecipe[TInput, TLate]) executePlan(
@@ -384,18 +363,7 @@ func (r PromptRecipeNoLate[TInput]) Plan(
 	if err := r.validateState(); err != nil {
 		return nil, err
 	}
-	if registry == nil {
-		return nil, errors.New("prompt recipe: registry is required")
-	}
-	input, err := registryPlanInputFromRecipe(r.Input, r.RuntimeOptions)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := VerifiedManifestPlan(ctx, registry, r.Descriptor, input)
-	if err != nil {
-		return nil, fmt.Errorf("prompt recipe: build render plan: %w", err)
-	}
-	return plan, nil
+	return verifiedRecipePlan(ctx, registry, r.Descriptor, r.Input, r.RuntimeOptions)
 }
 
 // Execute verifies, rebuilds, and materializes a prompt execution.
@@ -480,4 +448,23 @@ func registryPlanInputFromRecipe(
 		return RegistryPlanInput{}, err
 	}
 	return planInputWithComposeValues(planInput, values), nil
+}
+
+// verifiedRecipePlan keeps typed and no-late input admission on one path.
+// Raw runtime checkpoints separately decode their explicit JSON binding surface.
+func verifiedRecipePlan(ctx context.Context, registry ManifestSnapshotRegistry, desc ManifestDescriptor,
+	payload any, options PromptRuntimeOptions,
+) (*RenderPlan, error) {
+	if registry == nil {
+		return nil, errors.New("prompt recipe: registry is required")
+	}
+	input, err := registryPlanInputFromRecipe(payload, options)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := VerifiedManifestPlan(ctx, registry, desc, input)
+	if err != nil {
+		return nil, fmt.Errorf("prompt recipe: build render plan: %w", err)
+	}
+	return plan, nil
 }

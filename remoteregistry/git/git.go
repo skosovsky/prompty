@@ -21,7 +21,7 @@ import (
 	"github.com/skosovsky/prompty/remoteregistry"
 )
 
-// Fetcher fetches YAML manifests from a Git repository (clone on first use, then pull).
+// Fetcher fetches YAML/JSON manifests from a Git repository (clone on first use, then pull).
 // Implements remoteregistry.Fetcher. Call Close to remove the local clone.
 var _ remoteregistry.Fetcher = (*Fetcher)(nil)
 
@@ -55,10 +55,13 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 	if strings.TrimSpace(g.branch) == "" {
 		return nil, errors.New("remoteregistry/git: branch must not be empty")
 	}
+	if g.dir != "" && g.dir != "." && (!fs.ValidPath(g.dir) || strings.Contains(g.dir, "\\")) {
+		return nil, errors.New("remoteregistry/git: dir must be a relative slash path without parent/empty segments")
+	}
 	return g, nil
 }
 
-// Fetch reads the manifest from the repo: {dir}/{id}.yaml or {dir}/{id}.yml.
+// Fetch reads the manifest from the repo: {dir}/{id}.yaml, .yml or .json.
 func (g *Fetcher) Fetch(ctx context.Context, id string) (result []byte, operationErr error) {
 	defer func() {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -284,6 +287,9 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		gitDir := filepath.Join(g.cloneDir, ".git")
 		if _, statErr := os.Stat(gitDir); statErr == nil {
 			repo, err = git.PlainOpen(g.cloneDir)
+			if err == nil {
+				err = g.validatePersistentCheckout(repo)
+			}
 			opened = true
 		} else {
 			if mkErr := os.MkdirAll(g.cloneDir, 0o750); mkErr != nil {
@@ -322,6 +328,30 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		return g.ensureClone(ctx)
 	}
 	return ctx.Err()
+}
+
+func (g *Fetcher) validatePersistentCheckout(repo *git.Repository) error {
+	head, err := repo.Head()
+	if err != nil || head.Name() != plumbing.NewBranchReferenceName(g.branch) {
+		return errors.New("persistent checkout: current branch differs from configured branch")
+	}
+	// An exact file:// reference to this checkout deliberately freezes local data.
+	if localURL, ok := strings.CutPrefix(g.repoURL, "file://"); ok {
+		local, localErr := filepath.Abs(localURL)
+		clone, cloneErr := filepath.Abs(g.cloneDir)
+		if localErr == nil && cloneErr == nil && local == clone {
+			return nil
+		}
+	}
+	origin, err := repo.Remote("origin")
+	if err != nil {
+		return errors.New("persistent checkout: configured origin is unavailable")
+	}
+	urls := origin.Config().URLs
+	if len(urls) != 1 || urls[0] != g.repoURL {
+		return errors.New("persistent checkout: origin differs from configured URL")
+	}
+	return nil
 }
 
 func (g *Fetcher) buildCloneOptions() *git.CloneOptions {

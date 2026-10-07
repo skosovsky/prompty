@@ -35,10 +35,11 @@ func TestCachedRegistry_ConditionalCompose_MissingContextThenStrict(t *testing.T
 		Query string `prompt:"query"`
 	}{Query: "second"})
 	require.NoError(t, err)
-	input2 = prompty.PlanInputWithComposeContext(
+	input2, err = prompty.PlanInputWithComposeContext(
 		input2,
 		workspaceComposeContext{enabled: false},
 	)
+	require.NoError(t, err)
 	plan2, err := reg.Plan(ctx, "composed_conditional_main", input2)
 	require.NoError(t, err)
 	exec2, err := plan2.Execute(ctx)

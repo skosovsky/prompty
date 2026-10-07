@@ -378,10 +378,11 @@ func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 					Query string `prompt:"query"`
 				}{Query: "runtime-off-" + tc.name})
 				require.NoError(t, err)
-				runtimeOffInput = prompty.PlanInputWithComposeContext(
+				runtimeOffInput, err = prompty.PlanInputWithComposeContext(
 					runtimeOffInput,
 					crossWorkspaceComposeContext{enabled: false},
 				)
+				require.NoError(t, err)
 				runtimeOffPlan, err := tc.plan.Plan(ctx, manifestID, runtimeOffInput)
 				require.NoError(t, err)
 				runtimeOffExec, err := runtimeOffPlan.Execute(ctx)

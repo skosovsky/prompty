@@ -540,7 +540,7 @@ func TestTranslate_AudioPartData(t *testing.T) {
 	assert.Equal(t, "mp3", audio.Format)
 }
 
-func TestTranslate_AudioPartData_UnknownMIMEPassThrough(t *testing.T) {
+func TestTranslate_AudioPartData_UnknownMIMERejected(t *testing.T) {
 	t.Parallel()
 	a := New()
 	audioData := []byte{0x01, 0x02, 0x03}
@@ -551,14 +551,8 @@ func TestTranslate_AudioPartData_UnknownMIMEPassThrough(t *testing.T) {
 			}},
 		},
 	}
-	params, err := a.Translate(exec)
-	require.NoError(t, err)
-	require.NotNil(t, params.Messages[0].OfUser)
-	parts := params.Messages[0].OfUser.Content.OfArrayOfContentParts
-	require.Len(t, parts, 1)
-	audio := parts[0].GetInputAudio()
-	require.NotNil(t, audio)
-	assert.Equal(t, "ogg", audio.Format)
+	_, err := a.Translate(exec)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedContentType)
 }
 
 func TestTranslate_FilePartData(t *testing.T) {

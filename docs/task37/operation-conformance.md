@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Provider operation conformance inventory
 
 This inventories installed mappings and deterministic SDK/host-transport evidence,

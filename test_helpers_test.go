@@ -62,12 +62,6 @@ func fixtureCompletePartIDs(count int) []string {
 	return ids
 }
 
-type toolValidatorFunc func(name string, argsJSON string) error
-
-func (f toolValidatorFunc) ValidateToolCall(name string, argsJSON string) error {
-	return f(name, argsJSON)
-}
-
 // stubToolInvoker supports tests that need validate/invoke without a full TypedToolRegistry.
 type stubToolInvoker struct {
 	validate func(name, argsJSON string) error

@@ -90,7 +90,7 @@ func TestWithTracing_ExecuteStream_WrapsNext(t *testing.T) {
 }
 
 // TestWithTracing_ExecuteStream_InterruptedStream verifies that when the consumer
-// stops early (yield=false), metrics (latency_ms, tokens_total, finish_reason) are still recorded
+// stops early (yield=false), the wrapper preserves consumer-stop completion.
 // via the defer finalizer. The stream yields one chunk with tokens and FinishReason, then consumer
 // stops; we assert no panic and that the iterator terminates.
 func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
@@ -139,7 +139,7 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 }
 
 // TestWithTracing_ExecuteStream_ProviderError verifies that when the base invoker yields an error,
-// it propagates to the consumer and the middleware does not panic. Defer still records latency_ms.
+// it propagates to the consumer and the middleware does not panic.
 func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("stream backend error")
@@ -169,9 +169,9 @@ func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	assert.ErrorIs(t, gotErr, wantErr)
 }
 
-// TestWithTracing_Execute_ErrorPathRecordsLatency verifies that when Execute returns an error,
-// the middleware records latency_ms via defer and propagates the error without panic.
-func TestWithTracing_Execute_ErrorPathRecordsLatency(t *testing.T) {
+// TestWithTracing_Execute_ErrorPathPropagatesCause verifies that when Execute returns an error,
+// the middleware propagates the error without panic.
+func TestWithTracing_Execute_ErrorPathPropagatesCause(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("sync backend error")
 	base := &invokerStub{
@@ -190,7 +190,7 @@ func TestWithTracing_Execute_ErrorPathRecordsLatency(t *testing.T) {
 }
 
 // TestWithTracing_ExecuteStream_EmptyStream verifies that when the stream yields no chunks,
-// the middleware completes without panic and defer still runs (recording latency_ms only).
+// the middleware completes without panic and closes the lifecycle.
 func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
@@ -199,7 +199,7 @@ func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 		},
 		generateStream: func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(_ func(*prompty.ResponseChunk, error) bool) {
-				// No chunks yielded; defer records only latency_ms
+				// No chunks yielded; the lifecycle still closes.
 			}
 		},
 	}

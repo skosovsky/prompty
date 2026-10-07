@@ -217,27 +217,44 @@ func TestFuncMap_EscapeXML(t *testing.T) {
 func TestFuncMap_RandomHex(t *testing.T) {
 	t.Parallel()
 	// randomHex(8) returns 16 hex chars (8 bytes).
-	got := randomHex(8)
+	got, err := randomHex(8)
+	require.NoError(t, err)
 	assert.Len(t, got, 16, "randomHex(8) must return 16 characters")
 	hexRe := regexp.MustCompile(`^[0-9a-f]+$`)
 	assert.True(t, hexRe.MatchString(got), "randomHex output must be valid hex: %q", got)
 
 	// Zero and negative length return empty string.
-	assert.Empty(t, randomHex(0))
-	assert.Empty(t, randomHex(-1))
+	empty, err := randomHex(0)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+	empty, err = randomHex(-1)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 
 	// Two calls must produce different values (no static seed).
-	a, b := randomHex(8), randomHex(8)
+	a, err := randomHex(8)
+	require.NoError(t, err)
+	b, err := randomHex(8)
+	require.NoError(t, err)
 	assert.NotEqual(t, a, b, "randomHex must be non-deterministic")
 }
 
-// TestFuncMap_RandomHex_ErrorPath verifies randomHex returns empty string when rand fails (DoD: no panic, graceful fallback).
 func TestFuncMap_RandomHex_ErrorPath(t *testing.T) {
+	// Arrange: the injected RNG port fails; restore it before parallel tests run.
 	old := randRead
 	defer func() { randRead = old }()
-	randRead = func([]byte) (int, error) { return 0, errors.New("injected failure") }
-	got := randomHex(8)
-	assert.Empty(t, got, "randomHex must return empty string on rand error")
+	failure := errors.New("injected failure")
+	randRead = func([]byte) (int, error) { return 0, failure }
+	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("{{ randomHex 8 }}")}})
+	require.NoError(t, err)
+	// Act.
+	got, rngErr := randomHex(8)
+	execution, renderErr := NewRenderPlan(tpl).Execute(t.Context())
+	// Assert: an empty result cannot silently become a successful delimiter.
+	require.Empty(t, got)
+	require.ErrorIs(t, rngErr, failure)
+	require.ErrorIs(t, renderErr, failure)
+	require.Nil(t, execution)
 }
 
 // TestFuncMap_EscapeXML_Integration verifies escapeXML is available in the template pipeline and escapes user input.

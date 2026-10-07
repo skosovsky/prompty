@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # High-level helpers and the Invoker boundary
 
 Core accepts an application-owned `Invoker`; it does not discover that implementation's SDK, endpoint configuration or capability knowledge. An implementation must establish execution guarantees before dispatch or fail closed. Interface conformance alone does not attest to truthful provider behavior. This is a host-port obligation, like truthful validator and capture-sink implementations, not IAM or a permission system.

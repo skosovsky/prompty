@@ -1,4 +1,5 @@
-// Package mediafetch provides safe URL download for adapters that require inline media (e.g. base64).
+// Package mediafetch downloads HTTPS image bodies with a size limit for inline adapters.
+// Egress/auth/redirect trust remains host-owned; it is not an SSRF or network sandbox.
 // Used when MediaPart has URL but the provider API does not accept URLs (Anthropic, Ollama).
 package mediafetch
 

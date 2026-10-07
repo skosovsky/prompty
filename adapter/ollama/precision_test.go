@@ -164,7 +164,7 @@ func TestSDKPrecisionFailurePreventsToolHandler(t *testing.T) {
 		Parameters: prompty.JSONDocument(`{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`),
 	}}
 	// Act.
-	_, err = prompty.ExecuteWithToolValidation(context.Background(), client, execution, registry)
+	_, err = prompty.ExecuteWithTypedTools(context.Background(), client, execution, registry)
 	// Assert.
 	require.ErrorIs(t, err, adapter.ErrMalformedArgs)
 	require.Equal(t, int32(1), calls.Load())

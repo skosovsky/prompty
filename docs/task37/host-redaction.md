@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Host redaction boundary
 
 Credentials belong to injected SDK/transport configuration, not portable profile identity or provider envelopes. Checked endpoint identity rejects userinfo/query/fragment instead of silently rewriting destination scope. Provider-state codecs preserve only their supported provider continuation shape; core cannot interpret arbitrary caller payload as credential-free.

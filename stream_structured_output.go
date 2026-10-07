@@ -15,7 +15,13 @@ import (
 
 const streamBufferPreviewLimit = 1024
 
-var streamMaxObjectSizeBytes = 10 * 1024 * 1024
+const streamMaxObjectSizeBytes = 10 * 1024 * 1024
+
+// StructuredStreamOptions sets an invocation-local positive JSON object limit.
+// It does not bound whole-document or upstream transport/SDK allocation.
+type StructuredStreamOptions struct {
+	MaxObjectBytes int
+}
 
 // ErrStructuredStream identifies invalid incremental JSON syntax/shape, not
 // provider refusal or voluntary consumer cancellation.
@@ -33,9 +39,15 @@ const (
 // after successful iterator exhaustion and whole-document validation.
 func StreamStructuredOutput[T any](
 	ctx context.Context, invoker Invoker, exec *PromptExecution, mode StreamMode,
+	options ...StructuredStreamOptions,
 ) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var zero T
+		limit, optionErr := structuredStreamObjectLimit(options)
+		if optionErr != nil {
+			yield(zero, optionErr)
+			return
+		}
 
 		if invoker == nil {
 			yield(zero, errors.New("stream structured output: invoker is nil"))
@@ -65,6 +77,7 @@ func StreamStructuredOutput[T any](
 		defer cancel()
 
 		parser := newStructuredStreamParser[T]()
+		parser.maxObjectBytes = limit
 		if boundaryErr := validateDispatchBoundary(streamCtx, workExec); boundaryErr != nil {
 			yield(zero, boundaryErr)
 			return
@@ -241,13 +254,28 @@ type structuredStreamParser[T any] struct {
 	inString        bool
 	escape          bool
 	current         bytes.Buffer
-	preview         bytes.Buffer
+	preview         [streamBufferPreviewLimit]byte
+	previewPosition int
+	previewCount    int
 	arrayHasItem    bool
 	arrayNeedsValue bool
+	maxObjectBytes  int
 }
 
 func newStructuredStreamParser[T any]() *structuredStreamParser[T] {
-	return &structuredStreamParser[T]{}
+	parser := new(structuredStreamParser[T])
+	parser.maxObjectBytes = streamMaxObjectSizeBytes
+	return parser
+}
+
+func structuredStreamObjectLimit(options []StructuredStreamOptions) (int, error) {
+	if len(options) == 0 {
+		return streamMaxObjectSizeBytes, nil
+	}
+	if len(options) != 1 || options[0].MaxObjectBytes <= 0 {
+		return 0, fmt.Errorf("%w: one positive object limit required", ErrStructuredStream)
+	}
+	return options[0].MaxObjectBytes, nil
 }
 
 func (p *structuredStreamParser[T]) feed(text string) ([]T, error) {
@@ -409,9 +437,9 @@ func (p *structuredStreamParser[T]) startCapture(ch byte) {
 }
 
 func (p *structuredStreamParser[T]) writeCapturedByte(ch byte) error {
-	if streamMaxObjectSizeBytes > 0 && p.current.Len()+1 > streamMaxObjectSizeBytes {
+	if p.current.Len()+1 > p.maxObjectBytes {
 		p.appendPreviewByte(ch)
-		return p.errorf("stream object too large (limit: %d bytes)", streamMaxObjectSizeBytes)
+		return p.errorf("stream object too large (limit: %d bytes)", p.maxObjectBytes)
 	}
 	p.current.WriteByte(ch)
 	p.appendPreviewByte(ch)
@@ -474,21 +502,21 @@ func (p *structuredStreamParser[T]) decodeCurrent() (T, error) {
 }
 
 func (p *structuredStreamParser[T]) appendPreviewByte(ch byte) {
-	p.preview.WriteByte(ch)
-	if p.preview.Len() <= streamBufferPreviewLimit {
-		return
+	p.preview[p.previewPosition] = ch
+	p.previewPosition = (p.previewPosition + 1) % streamBufferPreviewLimit
+	if p.previewCount < streamBufferPreviewLimit {
+		p.previewCount++
 	}
-
-	tail := append([]byte(nil), p.preview.Bytes()[p.preview.Len()-streamBufferPreviewLimit:]...)
-	p.preview.Reset()
-	p.preview.Write(tail)
 }
 
 func (p *structuredStreamParser[T]) previewText() string {
-	if p.preview.Len() <= streamBufferPreviewLimit {
-		return p.preview.String()
+	if p.previewCount < streamBufferPreviewLimit {
+		return string(p.preview[:p.previewCount])
 	}
-	return p.preview.String()[p.preview.Len()-streamBufferPreviewLimit:]
+	var suffix [streamBufferPreviewLimit]byte
+	n := copy(suffix[:], p.preview[p.previewPosition:])
+	copy(suffix[n:], p.preview[:p.previewPosition])
+	return string(suffix[:])
 }
 
 func (p *structuredStreamParser[T]) errorf(format string, args ...any) error {

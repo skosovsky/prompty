@@ -14,7 +14,8 @@ func EstimateTokens(est TokenEstimator, exec *prompty.PromptExecution) (int, err
 	return EstimateTokensStrict(est, exec)
 }
 
-// EstimateTokensStrict requires a non-nil TokenEstimator.
+// EstimateTokensStrict requires a non-nil TokenEstimator; Strict concerns availability,
+// not tokenizer accuracy or complete provider request coverage.
 func EstimateTokensStrict(est TokenEstimator, exec *prompty.PromptExecution) (int, error) {
 	if est == nil {
 		return 0, ErrNoTokenEstimator

@@ -57,6 +57,8 @@ func WithClient(c *genai.Client) Option {
 
 // WithResponsePayloadLimit bounds original response observation. Nonpositive
 // limits fail before dispatch. Signed state cannot use a truncated payload.
+// Sync SDK body reads are not capped by this retention limit. Native observation
+// bounds each SSE line including framing, not the whole response.
 func WithResponsePayloadLimit(limit int) Option {
 	return func(a *Adapter) { a.responseLimit = limit }
 }

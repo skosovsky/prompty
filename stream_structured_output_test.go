@@ -191,11 +191,7 @@ func TestStreamStructuredOutput_IncompleteJSONIncludesPreview(t *testing.T) {
 }
 
 func TestStreamStructuredOutput_ObjectTooLarge(t *testing.T) {
-	oldLimit := streamMaxObjectSizeBytes
-	streamMaxObjectSizeBytes = 16
-	t.Cleanup(func() {
-		streamMaxObjectSizeBytes = oldLimit
-	})
+	t.Parallel()
 
 	invoker := &scriptedInvoker{
 		generateStream: func(context.Context, *PromptExecution) iter.Seq2[*ResponseChunk, error] {
@@ -211,7 +207,8 @@ func TestStreamStructuredOutput_ObjectTooLarge(t *testing.T) {
 	}
 
 	items, err := collectSeq(
-		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative),
+		StreamStructuredOutput[valueSchemaResult](context.Background(), invoker, SimplePrompt("hi"), StreamNative,
+			StructuredStreamOptions{MaxObjectBytes: 16}),
 	)
 	require.Error(t, err)
 	assert.Empty(t, items)

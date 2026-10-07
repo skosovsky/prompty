@@ -161,7 +161,8 @@ func (e *CaptureError) Error() string {
 
 func (e *CaptureError) Unwrap() []error { return []error{ErrCapture, e.Cause} }
 
-// CaptureSession has bounded synchronous backpressure. Do not re-enter Emit
+// CaptureSession serializes synchronous callbacks. This does not bound latency,
+// concurrent callers or the retained advisory failure list. Do not re-enter Emit
 // from its callbacks. Report may safely be inspected from a callback.
 type CaptureSession struct {
 	emitMu            sync.Mutex

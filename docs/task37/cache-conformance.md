@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Request cache control conformance
 
 This inventory distinguishes local implementation evidence from caller-owned destination knowledge and live account/model support. Request controls never claim remote resource lifecycle, reuse authorization, durability or savings. The owner selected explicit Gemini resource lifecycle; it is separate from request controls, not a deferred trigger.

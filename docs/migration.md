@@ -12,7 +12,7 @@ historical evidence for its own checkpoint, not the state of the current tree.
 | 38: dynamic numbers are exact json.Number; composition rejects conflicting property/root constraints | Remove float64 assumptions and local schema override expectations; preserve original validation separately from domain Validate | [JSON document](../jsondoc.go), [composition](../manifest/compose.go) |
 | 38: generated DTOs validate original schema and track presence, not nonzero | Regenerate recipes/DTOs. Required zero/false/empty can be valid; optional nullable pointer layers distinguish missing/null/value. Generated numeric fields use json.Number | [generator](../cmd/prompty-gen/gen/schema.go), [schema contract](schema-data-contract.md) |
 | 39: explicit empty ToolScope.Allowed denies all tools; nil scope differs | Use WithToolScope; supply required definitions and exact schemas/dialects/capabilities. Do not mutate a retained scope or use a broader registry as admission | [tool contract](tool-execution-contract.md), [scope](../tool_contract.go) |
-| 39: handlers and tool invocation receive context.Context | Change ToolHandler.Handle, constructor callbacks, TypedTool.Invoke and ToolInvoker.InvokeTool signatures/calls. Propagate context to IO; handle retained result + error/cancellation | [binding](../tool_binding.go), [orchestration](../tool_orchestration.go) |
+| 39: handlers and tool invocation receive context.Context | Change constructor callbacks, TypedTool.Invoke and ToolInvoker.InvokeTool signatures/calls. Propagate context to IO; handle retained result + error/cancellation | [binding](../tool_binding.go), [orchestration](../tool_orchestration.go) |
 | 39: execution wire is prompty.execution.v2 with explicit scope | Persist/restore with designated MarshalExecution/UnmarshalExecution, not arbitrary json.Marshal of execution. Old wire markers are rejected; runtime recipe scope is explicitly rebound | [execution wire](../wire.go), [tool contract](tool-execution-contract.md) |
 | 40: captured immutable source generation replaces Verify then separate Plan | Use CaptureManifest/VerifiedManifestPlan and the capture port for custom verified registries; retain the captured snapshot under host restore policy. Ordinary BYOT Registry remains a low-level unverified path | [source contract](source-snapshot-contract.md), [snapshot](../manifest_snapshot.go) |
 | 40: source descriptors and compiled wire version3 replace old digest/compiled constructors | Regenerate checkpoints/constructors; create compiled checkpoints FromRenderPlan(ctx, capturedPlan), not by rereading registry. Bind immutable remote revisions explicitly; mutable capture is not atomic remote revision | [source contract](source-snapshot-contract.md), [compiled checkpoint](../internal/compiled) |
@@ -34,3 +34,17 @@ Historical independent acceptance and checks remain in
 [task40](../.cursor/task/reports/task40/), [task42](../.cursor/task/reports/task42/),
 [task41](../.cursor/task/reports/task41/) and [task43](../.cursor/task/reports/task43/).
 They attest their frozen snapshots; current documentation is separate evidence.
+
+Task45 removes `ToolHandler`, `ExecuteWithToolValidation` and `ErrToolInvokerRequired`. Replace execution calls with `ExecuteWithTypedTools` and provide a `ToolInvoker`; pure `ToolValidator` ports remain separate. No legacy aliases remain.
+
+Structured streams accept invocation-local StructuredStreamOptions with one
+positive MaxObjectBytes; omitted options retain 10 MiB per object. Cache wrappers
+return ErrRegistryCapabilityUnavailable for unsupported optional operations rather
+than empty catalogs/missing IDs. Persistent Git checkouts must match configured
+branch/origin before credential use; reconcile foreign clones explicitly.
+
+`PlanInputWithComposeContext` now returns `(RegistryPlanInput, error)` and honors optional ValidateComposeContext before reading values. Handle its error before registry access. Use CheckedComposeValuesFromPairs for dynamic path/value admission; NewComposeValuesFromPairs panics on invalid paths, collisions or nonfinite numbers. CachePolicy.Mode uses CacheMode; explicitly convert runtime strings and validate as before, without changing wire values.
+
+`NewRenderPlan(nil)` now panics immediately as programmer misuse; use the checked `NewRenderPlanFromPlanInput` for error-return admission. RNG failures in randomHex fail rendering instead of generating an empty delimiter. `NewTypedTool` requires an object-root argument schema; scalar JSON decoding remains available through DecodeToolArgs. TypedToolRegistry copies ready-JSON result buffers; direct typed handler values retain their generic ownership contract.
+
+OpenAI Chat inline audio accepts explicit mp3/wav MIME families only; unsupported/empty/malformed MIME types are rejected rather than passed as arbitrary native format strings. Part state/annotation identifiers reject whitespace-only values consistently with message metadata. Ollama HTTP constructor failures use ErrInvalidHTTPConfig; synchronous Chat requires exactly one callback. Synchronous OTel wrappers end spans on caller-port panic with a safe category and propagate the original panic without exporting its value.

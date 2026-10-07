@@ -6,6 +6,10 @@ is required. `WithTracerName` chooses the instrumentation name. With no injected
 tracer/provider, the existing OTel global provider is used. OTel stays in this
 extension module; core DTOs have no telemetry dependency.
 
+Tracing retains the shared ToolScope validation as defense in depth before
+delegation, in sync and stream modes. It validates the same portable scope contract
+as checked execution, without authenticating scope or defining an alternate policy.
+
 ## Contract and conventions
 
 The GenAI conventions are **Development**, pinned to official snapshot
@@ -32,6 +36,11 @@ failures: no fabricated transport/dispatch evidence. Refusal/incomplete/paused
 metadata does not become a network error automatically. Default span status and
 attributes use categories, never arbitrary `error.Error()` text.
 
+Synchronous invocation and resource wrappers end their logical span on caller-port
+panic and re-panic with the original value. They record only the safe category
+`caller_panic`, with no panic payload. This cleanup is not error-return recovery;
+injected telemetry callbacks/exporters must themselves return normally.
+
 ## Lazy streaming
 
 The observer attaches to the original stream handle through `ObserveLifecycle`.
@@ -40,6 +49,14 @@ Close before consumption create no fictitious provider duration. Consumer stop,
 Close during reading and parent cancellation retain available output/usage/model
 and have distinct `StreamStatus.StopReason` metadata. Close after terminal keeps
 final status immutable. No producer goroutine or second Events loop is added.
+
+A RemoteResponseStreamer must transfer a fresh lazy handle whose lifecycle can
+accept observation. If registration fails on an already consumed/malformed handle,
+the wrapper closes that transferred original to cancel owned work, returns a fresh
+failure stream and preserves RemoteResult for reconciliation. It never starts a
+second provider iterator or rewrites the original terminal status. Sharing that
+same handle with another consumer violates the port contract; the caller owns
+reconciliation of any operation already started by such a malformed port.
 
 ## Explicit resource operations
 

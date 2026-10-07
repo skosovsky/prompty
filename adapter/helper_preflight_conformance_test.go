@@ -31,7 +31,7 @@ func TestHighLevelHelpersRetainCheckedPreflightThroughCustomWrapper(t *testing.T
 			return err
 		}},
 		{"tool validation", func(ctx context.Context, invoker prompty.Invoker, exec *prompty.PromptExecution) error {
-			_, err := prompty.ExecuteWithToolValidation(ctx, invoker, exec, prompty.NewTypedToolRegistry())
+			_, err := prompty.ExecuteWithTypedTools(ctx, invoker, exec, prompty.NewTypedToolRegistry())
 			return err
 		}},
 		{"structured native", func(ctx context.Context, invoker prompty.Invoker, exec *prompty.PromptExecution) error {

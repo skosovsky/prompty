@@ -24,7 +24,9 @@ func TestExplicitMalformedSchemaNeverFallsBack(t *testing.T) {
 	require.Error(t, err)
 	_, err = NewTypedTool("count", func(_ context.Context, _ malformedSchemaDTO) (string, error) { return "", nil })
 	require.Error(t, err)
-	plan, err := WithResponseFormatFromStruct[malformedSchemaDTO](NewRenderPlan(nil))
+	template, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("fixture")}})
+	require.NoError(t, err)
+	plan, err := WithResponseFormatFromStruct[malformedSchemaDTO](NewRenderPlan(template))
 	require.Error(t, err)
 	require.Nil(t, plan)
 }

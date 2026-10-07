@@ -35,6 +35,8 @@ var (
 	)
 	// ErrManifestBytesUnavailable indicates the registry cannot supply raw manifest bytes.
 	ErrManifestBytesUnavailable = errors.New("prompty: manifest bytes unavailable from registry")
+	// ErrRegistryCapabilityUnavailable indicates an optional registry operation is unsupported.
+	ErrRegistryCapabilityUnavailable = errors.New("prompty: registry capability unavailable")
 	// ErrManifestBytesRequired indicates compile requires raw manifest bytes (strict default).
 	ErrManifestBytesRequired = errors.New("prompty: manifest bytes required for compiled prompt digest")
 	// ErrManifestDigestMismatch indicates checkpoint digest does not match current manifest bytes.

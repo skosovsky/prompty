@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Independent checkpoint8 — observation/worklist diagnostics
 
 Both reviewers completed on manifest `b8e2023409ba412f9924476396cf9fc83fcde617294c5aa5f09f8eed1e1545fd`

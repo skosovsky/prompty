@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -72,6 +73,7 @@ type messageStreamBlock struct {
 	initialArguments                          bool
 	source                                    map[string]json.RawMessage
 	input                                     string
+	text                                      strings.Builder
 	privateSource                             []byte
 }
 
@@ -180,6 +182,7 @@ func (s *messageStreamState) startBlock(event anthropic.MessageStreamEventUnion)
 		if err := validateHostedText([]byte(value.RawJSON())); err != nil {
 			return nil, err
 		}
+		block.text.WriteString(value.Text)
 		chunk := blockChunk(event.Index, prompty.TextPart{Text: value.Text})
 		for _, citation := range value.Citations {
 			chunk.Annotations = append(chunk.Annotations, prompty.PartAnnotation{
@@ -224,9 +227,7 @@ func (s *messageStreamState) delta(
 	d := event.Delta
 	switch {
 	case block.kind == "text" && d.Type == "text_delta":
-		var text string
-		_ = json.Unmarshal(block.source["text"], &text)
-		block.source["text"], _ = json.Marshal(text + d.Text)
+		block.text.WriteString(d.Text)
 		return blockChunk(event.Index, prompty.TextPart{Text: d.Text}), nil
 	case block.kind == "text" && d.Type == "citations_delta":
 		if err := block.appendCitation([]byte(d.Citation.RawJSON())); err != nil {
@@ -280,6 +281,7 @@ func (s *messageStreamState) closeBlock(index int64, block *messageStreamBlock) 
 		}
 		return block.finalPart(index, nil)
 	case "text":
+		block.source["text"], _ = json.Marshal(block.text.String())
 		return block.finalPart(index, nil)
 	case "thinking", "redacted_thinking":
 		value := anthropic.ContentBlockUnion{

@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Independent checkpoint reruns
 
 Both original audit agents independently rechecked IA-01–03. They confirmed those fixes in their inspected boundaries, not a clean verdict for the full library. Reports describe the snapshot before subsequent registry-fixture, capture-document and reference-origin changes; no final acceptance or immutable snapshot attestation is claimed.

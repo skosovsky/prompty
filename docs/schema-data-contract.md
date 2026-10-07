@@ -20,4 +20,34 @@ Reflection resolves encoding/json embedded-field dominance before inspecting a s
 
 PlanInputFrom runs ValidateSchema before binding, including for empty and history-only structs. A structurally valid empty payload is supported; validator, history and binding errors are preserved and prevent registry access. Recipe variants share that admission rule; empty input is never an error-recovery policy.
 
+Compose paths consist of nonblank dot-separated segments. Empty paths/segments, repeated paths, scalar-parent/child collisions and nonfinite numeric values fail atomically with ErrComposeValues. CheckedComposeValuesFromPairs returns a zero unset token on failure; NewComposeValuesFromPairs is the programmer-input convenience constructor and panics on the same invalid input. Valid empty pairs produce a set empty token. Neither constructor repairs paths or resolves collisions by insertion order. PlanInputWithComposeContext now returns an error and invokes optional ValidateComposeContext before calling ComposeValues, using the same admission helper as PromptRuntimeOptionsFromComposeContext. Nil context remains a no-op; typed-nil implementations remain caller misuse.
+
+CachePolicy.Mode is the defined CacheMode string type with CacheAdvisory and CacheRequired values; empty remains advisory. JSON/YAML strings are unchanged. Arbitrary runtime strings require explicit conversion and still undergo ValidateCachePolicy; this is a type distinction, not a provider TTL guarantee.
+
+RenderPlan constructors take an owned template snapshot. With methods may share
+that private read-only template between sibling plans; they copy their mutable
+late variables, schema and tool-scope overrides. Template() still returns an
+independent defensive clone, and materialization owns its published execution.
+Sharing the private snapshot does not permit callers or host functions to mutate
+template state and does not create a general copy-on-write object graph.
+
+Typed and no-late recipes share input admission and verified plan construction.
+Raw runtime checkpoints retain explicit strict JSON decoding because their binding
+surface is different; all use VerifiedManifestPlan to bind descriptor and captured
+source. Public Runtime names remain prompt-materialization bindings, not agent-run
+checkpoints, session state or scheduler APIs.
+
+Reference-origin diagnostic probing remains an engine-owned error explanation,
+not a second validator or successful-validation fallback. Retained references
+use the same engine resources; diagnostic failure leaves compilation failed.
+Graph size can be expensive even on rejection: local 1k/10k-edge measurements
+are in task45-performance.md. Hosts bound schema admission/remote-resource policy
+before compilation; diagnostics do not promise a global byte/time budget.
+
 Go template dependency extraction follows dot and variable scope: range/with local fields are not required root inputs; explicit root Input references, variable aliases, else branches and named template invocation retain their real dependencies. Optional-message skipping uses the same dependencies. Explicit schema required constraints and actual template missing-key errors remain enforced; uncertain inference must not invent root fields.
+
+The [ownership table](README.md#ownership-and-concurrency) specifies admissible acyclic materialization values and mutable DTO boundaries. ExtractSchema dereferences a root pointer as a DTO declaration; nullable roots need an explicit nullable schema. Integer inference expresses JSON integer, not machine-range bounds: typed decoding still rejects overflow. Schema compile/validation costs depend on supplied graphs; reflection depth limits are not universal byte/time budgets and CompileSchema has no cancellation context. Hosts bound admission before compilation. Mapper transformation ledgers are trusted claims, not a semantic completeness proof.
+
+NewRenderPlan is a convenience constructor requiring a non-nil template; nil is programmer misuse and panics immediately. Error-returning NewRenderPlanFromPlanInput remains the checked input boundary. A zero RenderPlan is not initialized. Scratch map pooling retains only projections of at most 1024 entries; larger projections are per-call allocations. The limit bounds retained entry count, not a universal heap-byte cap.
+
+Template randomHex and escapeXML format delimiters/markup; they do not prevent model prompt injection. randomHex propagates an RNG-port failure as a render error instead of returning an empty delimiter. truncate_tokens uses the configured counter (heuristic by default), assumes prefix monotonicity for binary search and does not certify the complete billed request or an optimal prefix for a non-monotonic tokenizer.

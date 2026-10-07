@@ -604,7 +604,7 @@ func TestCachedRegistry_ResolveManifest_RequiresManifestResolver(t *testing.T) {
 	reg := WithCache(base, time.Minute)
 	_, err := reg.ResolveManifest(context.Background(), "agent")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ManifestResolver")
+	assert.ErrorIs(t, err, prompty.ErrRegistryCapabilityUnavailable)
 }
 
 func TestCachedRegistry_DescribePrompt_RequiresPromptDescriber(t *testing.T) {
@@ -613,5 +613,5 @@ func TestCachedRegistry_DescribePrompt_RequiresPromptDescriber(t *testing.T) {
 	reg := WithCache(base, time.Minute)
 	_, err := reg.DescribePrompt(context.Background(), "agent")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "PromptDescriber")
+	assert.ErrorIs(t, err, prompty.ErrRegistryCapabilityUnavailable)
 }

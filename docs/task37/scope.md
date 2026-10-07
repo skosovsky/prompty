@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Task37 selected library scope
 
 Source: [issue #4](https://github.com/skosovsky/prompty/issues/4), clarified by the [owner reply](https://github.com/skosovsky/prompty/issues/4#issuecomment-6008749968) on 6 October 2026. This supersedes unselected-roadmap/rejected-output dispositions. All five directions are required now; optional means consumer opt-in, not deferred implementation. Reference consumers suffice without production workload or credentials as a prerequisite.

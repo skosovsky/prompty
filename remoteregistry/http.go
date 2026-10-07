@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// HTTPFetcher fetches manifests over HTTP. Fetch(id) tries {baseURL}/{id}.yaml and {baseURL}/{id}.yml.
+// HTTPFetcher fetches manifests over HTTP. Fetch(id) tries {baseURL}/{id}.yaml, .yml and .json in order.
 // Registry WithEnvironment passes env-qualified ids only (no base-id fallback). 404 tries next extension.
 var _ Fetcher = (*HTTPFetcher)(nil)
 
@@ -69,7 +69,7 @@ func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 	return h, nil
 }
 
-// Fetch tries URLs in order: {base}/{id}.yaml, {base}/{id}.yml.
+// Fetch tries URLs in order: {base}/{id}.yaml, {base}/{id}.yml, {base}/{id}.json.
 // On 404 proceeds to next; on other non-2xx returns ErrHTTPStatus.
 func (h *HTTPFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	if err := ValidatePathForFetch(id); err != nil {

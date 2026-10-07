@@ -203,10 +203,11 @@ func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "caps-off"})
 	require.NoError(t, err)
-	input = prompty.PlanInputWithComposeContext(
+	input, err = prompty.PlanInputWithComposeContext(
 		input,
 		workspaceComposeContext{enabled: false},
 	)
+	require.NoError(t, err)
 
 	plan, err := reg.Plan(context.Background(), "composed_conditional_main", input)
 	require.NoError(t, err)
@@ -219,10 +220,11 @@ func TestRegistry_ConditionalCompose_PlanExecute(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "caps-on"})
 	require.NoError(t, err)
-	inputOn = prompty.PlanInputWithComposeContext(
+	inputOn, err = prompty.PlanInputWithComposeContext(
 		inputOn,
 		workspaceComposeContext{enabled: true},
 	)
+	require.NoError(t, err)
 	planOn, err := reg.Plan(context.Background(), "composed_conditional_main", inputOn)
 	require.NoError(t, err)
 	execOn, err := planOn.Execute(context.Background())

@@ -111,6 +111,9 @@ func (r *CachedRegistry) loadMaterial(
 
 // ReadManifestBytes delegates to the base registry when supported.
 func (r *CachedRegistry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if reader, ok := r.base.(prompty.ManifestBytesReader); ok {
 		return reader.ReadManifestBytes(ctx, id)
 	}
@@ -119,18 +122,22 @@ func (r *CachedRegistry) ReadManifestBytes(ctx context.Context, id string) ([]by
 
 // DescribePrompt delegates introspection to the base registry when it implements PromptDescriber.
 func (r *CachedRegistry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
 	if d, ok := r.base.(prompty.PromptDescriber); ok {
 		return d.DescribePrompt(ctx, id)
 	}
-	return prompty.TemplateDescriptor{}, errors.New(
-		"remoteregistry: base registry does not implement PromptDescriber",
-	)
+	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: DescribePrompt", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // CaptureManifest selects one cached immutable generation.
 func (r *CachedRegistry) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, ok := r.base.(prompty.ManifestSnapshotRegistry); !ok {
-		return nil, errors.New("remoteregistry: base does not support captured materialization")
+		return nil, fmt.Errorf("%w: CaptureManifest", prompty.ErrRegistryCapabilityUnavailable)
 	}
 	entry, err := r.loadMaterial(ctx, id)
 	if err != nil {
@@ -174,12 +181,13 @@ func (r *CachedRegistry) ResolveManifest(
 	id string,
 	opts ...prompty.ResolveManifestOption,
 ) (prompty.TemplateDescriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
 	if resolver, ok := r.base.(prompty.ManifestResolver); ok {
 		return resolver.ResolveManifest(ctx, id, opts...)
 	}
-	return prompty.TemplateDescriptor{}, errors.New(
-		"remoteregistry: base registry does not implement ManifestResolver",
-	)
+	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: ResolveManifest", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // Plan uses the complete cached bundle; runtime values are evaluated within it.
@@ -284,15 +292,18 @@ func (r *CachedRegistry) List(ctx context.Context) ([]string, error) {
 	if lister, ok := r.base.(prompty.Lister); ok {
 		return lister.List(ctx)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("%w: List", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // Stat proxies to base when supported.
 func (r *CachedRegistry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	if statter, ok := r.base.(prompty.Statter); ok {
 		return statter.Stat(ctx, id)
 	}
-	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+	return prompty.TemplateInfo{}, fmt.Errorf("%w: Stat", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // Evict removes one entry from cache.

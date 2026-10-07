@@ -10,8 +10,8 @@ go get github.com/skosovsky/prompty/adapter/ollama
 
 ## Configuration
 
-- **Endpoint:** use the `ollama/api` client (e.g. `api.NewClient()` or custom endpoint). This adapter produces `*api.ChatRequest`; you send it with the Ollama client. No API key; typically local or self-hosted.
-- **Default model:** `New()` uses `llama3.2`. Override with `WithModel(modelName)`, or set per execution via `exec.ModelOptions.Model`.
+- **Endpoint:** prefer the number-preserving `NewHTTPChatClient(endpointURL, hostHTTPClient, positiveFrameByteLimit)` port. For the installed SDK, `api.NewClient(endpointURL, hostHTTPClient)` also implements ChatClient with the documented numeric limitations. Configure endpoint authentication in your host HTTP transport; the precision port does not inherit SDK auth.
+- **Default model:** `New()` uses `llama3.2` as an example convenience, not capability evidence. Select your deployed model explicitly with WithModel. Override with `WithModel(modelName)`, or set per execution via `exec.ModelOptions.Model`.
 
 ## Implemented mappings
 
@@ -38,3 +38,5 @@ These new features also require profile knowledge for direct `Translate`. For na
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama) for the full API.
 
 The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
+
+Sync Chat requires exactly one callback; native Chat owns correlated multi-frame lifecycle. Zero/multiple sync responses fail explicitly. ErrInvalidHTTPConfig reports constructor configuration failures. Redirect/transport policy belongs to the host, so an explicit Chat call is not proof of exactly one physical HTTP request. EstimateTokens/EstimateTokensStrict use an approximate message counter, exclude tools/schema/native wrapping and do not certify a context window.

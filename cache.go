@@ -10,11 +10,14 @@ import (
 // CacheMechanism identifies request controls, not a cache hit or remote resource.
 type CacheMechanism string
 
+// CacheMode selects advisory or required admission, not retention duration.
+type CacheMode string
+
 const (
 	CacheImplicitPrefix     CacheMechanism = "implicit_prefix"
 	CacheBlockMarker        CacheMechanism = "block_marker"
-	CacheAdvisory                          = "advisory"
-	CacheRequired                          = "required"
+	CacheAdvisory           CacheMode      = "advisory"
+	CacheRequired           CacheMode      = "required"
 	CapabilityCacheImplicit                = "cache_implicit_prefix"
 	CapabilityCacheMarker                  = "cache_block_marker"
 )
@@ -28,7 +31,7 @@ const CacheOmit CacheMechanism = "omit"
 // CacheOmit has no Mode, Provider or Controls and suppresses block inheritance only.
 type CachePolicy struct {
 	Mechanism CacheMechanism `json:"mechanism"          yaml:"mechanism"`
-	Mode      string         `json:"mode,omitempty"     yaml:"mode,omitempty"`
+	Mode      CacheMode      `json:"mode,omitempty"     yaml:"mode,omitempty"`
 	Provider  string         `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Controls  JSONDocument   `json:"controls,omitempty" yaml:"controls,omitempty"`
 }

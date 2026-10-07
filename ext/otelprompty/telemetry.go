@@ -18,6 +18,8 @@ import (
 
 const tracerName = "github.com/skosovsky/prompty/ext/otelprompty"
 
+var errCallerPanic = errors.New("prompty: caller port panic")
+
 // SemanticConventionsRevision pins the Development GenAI conventions used here.
 const SemanticConventionsRevision = "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
 
@@ -127,6 +129,17 @@ func (s *operationSpan) finish(obs Observation) {
 			s.span.SetAttributes(s.cfg.projection(s.ctx, cloneObservation(obs))...)
 		}
 	})
+}
+
+// finishOnReturn is deferred directly by synchronous wrappers. The panic value
+// stays on the caller's stack and is never supplied to telemetry projection.
+func (s *operationSpan) finishOnReturn(obs *Observation) {
+	if value := recover(); value != nil {
+		obs.Err, obs.ErrorCategory = errCallerPanic, "caller_panic"
+		s.finish(*obs)
+		panic(value)
+	}
+	s.finish(*obs)
 }
 
 func requestAttributes(obs Observation) []attribute.KeyValue {

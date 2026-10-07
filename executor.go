@@ -10,6 +10,10 @@ import (
 // before returning the same error, so an outer orchestrator (e.g. retry with RetryIf) can invoke the closure again.
 // The signature matches common infra patterns such as func(context.Context) (T, error) without importing them.
 //
+// This optional helper owns one serial attempt chain. Do not call it concurrently.
+// The host controls bounds, retries, delay and eventual reconciliation; each call
+// performs one attempt and there is no internal loop or worker.
+//
 // If RawAssistantMessage on the error is nil, only the follow-up message (user feedback or tool results) is appended.
 func NewStructuredExecutor[T any](invoker Invoker, exec *PromptExecution) func(context.Context) (*T, error) {
 	if exec == nil {

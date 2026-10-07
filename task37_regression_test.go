@@ -58,7 +58,7 @@ func TestToolExecutionScopeFailsBeforeAnyHandler(t *testing.T) {
 				return NewResponse(tc.calls), nil
 			}}
 			// Act.
-			_, err := ExecuteWithToolValidation(context.Background(), invoker, exec, reg)
+			_, err := ExecuteWithTypedTools(context.Background(), invoker, exec, reg)
 			// Assert.
 			require.ErrorIs(t, err, ErrToolScope)
 			require.Zero(t, invoked)

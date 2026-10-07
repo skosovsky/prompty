@@ -26,9 +26,9 @@ func (f cacheMappingFixture) ValidateCacheControl(policy *prompty.CachePolicy) e
 func TestSelectedCacheCombinations(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
-		for _, policyMode := range []string{prompty.CacheRequired, prompty.CacheAdvisory} {
+		for _, policyMode := range []prompty.CacheMode{prompty.CacheRequired, prompty.CacheAdvisory} {
 			for _, feature := range []string{prompty.CapabilityTools, prompty.CapabilityStructuredOutput, prompty.CapabilityReasoning} {
-				t.Run(string(mode)+"/"+policyMode+"/"+feature, func(t *testing.T) {
+				t.Run(string(mode)+"/"+string(policyMode)+"/"+feature, func(t *testing.T) {
 					t.Parallel()
 					// Arrange: individual support does not establish combined support.
 					fixture := &checkedFixture{descriptor: fixtureDescriptor()}
@@ -118,9 +118,9 @@ func TestCacheMapperCannotRewriteSelectedIntent(t *testing.T) {
 func TestCacheCombinationAcrossNestedPolicies(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
-		for _, implicitMode := range []string{prompty.CacheRequired, prompty.CacheAdvisory} {
-			for _, markerMode := range []string{prompty.CacheRequired, prompty.CacheAdvisory} {
-				t.Run(string(mode)+"/"+implicitMode+"/"+markerMode, func(t *testing.T) {
+		for _, implicitMode := range []prompty.CacheMode{prompty.CacheRequired, prompty.CacheAdvisory} {
+			for _, markerMode := range []prompty.CacheMode{prompty.CacheRequired, prompty.CacheAdvisory} {
+				t.Run(string(mode)+"/"+string(implicitMode)+"/"+string(markerMode), func(t *testing.T) {
 					t.Parallel()
 					// Arrange: controls span messages/nested tool-result parts; one marker is independent.
 					fixture := &checkedFixture{descriptor: fixtureDescriptor()}
@@ -174,7 +174,7 @@ func assertNestedCacheCombination(
 	prepared *PreparedRequest[*prompty.PromptExecution],
 	err error,
 	fixture *checkedFixture,
-	implicitMode, markerMode string,
+	implicitMode, markerMode prompty.CacheMode,
 ) {
 	t.Helper()
 	require.Zero(t, fixture.calls)
@@ -189,7 +189,7 @@ func assertNestedCacheCombination(
 	decisions := prepared.Diagnostics().Cache
 	require.Len(t, decisions, 3)
 	require.Equal(t, "/messages/1/content/0/content/0/cache_policy", decisions[1].Path)
-	for index, policyMode := range []string{implicitMode, markerMode} {
+	for index, policyMode := range []prompty.CacheMode{implicitMode, markerMode} {
 		if policyMode == prompty.CacheAdvisory {
 			require.Equal(t, prompty.CacheUnsupported, decisions[index].Disposition)
 		} else {

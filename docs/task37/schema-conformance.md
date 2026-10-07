@@ -1,3 +1,5 @@
+> Historical task37 evidence; superseded by [current contracts](../README.md) and [migration](../migration.md). Original audit content below is retained; old API snippets and test counts are not current acceptance.
+
 # Schema mapping and validation evidence
 
 These are implemented mapping guarantees and local conformance fixtures, not certification of a live endpoint/account/model. Checked profile knowledge and actual mapper availability are independent gates. No provider catalog, implicit remote reference fetch or automatic repair/replay is introduced.

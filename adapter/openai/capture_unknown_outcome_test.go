@@ -87,7 +87,8 @@ func TestTransportFailureCaptureKeepsOutcomeUnknownWithoutReplay(t *testing.T) {
 			require.NotContains(t, string(terminals[0].Projection.Payload), "private")
 			var terminal map[string]any
 			require.NoError(t, json.Unmarshal(terminals[0].Projection.Payload, &terminal))
-			require.Equal(t, "transport", terminal["error_kind"])
+			// The generic classifier does not interpret provider SDK status errors as net errors.
+			require.Equal(t, "operation", terminal["error_kind"])
 			require.Nil(t, terminal["response"])
 		})
 	}
