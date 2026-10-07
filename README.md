@@ -442,6 +442,17 @@ go test -bench=BenchmarkRenderPlanExecute -benchmem ./...
 
 **Running examples locally:** `go.work` includes `./examples/basic_chat`, `./examples/git_prompts`, `./examples/funcmap_tools`, and `./examples/secure_prompt`. From the repo root run `go run ./examples/basic_chat` (or `go run ./examples/secure_prompt` for the data-isolation example). Or `cd` into an example dir and `go run .`. The secure_prompt example embeds its manifest and works from any working directory; it demonstrates both escapeXML and randomHex (randomized delimiters). Each example’s `go.mod` uses `replace` for local development; remove those when using a published module.
 
+### Release transaction contract (task45)
+
+Release preparation uses an explicit committed source in an isolated staging checkout; the user's branch/detached HEAD, index, tracked/untracked files and unrelated tags remain untouched. Only inventoried module manifests may change, and their complete diff is checked before creating the release commit. Validate publishable module graphs with GOWORK=off separately from workspace checks, including same-release intermodule dependencies. Workspace-only success is insufficient.
+
+Publish only the exact newly prepared root/submodule tag refs, preferably in one atomic push. Remotes without atomic support fail explicitly; there is no silent non-atomic fallback. Record source/release commits, intended refs and target version before publication. A failed or uncertain push requires remote-ref reconciliation: all expected refs at their intended commit means published; none means unpublished and explicitly retryable at the same version; a partial/conflicting/unknown set blocks a new version and requires explicit recovery. Never delete unrelated or potentially published refs blindly. Preparation never leaves stale version-calculation tags in the user's checkout.
+
+The release tooling targets macOS and Linux with bash, Git and the declared Go toolchain, using portable manifest edits. Current unversioned module paths support v0 releases only; crossing a major-version import boundary is rejected until module/import migration is explicitly implemented. Acceptance runs exclusively against disposable local bare remotes, including rejected publication and uncertain/reconciled outcomes; task45 does not authorize real publication.
+
+Codegen inventories all output filenames and public Go identifiers (including shared helpers and normalized property names) before writing. Reject conflicting sources with actionable identities, never successful partial output. Validate configuration version and complete input documents. Generated files are staged before publication; only explicitly inventoried generator-owned files may be replaced or cleaned up. Arbitrary consumer files remain host-owned. A valid generated consumer must compile, and repeated generation must produce an empty diff.
+
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -31,3 +31,40 @@ An error result is never silently encoded as success. New multimodal or provider
 Protocol references checked against the pinned local SDKs: [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling), [Ollama tool calling and follow-up fields](https://docs.ollama.com/capabilities/tool-calling), [Ollama thinking](https://docs.ollama.com/capabilities/thinking). Actual local HTTP/SSE/JSONL fixtures establish serialization conformance; they are not live model capability evidence.
 
 Migration: declare name-correlation support in host profiles for ID-less history. Regenerate provider tests expecting silent IsError loss or SDK number normalization. Use canonical exact args and checked invocation for provider admission; remove legacy repair/fabricated-ID assumptions.
+
+## Ownership and execution lifecycle (task45)
+
+These are target contracts for task45; the remediation acceptance record tracks implementation. Immutable publication boundaries seal JSON-domain maps/slices/bytes and preserve json.Number. Cloning is not a universal Go object-graph copier: cycles and arbitrary mutable struct/port graphs require caller-owned types and ownership policy.
+
+| Surface | Ownership and concurrency contract |
+| --- | --- |
+| ManifestSnapshot / captured RenderPlan | Captured sources are immutable. Template defaults and returned defensive template clones own independent nested JSON values; construction options reused across templates do not share mutable JSON. Parsed templates can be shared read-only. Concurrent execution requires read-only host funcs/ports. |
+| RegistryPlanInput | Binding can borrow caller map/slice values until Plan takes its snapshot. Keep payload immutable from token creation through planning; do not mutate it concurrently. History/compose owned copies do not imply universal payload cloning. |
+| PromptExecution, Response, typed recipes/checkpoints, RuntimeOptions | Mutable caller DTOs. Do not mutate during dispatch, cloning or binding; shallow generic Input/LateInput fields do not promise deep copies of arbitrary T. Explicit clone/wire/snapshot boundaries provide only their documented isolation. |
+| NewStructuredExecutor | Retained optional serial helper, one logical attempt chain and one provider attempt per call. Private owned execution/scratchpad; ValidationError/ToolCallError may append feedback. Host bounds calls/history, decides retries/backoff, and discards the closure to reset. No concurrent calls or implicit loop/scheduler. |
+| Stream | Lazy single-use, one Events consumer. Status returns owned snapshots and concurrent Close requests cancellation. Close is not a join; final status follows unwind. Close before consumption avoids dispatch. |
+| Registry/cache and injected ports | Follow the source lifecycle contract. Shared ports must support concurrent invocations; tool registration finishes before invocation. Host callbacks honor cancellation and do not re-enter the same capture session. |
+
+Cancellation is not rollback or proof of remote rejection. Known partial evidence remains available; unknown remote outcome needs host reconciliation before another mutation. Usage unknown differs from known zero. Observer callbacks impose synchronous backpressure; retention limits on observed payloads do not bound SDK/transport allocation or bytes transferred. Error strings can contain legacy structured-output previews/decoder values; capture redaction does not sanitize errors. Hosts must treat errors as sensitive until choosing an explicit redaction policy. Arbitrary host callback panics are not normal provider errors and have no blanket containment promise.
+
+## Canonical source stream event shapes (task45)
+
+A source emits the following event union. It cannot supply Result or StreamTerminal; the lifecycle alone constructs terminal Result. Identity.PartIDs aligns with frame Content, state/annotation indices refer to that frame, and source MessageID is empty. Finalizations refer to previously accepted logical parts. Every nonempty Outcome must be a valid enum on every kind; empty is unobserved except on Finish. Usage is independently validated on every kind. Diagnostics/model metadata remain observed evidence, never profile attestation. ContinuationUnavailable is a monotonic revocation flag: true on an accepted Delta, Finish or metadata Usage is retained; false never restores availability. It can accompany Start metadata too. Invalid event shape cannot install this flag.
+
+| Kind | Before provider finish | After provider finish |
+| --- | --- | --- |
+| Start | Optional informational event; repetition allowed, not a required phase. Metadata/usage only, no content/state/finalization/part annotations. | Rejected. |
+| Delta | Content, associated state/annotations/updates, finalizations and metadata/usage; finish fields can be provisional valid observations. | Rejected. |
+| Usage | Metadata/usage and ordered MessageAnnotations; no Content, ProviderState, StateUpdates, Finalizations or Annotations (`[]PartAnnotation`). | Same shape; Outcome/FinishReason must be omitted or exactly repeat the accepted finish fields. |
+| Finish | Exactly one, valid nonempty Outcome; may carry final content/state/finalizations/annotations/usage. Establishes immutable Outcome and FinishReason. | Another Finish is rejected. |
+| Terminal | Source emission rejected. | Source emission rejected. |
+
+Contradictory trailing finish fields fail atomically with ErrStreamProtocol before metadata/usage from that bad frame is installed. Prior accepted finish, usage and content remain partial evidence, with failed continuation unavailable; no replay and one terminal. Legitimate late MessageAnnotations and usage remain accepted in source order. EOF without Finish is a protocol error. Transport completion with incomplete/refusal/paused/tool_calls outcome does not become successful typed structured output.
+
+A non-nil empty TextPart is a valid no-op fragment for structured parsing, including citation-bearing frames. Nil/non-text fragments remain invalid for a text document. Only finalization classifies the whole empty document as ErrEmptyTextResponse. Item parser limits do not bound total retained response: the stream retains O(total response) data; host cancellation/transport budgets remain explicit.
+
+## Raw and observed ingress boundaries (task45)
+
+Public raw parsers reject untyped nil, typed nil and wrong SDK input types with an invalid-response typed/sentinel error rather than dereferencing them. Raw caller-constructed SDK DTOs have no source-presence attestation; their documented low-level behavior does not replace checked wire-backed validation. Observed consumed text/tool identity/usage fields are checked before trusting SDK coercion; unknown optional fields do not imply exhaustive top-level rejection. Foreign explicit Gemini/Ollama roles fail, omitted roles remain allowed by the agreed DTO contract, and unsupported Ollama images fail rather than disappearing. Sync, buffered and native modes follow the same admissible envelopes while preserving their different lifecycle guarantees.
+
+OpenAI Chat preserves distinct system/developer roles and ordering through the native role mapping, with no model-name-based collapse. Inline PDF uses a filename and reversible application/pdf base64 data URI; unimplemented inline formats fail explicitly. Media fetching/uploading and endpoint capability knowledge remain host-owned. These are wire mapping requirements, not live model certification.
