@@ -3,7 +3,7 @@ module github.com/skosovsky/prompty/adapter/gemini
 go 1.27.1
 
 require (
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.16.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 	google.golang.org/genai v1.72.0
@@ -44,5 +44,3 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..

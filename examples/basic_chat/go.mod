@@ -6,11 +6,11 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.78.0
 	github.com/ollama/ollama v0.40.0
 	github.com/openai/openai-go/v3 v3.73.0
-	github.com/skosovsky/prompty v0.0.0
-	github.com/skosovsky/prompty/adapter/anthropic v0.0.0
-	github.com/skosovsky/prompty/adapter/gemini v0.0.0
-	github.com/skosovsky/prompty/adapter/ollama v0.0.0
-	github.com/skosovsky/prompty/adapter/openai v0.0.0
+	github.com/skosovsky/prompty v0.16.0
+	github.com/skosovsky/prompty/adapter/anthropic v0.16.0
+	github.com/skosovsky/prompty/adapter/gemini v0.16.0
+	github.com/skosovsky/prompty/adapter/ollama v0.16.0
+	github.com/skosovsky/prompty/adapter/openai v0.16.0
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/genai v1.72.0
 )
@@ -66,14 +66,3 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace (
-	github.com/skosovsky/prompty => ../..
-	github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
-)
-
-replace github.com/skosovsky/prompty/adapter/anthropic => ../../adapter/anthropic
-
-replace github.com/skosovsky/prompty/adapter/gemini => ../../adapter/gemini
-
-replace github.com/skosovsky/prompty/adapter/ollama => ../../adapter/ollama
