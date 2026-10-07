@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.78.0
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.15.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
@@ -33,5 +33,3 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..

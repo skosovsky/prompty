@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/openai/openai-go/v3 v3.73.0
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.15.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
@@ -26,5 +26,3 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..
