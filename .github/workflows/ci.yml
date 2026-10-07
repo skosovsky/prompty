@@ -68,3 +68,57 @@ jobs:
           go-version-file: go.mod
       - run: make gen-check
       - run: make release-check
+
+  host-dispatch:
+    name: Host dispatch (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [local, published]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: prompty
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: prompty/go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          working-directory: prompty
+          args: --timeout=5m
+      - uses: actions/checkout@v6
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/toolsy
+          ref: 6ed0a8a6a4e664c25f32397fa63dd6f0a46cba09
+          path: toolsy
+      - uses: actions/checkout@v6
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/contexty
+          ref: 3ce901169b09b7136b126d9baa98e1875b33fa82
+          path: contexty
+      - uses: actions/checkout@v6
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/routery
+          ref: fe61308e030e163195ccdb4d548109a5a4ebdde1
+          path: routery
+      - name: Check local sources
+        if: matrix.mode == 'local'
+        working-directory: prompty
+        run: >-
+          python3 scripts/host_dispatch_checks.py local
+          --source toolsy=../toolsy --source contexty=../contexty --source routery=../routery
+          --run --report host-dispatch-local.json
+      - name: Check published dependencies
+        if: matrix.mode == 'published'
+        working-directory: prompty
+        run: python3 scripts/host_dispatch_checks.py published --run --report host-dispatch-published.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-dispatch-${{ matrix.mode }}
+          path: prompty/host-dispatch-*.json

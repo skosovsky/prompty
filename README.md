@@ -21,6 +21,8 @@ The project is split into multiple Go modules. Install only what you need:
 
 `fileregistry` and `embedregistry` are part of the core module (`github.com/skosovsky/prompty`).
 
+Full caller-owned dispatch and pure batch admission are documented in [Host tool dispatch](docs/host-tool-dispatch.md), with an [optional executable recipe](examples/host_dispatch/README.md).
+
 Tool scope, cancellation, partial results and the breaking handler/wire API are documented in [Tool execution contract](docs/tool-execution-contract.md).
 
 Deterministic context budgeting, protected turns/exchanges and the breaking extension API are documented in [Execution budgeting](ext/truncate/README.md) and [budget middleware](middleware/contextx/README.md).

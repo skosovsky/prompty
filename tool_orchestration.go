@@ -9,7 +9,8 @@ import (
 	"strings"
 )
 
-// ToolInvoker validates and executes typed tool calls.
+// ToolInvoker is a JSON-only one-shot handler port. It does not receive call IDs
+// or interpret lifecycle controls; use a full Response for host-owned dispatch.
 type ToolInvoker interface {
 	ToolValidator
 	InvokeTool(ctx context.Context, name string, argsJSON string) (json.RawMessage, error)
@@ -53,42 +54,16 @@ func ExecuteWithTypedTools(
 	if dispatchErr := errors.Join(err, ctx.Err()); dispatchErr != nil {
 		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: dispatchErr}
 	}
-	if resp == nil {
-		return workExec, errors.New("typed tools: nil response")
-	}
-	if metadataErr := ValidateResponseMetadata(resp); metadataErr != nil {
-		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: metadataErr}
-	}
-	if resp.Outcome == OutcomeRefusal || resp.Outcome == OutcomeIncomplete || resp.Outcome == OutcomePaused {
-		return workExec, &ToolDispatchError{
-			Response: cloneResponse(resp),
-			Err:      &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason},
-		}
-	}
-	if scopeErr := validateResponseToolScope(workExec, resp); scopeErr != nil {
-		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: scopeErr}
-	}
-
-	assistantMsg, err := resp.AssistantMessage()
+	toolCalls, err := admitToolCalls(ctx, workExec, cloneResponse(resp), tools, schemas)
 	if err != nil {
-		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: err}
+		return workExec, err
 	}
-	toolCalls, err := toolCallsFromContent(resp.Content)
+	assistantMsg, err := resp.AssistantMessage()
 	if err != nil {
 		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: err}
 	}
 	if len(toolCalls) == 0 {
 		return workExec.AddMessage(assistantMsg), ctx.Err()
-	}
-
-	callErrs, batchErr := validateToolBatch(toolCalls, schemas, tools)
-	if batchErr != nil {
-		return workExec, &ToolCallError{
-			RawAssistantMessage: &assistantMsg,
-			ToolResults:         toolValidationResults(toolCalls, callErrs),
-			Err:                 errors.Join(batchErr, ctx.Err()),
-			Response:            cloneResponse(resp),
-		}
 	}
 
 	return invokeToolBatch(ctx, workExec.AddMessage(assistantMsg), toolCalls, tools)

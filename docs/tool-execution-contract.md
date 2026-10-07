@@ -26,3 +26,12 @@ A failed model call may return a known response. `ToolDispatchError.Response` re
 Caller-supplied schema compilers receive isolated source documents at tool/structured helper boundaries. Sources are read-only: a detected contract change during successful compilation is rejected before dispatch. This prevents compiler normalization callbacks from altering a previously checked execution scope. Cancellation before structured-stream dispatch returns its cause without constructing a downstream source handle.
 
 Task45 clean break removes the unused `ToolHandler` interface and the misleading `ExecuteWithToolValidation` alias/`ErrToolInvokerRequired`. Use `ExecuteWithTypedTools` for one model call plus possible handler side effects. Pure validation uses `ToolValidator.ValidateToolCall` and never invokes a handler. The private unused name adapter is removed. Optional typed registry helpers retain the constructor and batch-validation contracts; runtime approval/auth/retry policy remains in the host.
+
+## Full dispatch and pure admission
+
+The JSON-only helper does not pass native call IDs to handlers and does not act on
+caller lifecycle controls. A caller needing correlation inside execution, approval
+or richer outcomes uses the full Response and a host dispatcher. `AdmitToolCalls`
+provides the same whole-batch original-schema/scope/correlation checks without
+invoking any provider or handler. See [Host tool dispatch](host-tool-dispatch.md)
+for inputs, errors, mapping, migration and the executable optional recipe.

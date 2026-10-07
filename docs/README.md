@@ -5,6 +5,7 @@ Use the root contracts below as the current public specification. `docs/task37/*
 | Contract | Boundary |
 | --- | --- |
 | [Schema/data](schema-data-contract.md) | BYOT, presence, numbers, pure schema ports and supported projection |
+| [Host tool dispatch](host-tool-dispatch.md) | Pure admission, caller correlation, context mapping and cleanup recipes |
 | [Tool execution](tool-execution-contract.md) | Scope, one-shot batch preflight, cancellation and side effects |
 | [Provider exchange](provider-exchange-contract.md) | Checked/raw execution, frame shape, outcomes, state, capture and lifecycle |
 | [Source snapshots](source-snapshot-contract.md) | Materialization ownership, verified generation, cache/HTTP/Git cancellation |
