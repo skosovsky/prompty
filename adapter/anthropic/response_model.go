@@ -13,7 +13,7 @@ import (
 // metadata must come from a genuine source string, not that convenience value.
 func observedMessageModel(message *anthropic.Message) (string, error) {
 	if message.RawJSON() == "" {
-		return string(message.Model), nil
+		return message.Model, nil
 	}
 	raw := []byte(message.RawJSON())
 	if !uniqueSyntheticJSON(raw) {

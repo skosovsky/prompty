@@ -1,4 +1,4 @@
-package adapter_test
+package main_test
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 
 func composedCachePolicyExecution(t *testing.T) *prompty.PromptExecution {
 	t.Helper()
-	dir := filepath.Join("..", "fileregistry", "testdata", "prompts")
+	dir := filepath.Join("..", "..", "fileregistry", "testdata", "prompts")
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
 	require.NoError(t, err)
 

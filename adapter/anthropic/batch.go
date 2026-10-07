@@ -68,7 +68,7 @@ func (b *MessageBatches) itemExecution(
 		working.ModelOptions = &prompty.ModelOptions{}
 	}
 	if working.ModelOptions.Model == "" {
-		working.ModelOptions.Model = string(b.base.defaultModel)
+		working.ModelOptions.Model = b.base.defaultModel
 	}
 	working.Requirements.Capabilities = append(working.Requirements.Capabilities, capability)
 	return working, nil
@@ -266,15 +266,18 @@ func (b *MessageBatches) observe(
 	source := new(batchSource)
 	var raw *sdk.MessageBatch
 	if cancel {
+		var params sdk.MessageBatchCancelParams
 		raw, err = b.base.client.Messages.Batches.Cancel(
 			ctx,
 			handle.ProviderID,
+			params,
 			option.WithMaxRetries(0),
 			option.WithMiddleware(source.observe),
 		)
 	} else {
+		var params sdk.MessageBatchGetParams
 		raw, err = b.base.client.Messages.Batches.Get(
-			ctx, handle.ProviderID, option.WithMaxRetries(0), option.WithMiddleware(source.observe),
+			ctx, handle.ProviderID, params, option.WithMaxRetries(0), option.WithMiddleware(source.observe),
 		)
 	}
 	providerErr := capture.Provider(ctx, source.data, source.status, source.complete)

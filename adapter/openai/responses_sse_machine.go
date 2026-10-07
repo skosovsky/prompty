@@ -242,6 +242,7 @@ func (s *responseSSEMachine) addItem(event responses.ResponseStreamEventUnion) (
 		content = prompty.ReasoningPart{Text: text}
 		item.parts = []*responseSSEPart{{id: event.Item.ID + ":reasoning", kind: "reasoning", text: text}}
 	case "function_call":
+		function := event.Item.AsFunctionCall()
 		if event.Item.CallID == "" || event.Item.Name == "" || !event.Item.JSON.Arguments.Valid() {
 			return nil, prompty.ErrStreamProtocol
 		}
@@ -251,10 +252,10 @@ func (s *responseSSEMachine) addItem(event responses.ResponseStreamEventUnion) (
 		content = prompty.ToolCallPart{
 			ID:        event.Item.CallID,
 			Name:      event.Item.Name,
-			ArgsChunk: event.Item.Arguments,
+			ArgsChunk: function.Arguments,
 		}
 		item.parts = []*responseSSEPart{
-			{id: event.Item.ID + ":function", kind: "function_call", text: event.Item.Arguments},
+			{id: event.Item.ID + ":function", kind: "function_call", text: function.Arguments},
 		}
 	case "web_search_call", "file_search_call":
 		kind := HostedWebSearch
@@ -382,6 +383,20 @@ func (s *responseSSEMachine) delta(event responses.ResponseStreamEventUnion) ([]
 	return []*prompty.ResponseChunk{s.partDelta(part, content)}, nil
 }
 
+// Optional legacy name fields remain source-checked even when SDK unions omit them.
+func responseSSENameMatches(source, expected string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(source), &fields) != nil {
+		return false
+	}
+	raw, present := fields["name"]
+	if !present {
+		return true
+	}
+	var name string
+	return json.Unmarshal(raw, &name) == nil && name == expected
+}
+
 func (s *responseSSEMachine) checkDone(event responses.ResponseStreamEventUnion) error {
 	item, part, err := s.part(event)
 	if err != nil {
@@ -391,7 +406,7 @@ func (s *responseSSEMachine) checkDone(event responses.ResponseStreamEventUnion)
 	switch event.Type {
 	case "response.function_call_arguments.done":
 		if part.kind != "function_call" || !event.JSON.Arguments.Valid() ||
-			(event.JSON.Name.Valid() && event.Name != item.initial.Name) {
+			!responseSSENameMatches(event.RawJSON(), item.initial.Name) {
 			return prompty.ErrStreamProtocol
 		}
 		text = event.Arguments

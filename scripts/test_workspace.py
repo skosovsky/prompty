@@ -12,11 +12,11 @@ class WorkspaceInventoryTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(prefix='prompty-workspace-')
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
-        (root / 'go.work').write_text('go 1.26.3\nuse (\n' + '\n'.join(use) + '\n)\n')
+        (root / 'go.work').write_text('go 1.27.1\nuse (\n' + '\n'.join(use) + '\n)\n')
         for module in tracked:
             target = root / module
             target.mkdir(parents=True, exist_ok=True)
-            (target / 'go.mod').write_text('module example.invalid/fixture\ngo 1.26.3\n')
+            (target / 'go.mod').write_text('module example.invalid/fixture\ngo 1.27.1\n')
         subprocess.run(['git', 'init', '-q', str(root)], check=True)
         subprocess.run(['git', 'add', '.'], cwd=root, check=True)
         previous = workspace.ROOT

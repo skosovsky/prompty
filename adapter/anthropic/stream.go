@@ -23,7 +23,7 @@ func (a *Adapter) StreamEvents(
 ) iter.Seq2[*prompty.ResponseChunk, error] {
 	destination := prompty.ProfileIdentity{Provider: "anthropic", Endpoint: a.endpoint}
 	if req != nil {
-		destination.Model = string(req.Model)
+		destination.Model = req.Model
 	}
 	return a.StreamEventsForProfile(ctx, req, destination)
 }
@@ -106,7 +106,7 @@ func (s *messageStreamState) accept(event anthropic.MessageStreamEventUnion) (*p
 		}
 		s.started = true
 		usage, err := s.mergeUsage(event.Message.Usage.RawJSON())
-		return &prompty.ResponseChunk{Kind: prompty.StreamStart, Model: string(event.Message.Model), Usage: usage}, err
+		return &prompty.ResponseChunk{Kind: prompty.StreamStart, Model: event.Message.Model, Usage: usage}, err
 	}
 	if !s.started {
 		return nil, prompty.ErrStreamProtocol

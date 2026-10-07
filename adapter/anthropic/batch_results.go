@@ -121,9 +121,11 @@ func (b *MessageBatches) Results(
 	}
 	capture.MarkDispatched()
 	source := new(batchResultsSource)
+	var params sdk.MessageBatchResultsParams
 	stream := b.base.client.Messages.Batches.ResultsStreaming(
 		ctx,
 		handle.ProviderID,
+		params,
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
@@ -241,7 +243,7 @@ func (b *MessageBatches) parseResult(
 		var message sdk.Message
 		if json.Unmarshal(resultFields["message"], &message) != nil || !message.JSON.Model.Valid() ||
 			!message.JSON.ID.Valid() || message.ID == "" || message.Role != "assistant" || message.Type != "message" ||
-			string(message.Model) != item.Binding.Identity.Model {
+			message.Model != item.Binding.Identity.Model {
 			item.ErrorKind = "invalid_message"
 			return item
 		}

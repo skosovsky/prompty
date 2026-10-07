@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/skosovsky/prompty"
@@ -165,7 +166,9 @@ func (h *responseToolHistory) resultInput(
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, responses.ResponseInputItemParamOfFunctionCallOutput(result.ToolCallID, native))
+		output := responses.ResponseInputItemParamOfFunctionCallOutput(native)
+		output.OfFunctionCallOutput.CallID = param.NewOpt(result.ToolCallID)
+		out = append(out, output)
 		h.results[result.ToolCallID] = true
 	}
 	return out, nil

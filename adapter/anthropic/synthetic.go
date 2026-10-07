@@ -181,7 +181,7 @@ func (a *SyntheticOutputAdapter) ParseResponse(raw *SyntheticResponse) (*prompty
 	desc := a.RuntimeDescriptor()
 	destination := prompty.ProfileIdentity{Provider: desc.Name, Endpoint: desc.Endpoint, Model: desc.DefaultModel}
 	if raw != nil && raw.message != nil {
-		destination.Model = string(raw.message.Model)
+		destination.Model = raw.message.Model
 	}
 	return a.ParseResponseForProfile(raw, destination)
 }

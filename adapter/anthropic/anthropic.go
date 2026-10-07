@@ -42,7 +42,7 @@ func WithClient(c *anthropic.Client) Option {
 
 // New returns an Adapter with a default model. Options can override the default model.
 func New(opts ...Option) *Adapter {
-	a := &Adapter{defaultModel: anthropic.ModelClaudeSonnet4_5_20250929}
+	a := &Adapter{defaultModel: "claude-sonnet-4-5-20250929"}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -56,7 +56,7 @@ func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
 		endpoint = "https://api.anthropic.com"
 	}
 	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
-		Name: "anthropic", Endpoint: endpoint, DefaultModel: string(a.defaultModel),
+		Name: "anthropic", Endpoint: endpoint, DefaultModel: a.defaultModel,
 		Profiles:          a.profiles,
 		ReasoningSettings: []string{"thinking_mode", "thinking_budget", "thinking_visibility", "reasoning_effort"},
 		HostedToolCapabilities: map[string]string{HostedWebSearch: prompty.CapabilityHostedWebSearch,
@@ -117,7 +117,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	}
 	if exec.ModelOptions != nil {
 		if exec.ModelOptions.Model != "" {
-			params.Model = anthropic.Model(exec.ModelOptions.Model)
+			params.Model = exec.ModelOptions.Model
 		}
 		if exec.ModelOptions.MaxTokens != nil {
 			params.MaxTokens = *exec.ModelOptions.MaxTokens

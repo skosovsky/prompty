@@ -28,7 +28,6 @@ func TestUnsupportedToolSchemaFailsBeforeDispatch(t *testing.T) {
 	for _, tt := range []struct{ name, schema, pointer string }{
 		{"root keyword", `{"type":"object","additionalProperties":false}`, "/additionalProperties"},
 		{"nested minimum", `{"type":"object","properties":{"x":{"type":"integer","minimum":10}}}`, "/properties/x/minimum"},
-		{"nested required", `{"type":"object","properties":{"x":{"type":"object","required":["a"]}}}`, "/properties/x/required"},
 		{"enum precision", `{"type":"object","properties":{"x":{"type":"integer","enum":[9007199254740993]}}}`, "/properties/x/enum/0"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -116,4 +115,17 @@ func TestForcedToolOverrideCannotCreateOllamaMapping(t *testing.T) {
 			require.Len(t, exec.Messages, 1)
 		})
 	}
+}
+
+func TestNestedRequiredToolSchemaSurvivesSDK(t *testing.T) {
+	t.Parallel()
+	// Arrange: the upgraded SDK now retains nested required declarations.
+	source := prompty.JSONDocument(`{"type":"object","properties":{"x":{"type":"object","required":["a"]}}}`)
+	// Act: use the same checked round-trip mapper as provider translation.
+	params, err := decodeToolSchema(source)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(params)
+	// Assert: original required semantics survive the actual SDK wire value.
+	require.NoError(t, err)
+	require.JSONEq(t, string(source), string(encoded))
 }

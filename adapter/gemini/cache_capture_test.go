@@ -146,7 +146,7 @@ func TestCacheCaptureDurableAckAndOptionCardinality(t *testing.T) {
 	var calls atomic.Int32
 	server := cacheCaptureServer(t, &calls)
 	manager := cacheResourceFixtureManager(t, server)
-	sink := &cacheFalseAckSink{cacheCaptureSink: cacheCaptureSink{durable: true}}
+	sink := &cacheFalseAckSink{durable: true}
 	exec := captureCacheExecution(&sink.cacheCaptureSink)
 	exec.Capture.Sink = sink
 	exec.Requirements.Capture.Durable = true

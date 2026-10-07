@@ -71,7 +71,7 @@ func TestGeneratedConsumerPreservesPresence(t *testing.T) {
 			filepath.Join(directory, "go.mod"),
 			[]byte(
 				fmt.Sprintf(
-					"module consumer\n\ngo 1.26.3\n\nrequire github.com/skosovsky/prompty v0.0.0\nreplace github.com/skosovsky/prompty => %s\n",
+					"module consumer\n\ngo 1.27.1\n\nrequire github.com/skosovsky/prompty v0.0.0\nreplace github.com/skosovsky/prompty => %s\n",
 					fmt.Sprintf("%q", root),
 				),
 			),

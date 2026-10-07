@@ -366,7 +366,7 @@ func TestSchemaDominanceTagAndDepthControls(t *testing.T) {
 		struct {
 			schemaDeeperBad
 			schemaTaggedWinner
-		}{schemaTaggedWinner: schemaTaggedWinner{Value: "ok"}},
+		}{Value: "ok"},
 		struct {
 			Value   string   `json:"Value"`
 			Ignored chan int `json:"-"`

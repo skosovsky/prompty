@@ -1,4 +1,4 @@
-package adapter_test
+package main_test
 
 import (
 	"context"
@@ -72,7 +72,7 @@ func TestParsedProviderOutcomeCannotBecomeStructuredSuccess(t *testing.T) {
 		}, prompty.OutcomeRefusal},
 		{"ollama incomplete", func() (*prompty.Response, error) {
 			return ollamaadapter.New().ParseResponse(&api.ChatResponse{Done: true, DoneReason: "length",
-				Message: api.Message{Content: "{}"}, Metrics: api.Metrics{PromptEvalCount: 5, EvalCount: 2}})
+				Message: api.Message{Content: "{}"}, PromptEvalCount: 5, EvalCount: 2})
 		}, prompty.OutcomeIncomplete},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {

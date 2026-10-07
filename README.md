@@ -29,6 +29,8 @@ Deterministic context budgeting, protected turns/exchanges and the breaking exte
 
 Start with your own input type, a template and the checked adapter client. No generated package or manifest is required. The [complete example](examples/basic_chat/direct/main.go) is tested with a local SDK HTTP fixture; running it against a provider requires your key and chosen model.
 
+Requires Go 1.27.1 or newer.
+
 ```bash
 OPENAI_MODEL=<host-selected-model> OPENAI_API_KEY=<key> go run ./examples/basic_chat/direct
 ```

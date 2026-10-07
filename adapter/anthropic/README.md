@@ -68,7 +68,7 @@ go get github.com/skosovsky/prompty/adapter/anthropic
 ## Configuration
 
 - **API key:** configure the Anthropic SDK and inject it with `WithClient`. Checked `adapter.NewClient` performs preflight, translation, SDK execution and parsing. Direct SDK primitives do not supply checked guarantees.
-- **Default model:** `New()` uses a default Claude model. Override with `WithModel(anthropic.Model(...))`, or set per execution via `exec.ModelOptions.Model`.
+- **Default model:** `New()` retains the convenience default `claude-sonnet-4-5-20250929`; SDK updates do not select a different model. Choose the deployed model explicitly with `WithModel(...)`, or set per execution via `exec.ModelOptions.Model`.
 - **Prompt caching:** use `ChatMessage.CachePolicy` and optional part-level `CachePolicy`. Message-level cache is used by default; part-level cache overrides it. Anthropic currently supports `mechanism: block_marker`. Example in a manifest:
 
 ```yaml

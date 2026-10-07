@@ -35,7 +35,7 @@ func applyThinkingSettings(params *anthropic.MessageNewParams, settings map[stri
 		}
 		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(value)
 	case "adaptive":
-		value := anthropic.NewThinkingConfigAdaptiveParam()
+		var value anthropic.ThinkingConfigAdaptiveParam
 		params.Thinking.OfAdaptive = &value
 	case "disabled":
 		if displaySet {

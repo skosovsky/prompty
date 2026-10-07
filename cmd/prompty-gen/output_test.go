@@ -167,7 +167,7 @@ func TestValidGeneratedConsumerCompiles(t *testing.T) {
 		t,
 		filepath.Join(out, "go.mod"),
 		fmt.Sprintf(
-			"module fixture\n\ngo 1.26.3\nrequire github.com/skosovsky/prompty v0.0.0\nreplace github.com/skosovsky/prompty => %q\n",
+			"module fixture\n\ngo 1.27.1\nrequire github.com/skosovsky/prompty v0.0.0\nreplace github.com/skosovsky/prompty => %q\n",
 			root,
 		),
 	)

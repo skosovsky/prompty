@@ -2,7 +2,7 @@
 
 ## Gemini arguments and continuation
 
-The checked generation paths use google.golang.org/genai v1.48.0. Its `deepMarshal` converts interface JSON numbers to float64. The adapter observes the original HTTP response and native SSE event source; batch inline/JSONL parsing likewise uses original JSON with `UseNumber`. Signed and unsigned complete calls share the exact source restoration and SDK-shape checks. Source ordinals, part count, signature bytes, scope, partial-state completion and canonical binding remain enforced. Unknown or incomplete precision fails explicitly; incremental args remain provisional until completion.
+The checked generation paths use google.golang.org/genai v1.72.0. Its `deepMarshal` converts interface JSON numbers to float64. The adapter observes the original HTTP response and native SSE event source; batch inline/JSONL parsing likewise uses original JSON with `UseNumber`. Signed and unsigned complete calls share the exact source restoration and SDK-shape checks. Source ordinals, part count, signature bytes, scope, partial-state completion and canonical binding remain enforced. Unknown or incomplete precision fails explicitly; incremental args remain provisional until completion.
 
 Before the final SDK JSON encoder, existing sync, buffered/native streaming, inline/file batch submission and cache creation restore checked native contents through the SDK `ExtrasRequestProvider` hook. This preserves nested integer/decimal/exponent values and explicit empty argument objects. These encoding guarantees apply to adapter-owned dispatch. A host calling the raw SDK directly with translated DTOs owns its subsequent serialization pipeline. The native SDK must still be able to perform its intermediate conversion: values outside its finite numeric range (for example `1e1000`) are rejected rather than rounded, repaired or retried. Exact content is derived from the translated request; an arbitrary host callback cannot replace it later in the hook chain.
 
@@ -43,7 +43,7 @@ Checked execution derives `tool_name_correlation` from ID-less call/result histo
 
 ## Reasoning and result semantics
 
-Ollama v0.17.4 continuation maps a contiguous canonical reasoning prefix to `Message.Thinking`. Multiple adjacent reasoning parts concatenate in order. Ordinary text remains in `Content`; subsequent reasoning after another part is explicitly unsupported because one native field cannot preserve that interleaving. The ordinary sync/buffered/native response → wire → next HTTP request paths preserve thinking without automatically logging it. Explicit host capture policies remain independent.
+Ollama v0.40.0 continuation maps a contiguous canonical reasoning prefix to `Message.Thinking`. Multiple adjacent reasoning parts concatenate in order. Ordinary text remains in `Content`; subsequent reasoning after another part is explicitly unsupported because one native field cannot preserve that interleaving. The ordinary sync/buffered/native response → wire → next HTTP request paths preserve thinking without automatically logging it. Explicit host capture policies remain independent.
 
 | Existing result path | IsError | Content shapes |
 |---|---|---|

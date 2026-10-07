@@ -1,4 +1,4 @@
-package adapter_test
+package main_test
 
 import (
 	"testing"

@@ -57,7 +57,7 @@ func TestResponsesCreateStreamRejectsBeforeIO(t *testing.T) {
 
 func TestResponsesCreateStreamRejectsContradictorySSE(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"summary done", "text done", "citation", "late summary", "invalid original arguments", "unknown event"} {
+	for _, scenario := range []string{"summary done", "text done", "citation", "late summary", "invalid original arguments", "unknown event", "changed function name"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			// Arrange: malicious provider events cannot replace accepted fragments/state.
@@ -84,6 +84,10 @@ func TestResponsesCreateStreamRejectsContradictorySSE(t *testing.T) {
 				case "invalid original arguments":
 					events[index] = strings.ReplaceAll(event, "9007199254740993", "1")
 					want = prompty.ErrSchemaMismatch
+				case "changed function name":
+					if strings.Contains(event, `"type":"response.function_call_arguments.done"`) {
+						events[index] = strings.ReplaceAll(event, `"name":"lookup"`, `"name":"changed"`)
+					}
 				case "unknown event":
 					if strings.Contains(event, `"type":"response.output_text.done"`) {
 						events[index] = strings.ReplaceAll(
