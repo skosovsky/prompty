@@ -396,6 +396,9 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 	if resp == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
+	if err := validateOllamaMessage(resp.Message); err != nil {
+		return nil, err
+	}
 	msg := &resp.Message
 	var out []prompty.ContentPart
 	if msg.Thinking != "" {
@@ -459,8 +462,11 @@ func usageFromOllama(resp *api.ChatResponse) (prompty.Usage, error) {
 // snapshots in Args, never concatenated JSON in ArgsChunk.
 func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) {
 	chunk, ok := rawChunk.(*api.ChatResponse)
-	if !ok {
+	if !ok || chunk == nil {
 		return nil, adapter.ErrInvalidResponse
+	}
+	if err := validateOllamaMessage(chunk.Message); err != nil {
+		return nil, err
 	}
 	var out []prompty.ContentPart
 	if chunk.Message.Thinking != "" {
@@ -578,4 +584,14 @@ func partialOllamaFailure(raw *api.ChatResponse, parts []prompty.ContentPart, ca
 	usage, err := usageFromOllama(raw)
 	response.Usage = usage
 	return response, errors.Join(cause, err)
+}
+
+func validateOllamaMessage(message api.Message) error {
+	if message.Role != "" && message.Role != "assistant" {
+		return adapter.ErrInvalidResponse
+	}
+	if len(message.Images) != 0 {
+		return adapter.ErrUnsupportedContentType
+	}
+	return nil
 }

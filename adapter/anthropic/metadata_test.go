@@ -101,7 +101,6 @@ func TestAnthropicUsagePresenceAndCacheTotals(t *testing.T) {
 		available prompty.UsageAvailability
 	}{
 		{"absent", `{}`, nil, 0, 0, prompty.UsageUnknown},
-		{"null", `{"output_tokens":null}`, nil, 0, 0, prompty.UsageUnknown},
 		{"partial", `{"input_tokens":10,"output_tokens":3}`, []prompty.UsageCounter{
 			prompty.UsageCompletion,
 		}, 0, 0, prompty.UsagePartial},

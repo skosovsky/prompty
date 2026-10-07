@@ -79,9 +79,39 @@ Stage 3 accepted; commit: `fix: schema fidelity`.
 
 Complete appendix design-item disposition remains stage6, except S3's already explicit stage1 hardening decision.
 
+## Stage 4 — streams/adapters checklist (accepted)
+
+| ID | Requirement / proving evidence |
+| --- | --- |
+| SA1 (S-F01) | Non-nil empty first/middle/last text fragments are no-ops during native/buffered structured parsing; genuinely empty whole document fails at finalization. Nil/non-text parts still reject. Actual Anthropic local SDK/SSE empty block-start/citation frames preserve annotations, provisional items, one terminal/capture and transport cleanup. |
+| SA2 (S-F02) | Accepted finish outcome/reason are immutable. Late usage may omit or exactly repeat them and may carry ordered MessageAnnotations. Contradictory/unknown outcomes fail atomically; accepted finish and prior usage/prefix survive. Incomplete/refusal/paused/tool-call outcomes never become structured success via metadata. One terminal/capture failure, continuation revoked. |
+| SA3 | Central accepted source event shape follows stage1 stream contract: optional/repeated metadata Start, lifecycle-owned Result/Terminal, per-kind content/finalization/state/annotation constraints, enum validation on every event, monotonic ContinuationUnavailable and no partial installation of invalid frames. |
+| SA4 (OA01) | OpenAI Chat distinct system/developer roles preserve exact roles/order in actual local SDK HTTP body; input remains unchanged. Checked supported-profile control passes without hidden role mapping. |
+| SA5 (OA02) | Inline Chat PDF has filename plus exact reversible application/pdf data URI consistent with Responses. Actual SDK local request fixture; unsupported/malformed media reject before dispatch; no implicit fetch/upload. |
+| SA6 (AN01) | Source-backed Anthropic sync validates consumed text, usage, tool IDs/names before SDK coercion, reusing narrow native validation where equivalent. Checked local HTTP plus reused buffered/batch parsers reject malformed source with honest partial/no successful continuation. Unknown optional source fields and valid raw-free typed fixtures remain supported. |
+| SA7 (GO-F01) | Gemini/Ollama sync, buffered/native and raw decoder roles/content agree: explicit foreign role rejects, assistant/model/contractual omitted-role controls succeed; Ollama output images reject rather than disappear. Foreign-role tool payload cannot reach local handlers. |
+| SA8 (GO-F02) | Public raw Ollama stream decoder rejects untyped nil, typed nil and wrong type with ErrInvalidResponse without panic. Valid/empty typed chunk controls keep documented behavior. |
+| SA9 | AAA public wire/partial/terminal parity regressions and touched root/provider module race+lint PASS; independent completeness 100% and correctness PASS before stage commit. Offline local SDK fixtures only, no live conformance claim. |
+
+Accepted implementation: canonical source event-shape validation and immutable finish guard before accumulation; empty fragments are parser no-ops; Chat mapping preserves native developer role and all input message boundaries with PDF filename/data URI; shared Ollama/Gemini role/content checks and raw typed-nil rejection; source-backed Anthropic consumed text/tool identities/usage checked before SDK coercion, retaining independently valid usage counters and accepted canonical prefix.
+
+Current evidence:
+
+- Root `go test -race -timeout=90s ./...`: PASS, including remoteregistry (1.691s). Log `/tmp/prompty-task45-stage4-root-race.log`. A prior run exposed a cancellation-test scheduling race: its 10ms deadline could expire before the fetch worker started, leaving the test waiting forever. The test now coordinates worker start, waiter admission, cancellation and fetch release with channels; no registry production changes are included in this stage.
+- Latest core + Anthropic `go test -race -timeout=90s . ./adapter/anthropic/...`: PASS; log `/tmp/prompty-task45-stage4-core-an-race.log`. Permanent tests cover authoritative final outcomes, deferred provisional content, immutable finish/reason, atomic invalid-frame rejection, genuine empty documents, and actual Anthropic SDK SSE/buffered citation and empty-start frames with one capture/terminal/transport close. Consumed-source fixtures cover sync, buffered, native and batch paths with valid controls.
+- Gemini + Ollama module race: PASS; log `/tmp/prompty-task45-stage4-go-ol-race.log`. Checked local HTTP tests cover sync/buffered/native valid and foreign roles, omitted-role controls, unsupported Ollama images, raw nil shapes and real tool handlers. Foreign-role calls do not invoke handlers; admitted controls do.
+- OpenAI module race: PASS; log `/tmp/prompty-task45-stage4-oa-race.log`. Checked local SDK HTTP verifies exact system/developer order, unchanged input and reversible PDF filename/data URI; unsupported or malformed media never dispatch.
+- Root/OpenAI/Ollama/Gemini lint: PASS, 0 issues. Anthropic module lint: PASS, 0 issues; `/tmp/prompty-task45-stage4-anthropic-module-lint.log`. Other logs `/tmp/prompty-task45-stage4-<module>-lint.log`.
+- `/root/stage4_completeness`: 100%, SA1–SA9 closed; independent full race run core/AN/Gemini/Ollama/OpenAI PASS and five lint logs inspected.
+- `/root/stage4_correctness`: PASS, no confirmed open findings; both prior adversarial probes pass. Independent race runs core/adapter/four providers and diff check PASS.
+- Final `git diff --check`: PASS. All fixtures use local transports; no live provider conformance is claimed.
+
+Stage 4 accepted; commit: `fix: stream fidelity`.
+
+Complete remaining appendix design decisions stay stage6; this stage enforces the already specified source/frame contracts and mandatory defects.
+
 ## Remaining stages (strict order)
 
-4. S-F01–02, OA01–02, AN01, GO-F01–02; wire/parity/partial/terminal regressions.
 5. R01–04, O-F01; channel-based races and evidence-based cancellation.
 6. All appendix design items with leave/change/remove, rationale and spec/test reference; API/docs/examples/migration/CI and performance evidence where needed.
 

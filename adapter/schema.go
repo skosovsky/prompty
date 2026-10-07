@@ -125,6 +125,9 @@ func validateCompiledOutput(schema *prompty.CompiledProviderSchema, parts []prom
 		}
 		text.WriteString(t.Text)
 	}
+	if strings.TrimSpace(text.String()) == "" {
+		return prompty.ErrEmptyTextResponse
+	}
 	return schema.ValidateOriginal(prompty.JSONDocument(text.String()))
 }
 

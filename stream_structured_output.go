@@ -76,19 +76,31 @@ func StreamStructuredOutput[T any](
 		}
 		defer func() { _ = stream.Close() }()
 		var pending []T
-		skipContent := false
+		var deferredParts []ContentPart
+		provisionalOutcome := false
 		if bindErr := stream.attachValidation(func(chunk *ResponseChunk) error {
 			pending = nil
-			if chunk.Outcome != "" && chunk.Outcome != OutcomeCompleted {
-				skipContent = true
+			if chunk.Kind == StreamFinish && chunk.Outcome != OutcomeCompleted {
+				return nil // authoritative outcome is classified at finalization
 			}
-			if skipContent {
-				return nil // retain subsequent usage; failure is classified at finalization
+			if chunk.Kind != StreamFinish && chunk.Outcome != "" && chunk.Outcome != OutcomeCompleted {
+				provisionalOutcome = true
 			}
-			if len(chunk.Content) == 0 {
+			// A provisional refusal/incomplete frame can contain non-JSON text.
+			// Retain it until Finish chooses between outcome failure and JSON parsing.
+			if provisionalOutcome && chunk.Kind != StreamFinish {
+				deferredParts = append(deferredParts, chunk.Content...)
 				return nil
 			}
-			texts, textErr := strictTextPartsFromContent(chunk.Content)
+			parts := chunk.Content
+			if len(deferredParts) > 0 {
+				parts = append(deferredParts, parts...)
+				deferredParts = nil
+			}
+			if len(parts) == 0 {
+				return nil
+			}
+			texts, textErr := strictTextPartsFromContent(parts)
 			if textErr != nil {
 				return textErr
 			}
@@ -130,11 +142,7 @@ func StreamStructuredOutput[T any](
 			if chunk.Kind == StreamTerminal {
 				continue
 			}
-			// Role/start/finish and usage-only chunks carry no content. They are
-			// protocol events, not evidence of an empty model response.
-			if len(chunk.Content) == 0 {
-				continue
-			}
+			// Finish can release provisional content even without new frame Content.
 			for _, item := range pending {
 				if !yield(item, nil) {
 					cancel()
@@ -220,9 +228,6 @@ func strictTextPartsFromContent(parts []ContentPart) ([]string, error) {
 		default:
 			return nil, &NonTextResponseError{PartKinds: []string{contentPartKind(part)}}
 		}
-	}
-	if len(out) == 0 {
-		return nil, ErrEmptyTextResponse
 	}
 	return out, nil
 }

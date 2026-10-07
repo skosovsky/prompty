@@ -361,43 +361,61 @@ func TestCachedRegistry_Plan_ConcurrentDedupe(t *testing.T) {
 	assert.LessOrEqual(t, m.called, workers+5, "inflight dedupe limits plan fetches")
 }
 
+// Done is evaluated after the caller has joined the shared flight. The signal
+// lets the test cancel another waiter only after both are admitted.
+type admittedWaiterContext struct {
+	context.Context
+
+	once     sync.Once
+	admitted chan struct{}
+}
+
+func (c *admittedWaiterContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.admitted) })
+	return c.Context.Done()
+}
+
 func TestCachedRegistry_Plan_CallerCancellationIsolation(t *testing.T) {
 	t.Parallel()
+	// Arrange: release the fetch only after both waiters join and the first cancels.
 	manifestJSON := `{"id":"ctx_isolation","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
-	started := make(chan struct{})
+	started, release := make(chan struct{}), make(chan struct{})
 	var startOnce sync.Once
-	m := &mockFetcher{
-		fetch: func(ctx context.Context, _ string) ([]byte, error) {
-			startOnce.Do(func() { close(started) })
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(40 * time.Millisecond):
-				return []byte(manifestJSON), nil
-			}
-		},
-	}
+	m := &mockFetcher{fetch: func(ctx context.Context, _ string) ([]byte, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return []byte(manifestJSON), nil
+		}
+	}}
 	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
-
-	firstCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	firstCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	firstErr := make(chan error, 1)
-	go func() {
-		_, getErr := templateFromPlan(firstCtx, reg, "ctx_isolation")
-		firstErr <- getErr
-	}()
-
+	go func() { _, getErr := templateFromPlan(firstCtx, reg, "ctx_isolation"); firstErr <- getErr }()
 	<-started
-	tpl, err := templateFromPlan(context.Background(), reg, "ctx_isolation")
-	require.NoError(t, err)
-	require.NotNil(t, tpl)
-	assert.Equal(t, "ctx_isolation", tpl.Metadata.ID)
-
-	err = <-firstErr
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	secondCtx := &admittedWaiterContext{Context: t.Context(), admitted: make(chan struct{})}
+	secondErr := make(chan error, 1)
+	go func() {
+		tpl, getErr := templateFromPlan(secondCtx, reg, "ctx_isolation")
+		if getErr == nil && (tpl == nil || tpl.Metadata.ID != "ctx_isolation") {
+			getErr = errors.New("unexpected template")
+		}
+		secondErr <- getErr
+	}()
+	<-secondCtx.admitted
+	// Act.
+	cancel()
+	firstResult := <-firstErr
+	close(release)
+	secondResult := <-secondErr
+	// Assert.
+	require.ErrorIs(t, firstResult, context.Canceled)
+	require.NoError(t, secondResult)
 	assert.Equal(t, 1, m.called, "one shared capture")
 }
 

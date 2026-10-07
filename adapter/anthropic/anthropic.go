@@ -691,6 +691,9 @@ func (a *Adapter) ParseResponseForProfile(
 	var states []prompty.PartState
 	var annotations []prompty.PartAnnotation
 	for _, block := range msg.Content {
+		if err := validateConsumedBlockSource(block); err != nil {
+			return partialAnthropicSourceFailure(out, states, annotations, err)
+		}
 		switch block.Type {
 		case "text":
 			index := len(out)
@@ -758,6 +761,7 @@ func (a *Adapter) ParseResponseForProfile(
 	resp.Outcome = outcome
 	usage, usageErr := usageFromAnthropic(msg.Usage)
 	resp.Usage = usage
+	resp.ContinuationUnavailable = resp.ContinuationUnavailable || usageErr != nil
 	if msg.StopReason != "" {
 		resp.FinishReason = string(msg.StopReason)
 	}
@@ -770,6 +774,10 @@ func (a *Adapter) ParseResponseForProfile(
 var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] = (*Adapter)(nil)
 
 func usageFromAnthropic(usage anthropic.Usage) (prompty.Usage, error) {
+	invalid, sourceErr := sanitizeObservedUsage(&usage)
+	if invalid == nil {
+		return prompty.Usage{}, sourceErr
+	}
 	_, inputErr := adapter.SumUsageCounters(usage.InputTokens)
 	output, outputErr := adapter.SumUsageCounters(usage.OutputTokens)
 	read, readErr := adapter.SumUsageCounters(usage.CacheReadInputTokens)
@@ -781,10 +789,12 @@ func usageFromAnthropic(usage anthropic.Usage) (prompty.Usage, error) {
 		PromptTokensCached:        read,
 		PromptTokensCacheCreation: write,
 	}
-	inputKnown := usage.JSON.InputTokens.Valid() || usage.InputTokens != 0
-	readKnown := usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens != 0
-	writeKnown := usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens != 0
-	outputKnown := usage.JSON.OutputTokens.Valid() || usage.OutputTokens != 0
+	inputKnown := !invalid["input_tokens"] && (usage.JSON.InputTokens.Valid() || usage.InputTokens != 0)
+	readKnown := !invalid["cache_read_input_tokens"] &&
+		(usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens != 0)
+	writeKnown := !invalid["cache_creation_input_tokens"] &&
+		(usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens != 0)
+	outputKnown := !invalid["output_tokens"] && (usage.JSON.OutputTokens.Valid() || usage.OutputTokens != 0)
 	if inputKnown && readKnown && writeKnown {
 		out.PromptTokens, promptErr = adapter.SumUsageCounters(
 			usage.InputTokens,
@@ -815,7 +825,7 @@ func usageFromAnthropic(usage anthropic.Usage) (prompty.Usage, error) {
 	if writeKnown && writeErr == nil {
 		out.Known = append(out.Known, prompty.UsageCacheWrite)
 	}
-	return out, errors.Join(inputErr, outputErr, readErr, writeErr, promptErr, totalErr)
+	return out, errors.Join(sourceErr, inputErr, outputErr, readErr, writeErr, promptErr, totalErr)
 }
 
 func anthropicProviderSettingKeys() []string {

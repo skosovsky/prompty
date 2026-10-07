@@ -87,11 +87,8 @@ type nativeStreamState struct {
 }
 
 func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.ResponseChunk, error) {
-	if raw.Message.Role != "" && raw.Message.Role != "assistant" {
-		return nil, adapter.ErrInvalidResponse
-	}
-	if len(raw.Message.Images) != 0 {
-		return nil, adapter.ErrUnsupportedContentType
+	if err := validateOllamaMessage(raw.Message); err != nil {
+		return nil, err
 	}
 	hasContent := raw.Message.Content != "" || raw.Message.Thinking != "" || len(raw.Message.ToolCalls) != 0
 	if s.finished && (hasContent || raw.Done || raw.DoneReason != "") {

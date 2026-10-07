@@ -223,9 +223,11 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 	if len(raw.Candidates) == 1 || raw.PromptFeedback != nil && raw.PromptFeedback.BlockReason != "" {
 		if len(raw.Candidates) == 1 {
 			candidate := raw.Candidates[0]
-			if candidate.Index != 0 ||
-				candidate.Content != nil && candidate.Content.Role != "" && candidate.Content.Role != "model" {
+			if candidate.Index != 0 {
 				return nil, prompty.ErrStreamProtocol
+			}
+			if roleErr := validateGeminiContentRole(candidate.Content); roleErr != nil {
+				return nil, errors.Join(prompty.ErrStreamProtocol, roleErr)
 			}
 		}
 		response, parseErr := parseGeminiResponse(raw, s.destination, s.groundingChunks)

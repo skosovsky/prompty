@@ -332,6 +332,8 @@ func (s *Stream) consume(yield func(*ResponseChunk, error) bool) (bool, error) {
 		return false, ErrStreamProtocol
 	}
 	finished := false
+	var finishOutcome Outcome
+	var finishReason string
 	for chunk, sourceErr := range s.source(s.sourceCtx) {
 		if sourceErr != nil {
 			s.sourceCancel()
@@ -341,10 +343,13 @@ func (s *Stream) consume(yield func(*ResponseChunk, error) bool) (bool, error) {
 			return false, contextErr
 		}
 		var protocolErr error
-		finished, protocolErr = checkStreamEvent(chunk, finished)
+		finished, protocolErr = checkStreamEvent(chunk, finished, finishOutcome, finishReason)
 		if protocolErr != nil {
 			s.sourceCancel() // release producer while keeping final observation context live
 			return false, protocolErr
+		}
+		if chunk.Kind == StreamFinish {
+			finishOutcome, finishReason = chunk.Outcome, chunk.FinishReason
 		}
 		stopped, err := s.acceptFrame(chunk, yield)
 		if stopped {
@@ -415,22 +420,31 @@ func (s *Stream) attachValidation(chunk func(*ResponseChunk) error, final Stream
 	return nil
 }
 
-func checkStreamEvent(chunk *ResponseChunk, finished bool) (bool, error) {
-	if chunk == nil {
+func checkStreamEvent(chunk *ResponseChunk, finished bool, outcome Outcome, reason string) (bool, error) {
+	if chunk == nil || chunk.Result != nil || chunk.Outcome != "" && !validOutcome(chunk.Outcome) {
 		return finished, ErrStreamProtocol
 	}
+	metadataOnly := len(chunk.Content) == 0 && len(chunk.ProviderState) == 0 &&
+		len(chunk.StateUpdates) == 0 && len(chunk.Finalizations) == 0 && len(chunk.Annotations) == 0
 	switch chunk.Kind {
-	case StreamStart, StreamDelta, StreamUsage:
-		if finished && (chunk.Kind != StreamUsage || len(chunk.Content) != 0 || len(chunk.Finalizations) != 0) {
+	case StreamStart:
+		if finished || !metadataOnly {
+			return finished, ErrStreamProtocol
+		}
+	case StreamDelta:
+		if finished {
+			return finished, ErrStreamProtocol
+		}
+	case StreamUsage:
+		if !metadataOnly || finished && (chunk.Outcome != "" && chunk.Outcome != outcome ||
+			chunk.FinishReason != "" && chunk.FinishReason != reason) {
 			return finished, ErrStreamProtocol
 		}
 	case StreamFinish:
-		if finished || !validOutcome(chunk.Outcome) {
+		if finished || chunk.Outcome == "" {
 			return finished, ErrStreamProtocol
 		}
 		return true, nil
-	case StreamTerminal:
-		return finished, ErrStreamProtocol
 	default:
 		return finished, ErrStreamProtocol
 	}
@@ -444,7 +458,7 @@ func updateObservedResponseMetadata(result *Response, chunk *ResponseChunk) {
 	if chunk.Outcome != "" {
 		result.Outcome = chunk.Outcome
 	}
-	if chunk.FinishReason != "" {
+	if chunk.Kind == StreamFinish || chunk.FinishReason != "" {
 		result.FinishReason = chunk.FinishReason
 	}
 	if chunk.Diagnostics.Snapshot != "" {

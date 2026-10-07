@@ -155,7 +155,8 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 	if stateErr := adapter.RejectProviderState(exec); stateErr != nil {
 		return nil, stateErr
 	}
-	working := adapter.PrepareTranslateExecution(exec)
+	// Chat has distinct native system/developer roles; preserve message boundaries.
+	working := exec.Clone()
 	// Whole-request controls do not introduce message/part cache markers.
 	params := &openai.ChatCompletionNewParams{
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(working.Messages)),
@@ -262,6 +263,9 @@ func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatComplet
 		if err != nil {
 			return nil, err
 		}
+		if msg.Role == prompty.RoleDeveloper {
+			return []openai.ChatCompletionMessageParamUnion{openai.DeveloperMessage(text)}, nil
+		}
 		return []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(text)}, nil
 	case prompty.RoleUser:
 		union, err := a.userMessage(msg.Content)
@@ -344,6 +348,10 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 		}), nil
 	}
 
+	if mime != "application/pdf" {
+		return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
+	}
+
 	if len(p.Data) == 0 {
 		if p.URL != "" {
 			return openai.ChatCompletionContentPartUnionParam{}, fmt.Errorf("%w", adapter.ErrMediaNotResolved)
@@ -351,7 +359,8 @@ func mediaPartToOpenAI(p prompty.MediaPart) (openai.ChatCompletionContentPartUni
 		return openai.ChatCompletionContentPartUnionParam{}, adapter.ErrUnsupportedContentType
 	}
 	return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
-		FileData: openai.String(base64.StdEncoding.EncodeToString(p.Data)),
+		Filename: openai.String("input.pdf"),
+		FileData: openai.String("data:application/pdf;base64," + base64.StdEncoding.EncodeToString(p.Data)),
 	}), nil
 }
 

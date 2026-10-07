@@ -20,7 +20,7 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func nativeFixture(t *testing.T, lines []string) (prompty.Invoker, *atomic.Int32) {
+func nativeFixture(t *testing.T, lines []string, capabilities ...string) (prompty.Invoker, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -37,6 +37,9 @@ func nativeFixture(t *testing.T, lines []string) (prompty.Invoker, *atomic.Int32
 		Identity:     prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
 		Provenance:   "local SDK/NDJSON fixture, not model conformance",
 		Capabilities: map[string]prompty.CapabilitySupport{prompty.CapabilityNativeStream: prompty.CapabilitySupported},
+	}
+	for _, capability := range capabilities {
+		profile.Capabilities[capability] = prompty.CapabilitySupported
 	}
 	chat, err := NewHTTPChatClient(endpoint, server.Client(), 4*1024*1024)
 	require.NoError(t, err)

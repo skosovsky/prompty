@@ -44,6 +44,9 @@ func parseGeminiResponse(
 		return nil, adapter.ErrInvalidResponse
 	}
 	candidate := raw.Candidates[0]
+	if err := validateGeminiContentRole(candidate.Content); err != nil {
+		return nil, err
+	}
 	if _, err := validateCandidateMetadata(candidate, previousGroundingChunks); err != nil {
 		return nil, err
 	}
@@ -467,4 +470,11 @@ func partialGeminiFailure(response *prompty.Response, err error) (*prompty.Respo
 	response.FinishReason = ""
 	response.ContinuationUnavailable = true
 	return response, err
+}
+
+func validateGeminiContentRole(content *genai.Content) error {
+	if content != nil && content.Role != "" && content.Role != "model" {
+		return adapter.ErrInvalidResponse
+	}
+	return nil
 }
