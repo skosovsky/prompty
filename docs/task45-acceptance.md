@@ -21,7 +21,7 @@ Validation: document diff and cross-check against source requirements; no implem
 
 Stage 1 accepted; commit: `docs: public contracts`.
 
-## Stage 2 — release/codegen checklist (in progress)
+## Stage 2 — release/codegen checklist
 
 | ID | Requirement / proving evidence |
 | --- | --- |
@@ -50,9 +50,37 @@ Candidate checks:
 
 Stage 2 accepted; commit: `fix: release safety`. No real refs/releases or live providers touched.
 
+## Stage 3 — core/schema checklist
+
+| ID | Requirement / proving evidence |
+| --- | --- |
+| CS1 (CORE-F01) | Constructors, reusable partial-variable options and CloneTemplate own independent nested JSON maps/slices. Caller/source/returned plan template/sibling mutations cannot affect other executions. Exact json.Number values retained; owned clone race regression. Parsed templates stay shared read-only. |
+| CS2 (CORE-F02) | Required dependency extraction understands range/with dot scope, variable aliases/root, else, nesting and named partial invocation. Ordinary local member names do not become required root variables. Genuine missing root fields/schema constraints still fail; optional-message inclusion follows real dependencies. |
+| CS3 (CORE-F03) | ValidateSchema errors survive empty/history-only recipe inputs and block registry access for late/no-late Plan/Execute variants. Valid empty structs render. Invalid history/embedding/binding errors survive; remove error-swallowing fallback rather than adding aliases. |
+| CS4 (S1) | Reflection resolves encoding/json field dominance before selected field inference. Shadowed/ignored/ambiguous unsupported fields do not trigger errors; selected unsupported controls still fail. Result schema matches actual JSON projection. |
+| CS5 (S2) | Strict mapper uses shared exact decimal structural equality in root/nested object/array/enum constraints; decimal/exponent normalization permitted without float64 and with distinct byte digests. Adjacent large integers/different decimals/invalid documents reject. |
+| CS6 (S3) | CompileProviderSchema guards successful source and translated compilation through compileSchemaSnapshot. Structural contract mutation rejects before mapper/dispatch; harmless exact normalization allowed. Honest compiler valid control passes; no claim to detect a lying validator without input changes. |
+| CS7 | Public API/BYOT AAA regressions have negative and valid-path controls, retained sentinel identity and precision. Targeted core/schema race + lint checks PASS; two independent reviews 100%/PASS before commit. Diagnostic old-behavior tests must not be counted as fixed regressions. |
+
+Candidate implementation: deep JSON defaults at option/constructor/CloneTemplate ownership boundaries; dependency extraction tracks dot provenance and lexical aliases across control scopes and named templates; optional dependencies computed after all definitions; recipe admission preserves validation/binding errors and explicitly binds zero-field structs; reflection infers only dominant fields; strict mappings use shared exactjson equality; provider source and translated compilers use the shared snapshot guard.
+
+Validation:
+
+- Root `go test -race ./...`: PASS, including dependent root-module registries/parser/exchange packages. Final root run 5.484s; logs `/tmp/prompty-task45-core-race.log`.
+- Root `golangci-lint run --allow-serial-runners ./...`: PASS, 0 issues. Log `/tmp/prompty-task45-core-lint.log`.
+- Permanent AAA regressions in `task45_core_regression_test.go` cover public RenderPlan.Template/Execute isolation and exact numbers; typed scope render, optional messages, missing input/schema constraints; late/no-late admission sentinels and invalid binding; dominant-field JSON projection; exact decimals and byte digests; original/translated honest compiler mutation controls.
+- Initial completeness gaps added as public/negative controls. Independent correctness reproductions exposed escaping assignments, literal index provenance, later partial definitions and action declaration shadowing; each fixed and retained in permanent regressions. Final reviews are recorded after repeat acceptance. Tests use local BYOT fixtures, no live providers.
+
+- `/root/stage3_completeness`: 100%, CS1–CS7 closed; independently repeated race scope regressions and inspected current validation logs.
+- `/root/stage3_correctness`: PASS, no open confirmed findings; independently repeated original adversarial overlays under race and reviewed all six core/schema defects/hardening requirements.
+- Final `git diff --check`: PASS. Scope: root-module public/BYOT fixtures and local macOS checks; final workspace/module/codegen gates remain required later.
+
+Stage 3 accepted; commit: `fix: schema fidelity`.
+
+Complete appendix design-item disposition remains stage6, except S3's already explicit stage1 hardening decision.
+
 ## Remaining stages (strict order)
 
-3. CORE-F01–03, S1–S2 and S3; public regression, BYOT/exact numbers.
 4. S-F01–02, OA01–02, AN01, GO-F01–02; wire/parity/partial/terminal regressions.
 5. R01–04, O-F01; channel-based races and evidence-based cancellation.
 6. All appendix design items with leave/change/remove, rationale and spec/test reference; API/docs/examples/migration/CI and performance evidence where needed.

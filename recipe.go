@@ -473,28 +473,11 @@ func registryPlanInputFromRecipe(
 ) (RegistryPlanInput, error) {
 	planInput, err := PlanInputFrom(input)
 	if err != nil {
-		if !isEmptyRecipeInput(input) {
-			return RegistryPlanInput{}, fmt.Errorf("prompt recipe: bind input: %w", err)
-		}
-		planInput = RegistryPlanInput{
-			boundVars:     nil,
-			chatHistory:   nil,
-			historyValues: nil,
-			composeValues: nil,
-			composeSet:    false,
-		}
+		return RegistryPlanInput{}, fmt.Errorf("prompt recipe: bind input: %w", err)
 	}
 	values, err := options.composeValues()
 	if err != nil {
 		return RegistryPlanInput{}, err
 	}
 	return planInputWithComposeValues(planInput, values), nil
-}
-
-func isEmptyRecipeInput(input any) bool {
-	typ, _, ok := structTypeOf(input)
-	if !ok {
-		return false
-	}
-	return !structHasPromptFields(typ)
 }

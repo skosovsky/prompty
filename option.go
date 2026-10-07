@@ -16,7 +16,7 @@ func WithPartialVariablesJSON(doc JSONDocument) (ChatTemplateOption, error) {
 		return nil, fmt.Errorf("partial variables: %w", err)
 	}
 	return func(c *ChatPromptTemplate) {
-		c.PartialVariables = vars
+		c.PartialVariables = cloneMapAny(vars)
 	}, nil
 }
 

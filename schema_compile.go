@@ -1,13 +1,10 @@
 package prompty
 
 import (
-	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 )
@@ -144,12 +141,9 @@ func CompileProviderSchema(request SchemaCompileRequest, mapper ProviderSchemaMa
 		dialect = SchemaDialect2020
 	}
 	source := CloneJSONDocument(request.Source)
-	original, err := request.Validator.CompileSchema(CloneJSONDocument(source), dialect)
+	original, err := compileSchemaSnapshot(request.Validator, source, dialect)
 	if err != nil {
 		return nil, err
-	}
-	if original == nil {
-		return nil, ErrSchemaValidatorRequired
 	}
 	// Do not give the mapper an alias to policy used by the enforcement guard.
 	mappingPolicy := policy
@@ -175,12 +169,9 @@ func CompileProviderSchema(request SchemaCompileRequest, mapper ProviderSchemaMa
 	if err := validateSchemaMapping(source, translated, changes, policy); err != nil {
 		return nil, err
 	}
-	compiledTranslation, compileErr := request.Validator.CompileSchema(CloneJSONDocument(translated), dialect)
+	_, compileErr := compileSchemaSnapshot(request.Validator, translated, dialect)
 	if compileErr != nil {
 		return nil, compileErr
-	}
-	if compiledTranslation == nil {
-		return nil, ErrSchemaValidatorRequired
 	}
 	return &CompiledProviderSchema{
 		source: source, translated: translated, validator: original,
@@ -257,24 +248,10 @@ func schemaDigest(document JSONDocument) string {
 }
 
 func equivalentSchemaJSON(source, translated JSONDocument) (bool, error) {
-	decode := func(document JSONDocument) (any, error) {
-		if !json.Valid(document) {
-			return nil, fidelityCompileError("schema is not a complete JSON document")
-		}
-		decoder := json.NewDecoder(bytes.NewReader(document))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrSchemaUnsupported, err)
-		}
-		return value, nil
+	if !json.Valid(source) || !json.Valid(translated) {
+		return false, fidelityCompileError("schema is not a complete JSON document")
 	}
-	left, err := decode(source)
-	if err != nil {
-		return false, err
-	}
-	right, err := decode(translated)
-	return reflect.DeepEqual(left, right), err
+	return jsonDocumentsEqual(source, translated), nil
 }
 
 func validSchemaPointer(pointer string) bool {

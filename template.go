@@ -85,7 +85,7 @@ func NewChatPromptTemplate(
 		opt(tpl)
 	}
 	if tpl.PartialVariables != nil {
-		tpl.PartialVariables = maps.Clone(tpl.PartialVariables)
+		tpl.PartialVariables = cloneMapAny(tpl.PartialVariables)
 	}
 	if tpl.Tools != nil {
 		tpl.Tools = cloneToolDefinitions(tpl.Tools)
@@ -136,7 +136,6 @@ func NewChatPromptTemplate(
 	}
 	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
 	for i, m := range tpl.Messages {
-		var allVars []string
 		parsedParts := make([]parsedPart, 0, len(m.Content))
 		for j, part := range m.Content {
 			namePrefix := fmt.Sprintf("msg_%d_part_%d", i, j)
@@ -160,7 +159,6 @@ func NewChatPromptTemplate(
 					urlTpl:       nil,
 					cacheControl: cloneCachePolicy(part.CachePolicy),
 				})
-				allVars = append(allVars, extractVarsFromTree(textTpl.Tree)...)
 			case partKindMedia:
 				mediaTypeTpl, err := parsePartTemplate(
 					root,
@@ -204,9 +202,6 @@ func NewChatPromptTemplate(
 					urlTpl:       urlTpl,
 					cacheControl: cloneCachePolicy(part.CachePolicy),
 				})
-				allVars = append(allVars, extractVarsFromTree(mediaTypeTpl.Tree)...)
-				allVars = append(allVars, extractVarsFromTree(mimeTypeTpl.Tree)...)
-				allVars = append(allVars, extractVarsFromTree(urlTpl.Tree)...)
 			default:
 				return nil, fmt.Errorf(
 					"%w: message %d part %d: unknown type %q",
@@ -231,10 +226,21 @@ func NewChatPromptTemplate(
 			optional:     m.Optional,
 			cacheControl: cloneCachePolicy(m.CachePolicy),
 			metadata:     meta,
-			vars:         allVars,
+			vars:         nil,
 			layerID:      m.LayerID,
 			layerKind:    m.LayerKind,
 		})
+	}
+	// Definitions in later messages/parts may satisfy earlier partial invocations.
+	for index := range tpl.parsedTemplates {
+		message := &tpl.parsedTemplates[index]
+		for _, part := range message.parts {
+			for _, tmpl := range part.templates() {
+				if tmpl != nil {
+					message.vars = append(message.vars, extractVarsFromTemplate(tmpl)...)
+				}
+			}
+		}
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
 	return tpl, nil
@@ -263,7 +269,7 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		out.ResponseFormat = cloneSchemaDefinition(c.ResponseFormat)
 	}
 	if c.PartialVariables != nil {
-		out.PartialVariables = maps.Clone(c.PartialVariables)
+		out.PartialVariables = cloneMapAny(c.PartialVariables)
 	}
 	out.InputSchema = cloneSchemaDefinition(c.InputSchema)
 	out.ModelOptions = cloneModelOptions(c.ModelOptions)

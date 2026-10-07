@@ -105,6 +105,9 @@ func bindStructFields(typ reflect.Type, val reflect.Value) (map[string]any, []Ch
 		}
 	}
 
+	if typ.NumField() == 0 {
+		return out, history, nil
+	}
 	return finalizeStructBinding(out, history, hasPrompt, hasHistory)
 }
 

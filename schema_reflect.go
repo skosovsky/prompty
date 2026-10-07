@@ -29,7 +29,8 @@ type schemaBuilder struct {
 
 type schemaFieldCandidate struct {
 	name     string
-	schema   map[string]any
+	field    reflect.StructField
+	owner    reflect.Type
 	optional bool
 	tagged   bool
 	depth    int
@@ -131,7 +132,11 @@ func (b *schemaBuilder) schemaForStructType(t reflect.Type, depth int) (map[stri
 	properties := make(map[string]any, len(fields))
 	required := make([]string, 0, len(fields))
 	for _, field := range fields {
-		properties[field.name] = field.schema
+		schema, err := b.schemaForSelectedField(field)
+		if err != nil {
+			return nil, err
+		}
+		properties[field.name] = schema
 		if !field.optional {
 			required = append(required, field.name)
 		}
@@ -163,20 +168,7 @@ func (b *schemaBuilder) collectStructFields(
 		if ignore {
 			continue
 		}
-		if hasName && !jsonfield.ValidTagName(name) {
-			return nil, fmt.Errorf(
-				"%w: field %s.%s has unsupported JSON tag name %q",
-				ErrSchemaUnsupported,
-				t,
-				field.Name,
-				name,
-			)
-		}
-
-		baseFieldType, typeErr := normalizedSchemaType(field.Type)
-		if typeErr != nil {
-			return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, typeErr)
-		}
+		baseFieldType := indirectSchemaType(field.Type)
 		if field.Anonymous && !hasName && baseFieldType.Kind() == reflect.Struct {
 			if depth+1 >= maxSchemaDepth || b.active[baseFieldType] > 0 {
 				return nil, fmt.Errorf("%w: recursive embedded type %s", ErrSchemaUnsupported, baseFieldType)
@@ -204,33 +196,10 @@ func (b *schemaBuilder) collectStructFields(
 			fieldName = field.Name
 		}
 
-		schema, err := b.schemaForType(field.Type, depth+1)
-		if err != nil {
-			return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
-		}
-
-		if jsonTagOption(field.Tag.Get("json"), "string") {
-			if baseFieldType.Implements(schemaProviderType) ||
-				reflect.PointerTo(baseFieldType).Implements(schemaProviderType) {
-				return nil, fmt.Errorf(
-					"%w: field %s.%s combines JSONSchema with json string option; provide schema for enclosing type",
-					ErrSchemaUnsupported,
-					t,
-					field.Name,
-				)
-			}
-			schema, err = quotedJSONSchema(baseFieldType)
-			if err != nil {
-				return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
-			}
-		}
-		if isPointerType(field.Type) && jsonTagOption(field.Tag.Get("json"), "string") {
-			schema = nullableInferredSchema(schema)
-		}
-
 		candidates = append(candidates, schemaFieldCandidate{
 			name:     fieldName,
-			schema:   schema,
+			field:    field,
+			owner:    t,
 			optional: inheritedOptional || omitEmpty,
 			tagged:   hasName,
 			depth:    depth,
@@ -238,6 +207,49 @@ func (b *schemaBuilder) collectStructFields(
 		})
 	}
 	return candidates, nil
+}
+
+func (b *schemaBuilder) schemaForSelectedField(candidate schemaFieldCandidate) (map[string]any, error) {
+	field, t := candidate.field, candidate.owner
+	if candidate.tagged && !jsonfield.ValidTagName(candidate.name) {
+		return nil, fmt.Errorf(
+			"%w: field %s.%s has unsupported JSON tag name %q",
+			ErrSchemaUnsupported,
+			t,
+			field.Name,
+			candidate.name,
+		)
+	}
+	baseFieldType, err := normalizedSchemaType(field.Type)
+	if err != nil {
+		return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
+	}
+
+	schema, err := b.schemaForType(field.Type, candidate.depth+1)
+	if err != nil {
+		return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
+	}
+
+	if jsonTagOption(field.Tag.Get("json"), "string") {
+		if baseFieldType.Implements(schemaProviderType) ||
+			reflect.PointerTo(baseFieldType).Implements(schemaProviderType) {
+			return nil, fmt.Errorf(
+				"%w: field %s.%s combines JSONSchema with json string option; provide schema for enclosing type",
+				ErrSchemaUnsupported,
+				t,
+				field.Name,
+			)
+		}
+		schema, err = quotedJSONSchema(baseFieldType)
+		if err != nil {
+			return nil, fmt.Errorf("schema: field %s.%s: %w", t, field.Name, err)
+		}
+	}
+	if isPointerType(field.Type) && jsonTagOption(field.Tag.Get("json"), "string") {
+		schema = nullableInferredSchema(schema)
+	}
+
+	return schema, nil
 }
 
 func (b *schemaBuilder) nextOrder() int {
