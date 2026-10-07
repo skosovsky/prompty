@@ -131,6 +131,7 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 }
 
 func validateSharedPromptSpecs(specs []*PromptSpec) error {
+	owners := make(map[string]string)
 	for _, spec := range specs {
 		if spec == nil {
 			return errors.New("shared types: prompt spec is required")
@@ -138,6 +139,11 @@ func validateSharedPromptSpecs(specs []*PromptSpec) error {
 		if spec.ID == "" {
 			return errors.New("shared types: prompt id is required")
 		}
+		name := toPascal(spec.ID)
+		if previous, exists := owners[name]; exists {
+			return fmt.Errorf("go identifier collision %q between prompt IDs %q and %q", name, previous, spec.ID)
+		}
+		owners[name] = spec.ID
 		if spec.Descriptor.Digest == "" {
 			return fmt.Errorf("shared types: prompt %q descriptor digest is required", spec.ID)
 		}

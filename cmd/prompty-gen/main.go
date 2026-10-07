@@ -57,31 +57,7 @@ func runGenerate(configPath string) error {
 		return err
 	}
 
-	for _, pkg := range cfg.Packages {
-		files, err := pkg.ResolveSources(configDir)
-		if err != nil {
-			return fmt.Errorf("package %q: %w", pkg.Name, err)
-		}
-
-		outDir := pkg.Path
-		if !filepath.IsAbs(outDir) {
-			outDir = filepath.Join(configDir, outDir)
-		}
-		if err := os.MkdirAll(outDir, 0750); err != nil {
-			return fmt.Errorf("package %q mkdir: %w", pkg.Name, err)
-		}
-
-		if pkg.IsConsts() {
-			if err := runConsts(configDir, files, &pkg, outDir); err != nil {
-				return fmt.Errorf("package %q: %w", pkg.Name, err)
-			}
-		} else {
-			if err := runTypes(configDir, files, &pkg, outDir); err != nil {
-				return fmt.Errorf("package %q: %w", pkg.Name, err)
-			}
-		}
-	}
-	return nil
+	return generatePackages(configDir, cfg)
 }
 
 // idFromRelativePath computes a fallback PromptID from file path relative to query bases.
@@ -143,7 +119,6 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 	if err := outFile.Save(outPath); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	return nil
 }
 
@@ -216,6 +191,17 @@ func (i *capturedManifestIndex) CaptureManifest(ctx context.Context, id string) 
 }
 
 func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
+	// Inventory output paths before generating any file, including the shared file.
+	owners := map[string]string{
+		strings.ToLower(pkg.PackageName + "_shared_gen.go"): "shared package " + pkg.PackageName,
+	}
+	for _, source := range files {
+		name := strings.ToLower(manifestOutputName(source))
+		if previous, exists := owners[name]; exists {
+			return fmt.Errorf("output collision %q between %s and %s", name, previous, source)
+		}
+		owners[name] = source
+	}
 	loader, err := indexManifests(files, configDir, pkg.Queries)
 	if err != nil {
 		return err
@@ -254,7 +240,6 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 	if err := sharedFile.Save(sharedPath); err != nil {
 		return fmt.Errorf("write %s: %w", sharedPath, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", sharedPath)
 
 	// Per-manifest files: const, Input/Output, prompt type, recipe API, RequiredTools, ID.
 	for i, fpath := range files {
@@ -262,13 +247,10 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", fpath, err)
 		}
-		base := strings.TrimSuffix(filepath.Base(fpath), filepath.Ext(fpath))
-		base = strings.ReplaceAll(base, "-", "_") // normalize full-mode output filename
-		outPath := filepath.Join(outDir, base+"_gen.go")
+		outPath := filepath.Join(outDir, manifestOutputName(fpath))
 		if err := manifestFile.Save(outPath); err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	}
 	return nil
 }

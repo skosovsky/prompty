@@ -1,7 +1,7 @@
 GO      := go
 MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
 
-.PHONY: lint fix test bench bench-hotpath fuzz cover release-patch release-break
+.PHONY: lint fix test bench bench-hotpath fuzz cover release-patch release-break release-check
 
 lint:
 	@for dir in $(MODULES); do \
@@ -49,10 +49,11 @@ cover:
 		(cd "$$dir" && $(GO) test -coverprofile=coverage.out ./... && $(GO) tool cover -func=coverage.out) || exit 1; \
 	done
 
-release-patch: lint test ## v0.5.0 -> v0.5.1
-	@chmod +x ./scripts/release.sh
+release-check:
+	@PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_release.py
+
+release-patch: lint test release-check ## v0.5.0 -> v0.5.1
 	@./scripts/release.sh patch "$(MODULES)"
 
-release-break: lint test ## v0.5.1 -> v0.6.0
-	@chmod +x ./scripts/release.sh
+release-break: lint test release-check ## v0.5.1 -> v0.6.0
 	@./scripts/release.sh break "$(MODULES)"

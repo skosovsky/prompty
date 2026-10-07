@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,13 +61,34 @@ func LoadConfig(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("config must contain exactly one YAML document")
+	}
 	if c.Version == "" {
 		c.Version = "1"
+	}
+	if c.Version != "1" {
+		return nil, fmt.Errorf("unsupported config version %q (use 1)", c.Version)
+	}
+	if len(c.Packages) == 0 {
+		return nil, errors.New("config packages must not be empty")
 	}
 	for i := range c.Packages {
 		p := &c.Packages[i]
 		if p.PackageName == "" {
 			p.PackageName = p.Name
+		}
+		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Path) == "" || len(p.Queries) == 0 {
+			return nil, fmt.Errorf("package %q requires name, path and queries", p.Name)
+		}
+		if !token.IsIdentifier(p.PackageName) || p.PackageName == "_" {
+			return nil, fmt.Errorf("package %q: invalid Go package name %q", p.Name, p.PackageName)
+		}
+		for _, query := range p.Queries {
+			if strings.TrimSpace(query) == "" {
+				return nil, fmt.Errorf("package %q: empty source query", p.Name)
+			}
 		}
 		if p.Mode == "" {
 			p.Mode = modeTypes

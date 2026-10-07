@@ -102,7 +102,11 @@ func TestIdFromRelativePath(t *testing.T) {
 }
 
 func TestRunGenerate_Testdata(t *testing.T) {
-	configPath := "testdata/prompty.yaml"
+	fixture := t.TempDir()
+	if err := os.CopyFS(fixture, os.DirFS("testdata")); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(fixture, "prompty.yaml")
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("testdata not found: %v", err)
 	}
@@ -112,7 +116,7 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	}
 
 	// mode=types: verify shared and per-manifest output
-	sharedPath := "testdata/gen_out/prompts_shared_gen.go"
+	sharedPath := filepath.Join(fixture, "gen_out", "prompts_shared_gen.go")
 	if _, err := os.Stat(sharedPath); err != nil {
 		t.Errorf("expected shared file %s: %v", sharedPath, err)
 	}
@@ -120,7 +124,7 @@ func TestRunGenerate_Testdata(t *testing.T) {
 	if strings.Contains(string(sharedContent), "ManifestResolver") {
 		t.Error("generated shared catalog must not reference ManifestResolver fallback")
 	}
-	manifestPath := "testdata/gen_out/support_agent_gen.go"
+	manifestPath := filepath.Join(fixture, "gen_out", "support_agent_gen.go")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Errorf("expected manifest file %s: %v", manifestPath, err)
 	}
