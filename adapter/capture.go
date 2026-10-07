@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/url"
 	"runtime/debug"
+	"strings"
 
 	"github.com/skosovsky/prompty"
 )
@@ -36,6 +39,8 @@ type ProviderCaptureMetadata[Resp any] interface {
 
 func captureStreamErrorKind(err error) string {
 	var validationErr *prompty.ValidationError
+	var requestErr *url.Error
+	var networkErr *net.OpError
 	switch {
 	case err == nil:
 		return ""
@@ -58,8 +63,10 @@ func captureStreamErrorKind(err error) string {
 		errors.Is(err, prompty.ErrStructuredStream), errors.Is(err, prompty.ErrNonTextResponse),
 		errors.Is(err, prompty.ErrEmptyTextResponse):
 		return captureErrorParse
-	default:
+	case errors.As(err, &requestErr) && !strings.EqualFold(requestErr.Op, "parse"), errors.As(err, &networkErr):
 		return "transport"
+	default:
+		return "operation"
 	}
 }
 

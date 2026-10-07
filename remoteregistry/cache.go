@@ -267,15 +267,12 @@ func (r *CachedRegistry) releaseInflightWaiter(id string, inFlight *inflightFetc
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	current, exists := r.inflight[id]
-	if !exists || current != inFlight {
-		return
-	}
-
-	current.waiters--
-	if current.waiters <= 0 {
-		delete(r.inflight, id)
-		current.cancel()
+	inFlight.waiters--
+	if inFlight.waiters <= 0 {
+		if current := r.inflight[id]; current == inFlight {
+			delete(r.inflight, id)
+		}
+		inFlight.cancel()
 	}
 }
 
@@ -305,6 +302,7 @@ func (r *CachedRegistry) Evict(id string) {
 	}
 	r.mu.Lock()
 	delete(r.cache, id)
+	delete(r.inflight, id) // Existing waiters retain their detached generation.
 	r.mu.Unlock()
 }
 
@@ -312,6 +310,7 @@ func (r *CachedRegistry) Evict(id string) {
 func (r *CachedRegistry) EvictAll() {
 	r.mu.Lock()
 	r.cache = make(map[string]*cacheEntry)
+	r.inflight = make(map[string]*inflightFetch)
 	r.mu.Unlock()
 }
 

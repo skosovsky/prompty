@@ -317,14 +317,17 @@ func (r *Registry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, e
 	if err := prompty.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
 	}
-	if _, err := r.readManifestBytes(ctx, id); err == nil {
-		return prompty.TemplateInfo{
-			ID:        id,
-			Version:   r.version,
-			UpdatedAt: time.Time{},
-		}, nil
+	_, readErr := r.readManifestBytes(ctx, id)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return prompty.TemplateInfo{}, errors.Join(contextErr, readErr)
 	}
-	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+	if readErr != nil {
+		return prompty.TemplateInfo{}, readErr
+	}
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
+	return prompty.TemplateInfo{ID: id, Version: r.version, UpdatedAt: time.Time{}}, nil
 }
 
 // ManifestUsesComposeE reports whether raw manifest bytes declare imports or layers.

@@ -52,7 +52,7 @@ func (c *clientImpl[Req, Resp]) execute(
 	prepared.dispatched = true
 	resp, err := c.adapter.Execute(ctx, prepared.request)
 	if err != nil {
-		captureErr := captureSyncTerminal(ctx, prepared, nil, "transport", active != nil)
+		captureErr := captureSyncTerminal(ctx, prepared, nil, captureStreamErrorKind(err), active != nil)
 		return nil, errors.Join(err, captureErr)
 	}
 	captureErr := captureProviderResponse(ctx, prepared.capture, c.adapter, resp, prepared.diagnostics.Schemas)

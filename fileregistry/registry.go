@@ -283,6 +283,9 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	err := fs.WalkDir(os.DirFS(r.dir), ".", func(path string, d fs.DirEntry, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return err
 		}
@@ -314,17 +317,29 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("fileregistry list: %w", err)
 	}
 	slices.Sort(ids)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 
 // Stat returns metadata for id without parsing the manifest body. Version is file ModTime in RFC3339; UpdatedAt is file ModTime.
-func (r *Registry) Stat(_ context.Context, id string) (prompty.TemplateInfo, error) {
+func (r *Registry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	if err := prompty.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
 	}
 	for _, path := range idToPaths(r.dir, id, r.env) {
 		fi, err := os.Stat(path)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return prompty.TemplateInfo{}, errors.Join(contextErr, err)
+		}
 		if err == nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return prompty.TemplateInfo{}, contextErr
+			}
 			mod := fi.ModTime()
 			return prompty.TemplateInfo{
 				ID:        id,

@@ -52,7 +52,6 @@ func WithAuthToken(token string) HTTPOption {
 
 // NewHTTPFetcher creates an HTTPFetcher. baseURL must be a valid URL (e.g. https://api.example.com/prompts).
 func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
-	baseURL = strings.TrimSuffix(baseURL, "/")
 	if baseURL == "" {
 		return nil, errors.New("remoteregistry: base URL must not be empty")
 	}
@@ -92,10 +91,18 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 var errNotFound = errors.New("not found")
 
 func (h *HTTPFetcher) fetchOne(ctx context.Context, pathSeg string) ([]byte, error) {
-	u, err := url.JoinPath(h.baseURL, pathSeg)
+	base, err := url.Parse(h.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: join path: %w", ErrFetchFailed, err)
 	}
+	escapedBase := strings.TrimSuffix(base.EscapedPath(), "/")
+	decodedBase, err := url.PathUnescape(escapedBase)
+	if err != nil {
+		return nil, fmt.Errorf("%w: base path: %w", ErrFetchFailed, err)
+	}
+	base.Path = decodedBase + "/" + pathSeg
+	base.RawPath = escapedBase + "/" + (&url.URL{Path: pathSeg}).EscapedPath()
+	u := base.String()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
@@ -120,9 +127,35 @@ func (h *HTTPFetcher) fetchOne(ctx context.Context, pathSeg string) ([]byte, err
 		return nil, fmt.Errorf("%w: read body: %w", ErrFetchFailed, err)
 	}
 	// Detect truncation: if more data is available, body exceeded maxBodySize.
-	probe := make([]byte, 1)
-	if n, _ := resp.Body.Read(probe); n > 0 {
-		return nil, fmt.Errorf("%w: response body exceeds %d bytes", ErrFetchFailed, maxBodySize)
+	extra, probeErr := probeHTTPBody(ctx, resp.Body)
+	if extra {
+		return nil, errors.Join(fmt.Errorf("%w: response body exceeds %d bytes", ErrFetchFailed, maxBodySize), probeErr)
+	}
+	if probeErr != nil {
+		return nil, fmt.Errorf("%w: read body: %w", ErrFetchFailed, probeErr)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return data, nil
+}
+
+// A probe must preserve errors returned alongside a byte and tolerate finite
+// empty reads without mistaking them for EOF. Repeated nonprogress is an error.
+func probeHTTPBody(ctx context.Context, body io.Reader) (bool, error) {
+	var probe [1]byte
+	for range 100 {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		n, err := body.Read(probe[:])
+		if errors.Is(err, io.EOF) {
+			err = nil
+			return n > 0, err
+		}
+		if n > 0 || err != nil {
+			return n > 0, err
+		}
+	}
+	return false, io.ErrNoProgress
 }

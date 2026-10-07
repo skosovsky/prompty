@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,7 +59,16 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 }
 
 // Fetch reads the manifest from the repo: {dir}/{id}.yaml or {dir}/{id}.yml.
-func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
+func (g *Fetcher) Fetch(ctx context.Context, id string) (result []byte, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := remoteregistry.ValidatePathForFetch(id); err != nil {
 		return nil, err
 	}
@@ -79,6 +87,9 @@ func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	data, err := os.ReadFile(absPath) // #nosec G304 -- absPath from resolvePath (validated path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: read %s: %w", remoteregistry.ErrFetchFailed, absPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return data, nil
 }
@@ -116,7 +127,16 @@ func trimManifestExt(s string) string {
 }
 
 // ListIDs returns all template ids (relative path without .yaml/.yml/.json, forward slashes) under the manifest dir.
-func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
+func (g *Fetcher) ListIDs(ctx context.Context) (result []string, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureClone(ctx); err != nil {
@@ -126,6 +146,9 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	err := fs.WalkDir(os.DirFS(baseDir), ".", func(path string, d fs.DirEntry, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return err
 		}
@@ -156,13 +179,25 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("list ids: %w", err)
 	}
 	slices.Sort(ids)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 
 var _ remoteregistry.Statter = (*Fetcher)(nil)
 
 // Stat returns template metadata without parsing the manifest body. Version is the commit hash; UpdatedAt is commit time.
-func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+func (g *Fetcher) Stat(ctx context.Context, id string) (result prompty.TemplateInfo, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = prompty.TemplateInfo{}
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	if err := remoteregistry.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
 	}
@@ -195,11 +230,17 @@ func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, er
 	if err != nil {
 		cIter.Close()
 		if errors.Is(err, io.EOF) {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return prompty.TemplateInfo{}, contextErr
+			}
 			return prompty.TemplateInfo{ID: id, Version: "", UpdatedAt: time.Time{}}, nil
 		}
 		return prompty.TemplateInfo{}, err
 	}
 	cIter.Close()
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	return prompty.TemplateInfo{
 		ID:        id,
 		Version:   commit.Hash.String(),
@@ -208,8 +249,11 @@ func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, er
 }
 
 func (g *Fetcher) ensureClone(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if g.repo != nil {
-		// Pull to refresh only for remote URLs (file:// has no remote to pull).
+		// file:// selects a frozen local checkout; other URLs refresh on each operation.
 		if !strings.HasPrefix(g.repoURL, "file://") {
 			wt, err := g.repo.Worktree()
 			if err != nil {
@@ -223,14 +267,16 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 				}
 			}
 			err = wt.PullContext(ctx, pullOpts)
+			if contextErr := ctx.Err(); contextErr != nil {
+				return errors.Join(contextErr, err)
+			}
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-				// Do not remove clone on transient errors; next Fetch will retry pull.
-				// Proceed to read from existing working tree (stale data).
-				slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", err)
+				return fmt.Errorf("refresh: %w", err)
 			}
 		}
-		return nil
+		return ctx.Err()
 	}
+	opened := false
 	var repo *git.Repository
 	var err error
 	if g.cloneDir != "" {
@@ -238,6 +284,7 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		gitDir := filepath.Join(g.cloneDir, ".git")
 		if _, statErr := os.Stat(gitDir); statErr == nil {
 			repo, err = git.PlainOpen(g.cloneDir)
+			opened = true
 		} else {
 			if mkErr := os.MkdirAll(g.cloneDir, 0o750); mkErr != nil {
 				return fmt.Errorf("mkdir clone dir: %w", mkErr)
@@ -270,24 +317,11 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		return fmt.Errorf("clone/open: %w", err)
 	}
 	g.repo = repo
-	// Run pull once after open or clone so persistent cache is refreshed.
-	if !strings.HasPrefix(g.repoURL, "file://") {
-		wt, wtErr := g.repo.Worktree()
-		if wtErr != nil {
-			return fmt.Errorf("worktree: %w", wtErr)
-		}
-		pullOpts := &git.PullOptions{}
-		if g.authToken != "" {
-			pullOpts.Auth = &http.BasicAuth{
-				Username: "x-access-token",
-				Password: g.authToken,
-			}
-		}
-		if pullErr := wt.PullContext(ctx, pullOpts); pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
-			slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", pullErr)
-		}
+	// A fresh clone already observes the remote. Persistent opens need refresh.
+	if opened {
+		return g.ensureClone(ctx)
 	}
-	return nil
+	return ctx.Err()
 }
 
 func (g *Fetcher) buildCloneOptions() *git.CloneOptions {

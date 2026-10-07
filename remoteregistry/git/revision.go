@@ -20,7 +20,16 @@ var _ remoteregistry.RevisionFetcher = (*Fetcher)(nil)
 
 // BindRevision binds a full commit hash and reads its blobs, independent of checkout.
 // Moving branch/tag names and commits unavailable in the clone are rejected.
-func (g *Fetcher) BindRevision(ctx context.Context, revision string) (remoteregistry.Fetcher, error) {
+func (g *Fetcher) BindRevision(
+	ctx context.Context,
+	revision string,
+) (result remoteregistry.Fetcher, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
 	decoded, err := hex.DecodeString(revision)
 	if err != nil || len(decoded) != 20 {
 		return nil, fmt.Errorf("%w: immutable full commit hash is required", remoteregistry.ErrFetchFailed)
@@ -41,6 +50,9 @@ func (g *Fetcher) BindRevision(ctx context.Context, revision string) (remoteregi
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &revisionFetcher{tree: tree, dir: g.dir}, nil
 }
 
@@ -49,7 +61,13 @@ type revisionFetcher struct {
 	dir  string
 }
 
-func (r *revisionFetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
+func (r *revisionFetcher) Fetch(ctx context.Context, id string) (result []byte, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

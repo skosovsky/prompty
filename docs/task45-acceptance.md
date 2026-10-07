@@ -110,9 +110,29 @@ Stage 4 accepted; commit: `fix: stream fidelity`.
 
 Complete remaining appendix design decisions stay stage6; this stage enforces the already specified source/frame contracts and mandatory defects.
 
+## Stage 5 — sources/observation checklist (accepted)
+
+| ID | Requirement / proving evidence |
+| --- | --- |
+| SO1 (R01) | HTTP preserves decoded logical ID bytes via Path/RawPath. Percent/slash/dot/query/fragment/non-ASCII controls, configured base path/query, distinct sources, direct Fetch and Registry.Plan imports. Traversal remains rejected. |
+| SO2 (R02) | Bounded HTTP reads accept exact 1 MiB only with EOF; extra byte/zero progress/read error/cancellation remain failures; body closes once. |
+| SO3 (R03) | Evict/EvictAll detach old inflight generation. Existing waiters may finish; new callers dedupe only fresh work; old completion cannot overwrite/delete new state. Channel-based overlapping captures under race. |
+| SO4 (R04) | Git admission/post-lock/post-refresh/pre-result cancellation and deadline never yield bytes/metadata; mutable refresh errors fail closed. Local initialized/uninitialized/persistent/file paths, waiting mutex, active Pull and bound revisions checked. No retries/live remotes. |
+| SO5 | File/embed metadata and file/Git traversal preserve cancellation instead of notfound/success. Valid controls and error identities retained. |
+| SO6 (O-F01) | Shared sync/buffered/native capture classifier preserves known canceled/schema/parse/capture causes, arbitrary errors become operation, transport needs typed evidence. Actual mode terminal capture; errors.Is retained, AfterDispatch independent, no invented outcome/retry/raw error export. |
+| SO7 | Normative source/capture contracts and AAA fixtures agree; root/Git module race+lint PASS; two independent reviewers 100%/PASS before commit. Appendix policy decisions remain stage6 unless explicitly required above. |
+
+Candidate evidence:
+
+- Root + Git `go test -race -timeout=90s ./... ./remoteregistry/git/...`: PASS; `/tmp/prompty-task45-stage5-final4-race.log`. Covers all root-module packages and separate Git module. Offline fixtures only.
+- Root and Git module lint: PASS, 0 issues; `/tmp/prompty-task45-stage5-root-lint.log`, `/tmp/prompty-task45-stage5-git-lint.log`.
+- Permanent AAA tests prove actual HTTP URI/path/query projection and imported logical IDs; exact-limit EOF/errors/nonprogress/byte-with-error and one body Close; both Evict variants and completion orders using channels; Git admission/deadline/post-lock/active local HTTP Pull/immutable revision, fail-closed missing origin; file/embed successful and missing metadata closeout, per-entry file/Git walks; actual sync/buffered/native terminal capture and typed transport versus local URL parse failures.
+- Initial independent reviews exposed missing deadline/traversal controls, metadata missing-path cancellation and inconsistent trailing escaped base. Corrected with permanent regressions and explicit gates. Final repeated independent acceptance: `/root/stage5_completeness` 100% (SO1–SO7), `/root/stage5_correctness` PASS with no confirmed open findings. Each independently ran full targeted scope under race and inspected lint; both adversarial correctness overlays now PASS.
+
+Stage 5 accepted; commit: `fix: source consistency`.
+
 ## Remaining stages (strict order)
 
-5. R01–04, O-F01; channel-based races and evidence-based cancellation.
 6. All appendix design items with leave/change/remove, rationale and spec/test reference; API/docs/examples/migration/CI and performance evidence where needed.
 
 Final gates: make lint; make test across all modules and explicit generated consumer; deterministic regeneration; GOWORK=off publishability; final two independent reviews. Diagnostic tests that assert old defects must become expected-contract regressions. All 19 main defects plus GO-F02 must have valid and negative controls. No real release/live provider calls.
