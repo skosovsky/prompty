@@ -613,7 +613,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
-func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
+func TestTranslate_StructuredOutputRequiresKnownProfile(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -626,7 +626,7 @@ func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
 	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrStructuredOutputNotSupported)
+	assert.ErrorIs(t, err, adapter.ErrUnknownProfile)
 }
 
 func TestParseStreamChunk_Text(t *testing.T) {

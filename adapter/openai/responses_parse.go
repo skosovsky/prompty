@@ -60,7 +60,7 @@ func parseRemoteResponse(
 		response.Outcome = prompty.OutcomeIncomplete
 	}
 	metadataErr := prompty.ValidateResponseMetadata(response)
-	if (handle.ProviderStateRequired || responseRequiresState(result.Diagnostics)) && response.ContinuationUnavailable {
+	if handle.ProviderStateRequired && response.ContinuationUnavailable {
 		metadataErr = errors.Join(metadataErr, prompty.ErrStateUnavailable)
 	}
 	if handle.Status == prompty.RemoteResponseQueued || handle.Status == prompty.RemoteResponseRunning {
@@ -121,7 +121,7 @@ func parseRemoteItems(
 			continue
 		}
 		if item.Type == "web_search_call" || item.Type == "file_search_call" {
-			if err := preserveHostedItem(index, item.RawJSON(), hosted, response); err != nil {
+			if err := preserveHostedItem(index, item.RawJSON(), hosted, response, profile); err != nil {
 				return err
 			}
 			continue

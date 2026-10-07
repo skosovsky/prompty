@@ -81,17 +81,17 @@ func (r *Responses) prepareRequest(
 	if err := applyResponsesRequestCache(&params, exec.RequestCache); err != nil {
 		return prepared, err
 	}
-	if err := prepareHostedTools(input.HostedTools, &params); err != nil {
+	if err := prepareHostedTools(exec.HostedTools, &params); err != nil {
 		return prepared, err
 	}
 	tools, toolsErr := r.compileTools(exec, report, false)
 	if toolsErr != nil {
 		return prepared, toolsErr
 	}
-	if toolsErr = prepareResponseTools(exec, tools, &params); toolsErr != nil {
+	if toolsErr = prepareResponseTools(exec, tools, &params, input.StrictTools); toolsErr != nil {
 		return prepared, toolsErr
 	}
-	if responseRequiresState(*report) {
+	if responseRequiresOutputState(exec) {
 		params.Include = append(params.Include, responses.ResponseIncludableReasoningEncryptedContent)
 	}
 	if input.Previous != nil {
@@ -130,8 +130,11 @@ func (r *Responses) prepareRequest(
 	}
 	params.Instructions = sdk.String(strings.Join(instructions, "\n\n"))
 	if options := exec.ModelOptions; options != nil {
-		if len(options.ProviderSettings) != 0 || len(options.Stop) != 0 {
+		if len(options.Stop) != 0 {
 			return prepared, adapter.ErrUnsupportedCapability
+		}
+		if err := applyResponsesReasoning(&params, options); err != nil {
+			return prepared, err
 		}
 		if options.Temperature != nil {
 			params.Temperature = sdk.Float(*options.Temperature)
@@ -155,7 +158,7 @@ func (r *Responses) prepareRequest(
 		params.Text.Format.OfJSONSchema = &responses.ResponseFormatTextJSONSchemaConfigParam{
 			Name:        exec.ResponseFormat.Name,
 			Description: sdk.String(exec.ResponseFormat.Description),
-			Schema:      mapped,
+			Schema:      schemaSDKMap(mapped),
 			Strict:      sdk.Bool(true),
 		}
 	}

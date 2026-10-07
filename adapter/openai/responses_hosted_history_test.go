@@ -33,10 +33,12 @@ func TestResponsesHostedStatelessHistoryOriginalItems(t *testing.T) {
 	manager := hostedFixtureAdapter(server)
 	// Act: Create -> response wire -> assistant history -> next stateless Create.
 	created, err := manager.Create(t.Context(), prompty.RemoteResponseRequest{
-		Execution: prompty.SimplePrompt("search"), Store: new(false),
-		HostedTools: []prompty.HostedToolRequest{
-			{Kind: HostedWebSearch}, {Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
-		},
+		Execution: withResponseHostedTools(prompty.SimplePrompt("search"),
+			[]prompty.HostedToolRequest{
+				{
+					Kind: HostedWebSearch,
+				}, {Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
+			}), Store: new(false),
 	})
 	require.NoError(t, err)
 	wire, err := prompty.MarshalResponse(created.Response, prompty.WirePolicy{State: prompty.StatePreserve})
@@ -57,8 +59,9 @@ func TestResponsesHostedStatelessHistoryOriginalItems(t *testing.T) {
 	second := <-requests
 	require.Equal(t, prompty.OutcomeCompleted, result.Response.Outcome)
 	var actual struct {
-		Input []json.RawMessage `json:"input"`
-		Tools []json.RawMessage `json:"tools"`
+		Input   []json.RawMessage `json:"input"`
+		Tools   []json.RawMessage `json:"tools"`
+		Include []string          `json:"include"`
 	}
 	require.NoError(t, json.Unmarshal(second, &actual))
 	var original struct {
@@ -71,6 +74,8 @@ func TestResponsesHostedStatelessHistoryOriginalItems(t *testing.T) {
 	}
 	require.Contains(t, string(actual.Input[2]), "9007199254740993")
 	require.Empty(t, actual.Tools)
+	require.NotContains(t, actual.Include, "reasoning.encrypted_content")
+	require.False(t, result.Handle.ProviderStateRequired)
 }
 
 func TestResponsesHostedHistoryInvalidProjectionRejectsBeforeIO(t *testing.T) {
@@ -166,9 +171,9 @@ func TestResponsesHostedHistoryMixedPrivateStateAndOmission(t *testing.T) {
 	exec := prompty.SimplePrompt("search and lookup")
 	exec.Tools = responseToolDefinitions()
 	created, err := manager.Create(t.Context(), prompty.RemoteResponseRequest{
-		Execution: exec, Store: new(false), HostedTools: []prompty.HostedToolRequest{
+		Execution: withResponseHostedTools(exec, []prompty.HostedToolRequest{
 			{Kind: HostedWebSearch}, {Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
-		},
+		}), Store: new(false),
 	})
 	require.NoError(t, err)
 	history, err := created.Response.AssistantMessage()

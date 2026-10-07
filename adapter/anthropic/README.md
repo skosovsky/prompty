@@ -1,5 +1,25 @@
 # Anthropic adapter for prompty
 
+`pause_turn` maps to `prompty.OutcomePaused`, which differs from incomplete,
+refusal and completed model output. A valid pause can complete the HTTP/stream
+operation while retaining signed state for an explicit caller continuation.
+The adapter does not resume automatically. Output schema success is not claimed
+for a paused result; structured-output helpers reject it as non-completed output.
+The one-shot typed-tool executor also refuses paused results and does not run
+local handlers. Persist the response/state and send its unchanged assistant
+message only when the caller chooses to continue. Hosted search/fetch projection
+has passed task43 independent offline conformance acceptance.
+See the provider's [pause contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#pause_turn-stop-reason).
+
+The implemented sync/history mapping uses versioned HostedWebSearch and
+HostedWebFetch declarations in PromptExecution.HostedTools. Hosted call/results
+are required scoped MessageAnnotations, with source order and private-state
+digests; they never become local ToolCallPart. Keep the markers through wire
+restore. Unmarked legacy hosted history, edited/foreign source and unsupported
+adapter mappings fail before IO. StateOmit revokes required history continuation.
+The dedicated synthetic output profile has no hosted mapping and rejects this
+intent before dispatch. Batch fixtures verify the same hosted parser and original execution binding, including pause and zero-IO forbidden combinations. Native SDK SSE fixtures cover mixed hosted results/errors, partial server arguments, stable source order under interleaved closes, premature EOF and wire restore followed by an explicit SDK continuation. Run `go test -run ExampleHostedItems` for an offline SDK fixture that persists state, resumes explicitly and rejects unknown hosted kinds before IO.
+
 ## Explicit Message Batches
 
 NewMessageBatches(accountBinding, opts...) provides native SDK Submit/Get/Cancel/

@@ -11,7 +11,7 @@
     "message_annotations": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/message_annotation"}},
     "continuation_unavailable": {"type": "boolean"},
     "usage": {"$ref": "https://prompty.invalid/wire-common#/$defs/usage"},
-    "finish_reason": {"type": "string"}, "outcome": {"enum": ["completed", "tool_calls", "refusal", "incomplete"]},
+    "finish_reason": {"type": "string"}, "outcome": {"enum": ["completed", "tool_calls", "refusal", "incomplete", "paused"]},
     "diagnostics": {"$ref": "https://prompty.invalid/wire-common#/$defs/diagnostics"}
   }
 }

@@ -26,7 +26,9 @@
     },
     "message_annotation": {
       "type": "object", "additionalProperties": false, "required": ["kind", "value"],
-      "properties": {"kind": {"type": "string", "minLength": 1, "pattern": "\\S"}, "value": true}
+      "properties": {"kind": {"type": "string", "minLength": 1, "pattern": "\\S"}, "value": true, "scope": {"$ref": "#/$defs/identity"}, "required": {"type": "boolean"}},
+      "if": {"properties": {"required": {"const": true}}, "required": ["required"]},
+      "then": {"required": ["scope"]}
     },
     "cache": {"type": "object", "additionalProperties": false, "required": ["mechanism"], "properties": {
       "mechanism": {"enum": ["implicit_prefix", "block_marker", "omit"]}, "mode": {"enum": ["advisory", "required"]},

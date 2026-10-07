@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,9 +86,14 @@ func preserveResponseReasoning(source []byte, response *prompty.Response, profil
 	return nil
 }
 
-func responseRequiresState(report prompty.ExecutionDiagnostics) bool {
-	for _, check := range report.Checks {
-		if check.Requirement == prompty.CapabilityProviderState {
+// Required message metadata proves incoming history support, not a request for
+// new encrypted reasoning. Retain the existing explicit/part-state guarantee.
+func responseRequiresOutputState(exec *prompty.PromptExecution) bool {
+	if slices.Contains(exec.Requirements.Capabilities, prompty.CapabilityProviderState) {
+		return true
+	}
+	for _, message := range exec.Messages {
+		if len(message.ProviderState) > 0 {
 			return true
 		}
 	}

@@ -48,15 +48,29 @@ type PartAnnotation struct {
 // Stream updates are ordered, not merged snapshots. Provider-relative indices
 // inside Value are not canonical content-part indices and are never inferred.
 // Payload interpretation and redaction belong to the provider module and host.
+// Scope binds opaque metadata to one destination. Required marks continuation
+// data that a receiving adapter must understand and preserve; it needs Scope.
 type MessageAnnotation struct {
-	Kind  string       `json:"kind"`
-	Value JSONDocument `json:"value"`
+	Kind     string           `json:"kind"`
+	Value    JSONDocument     `json:"value"`
+	Scope    *ProfileIdentity `json:"scope,omitempty"`
+	Required bool             `json:"required,omitempty"`
+}
+
+// HasScopedMessageAnnotations identifies opaque message-level dependencies
+// without decoding provider payloads. It does not validate shape or grant support.
+func HasScopedMessageAnnotations(annotations []MessageAnnotation) bool {
+	return slices.ContainsFunc(annotations, func(annotation MessageAnnotation) bool { return annotation.Scope != nil })
 }
 
 func cloneMessageAnnotations(annotations []MessageAnnotation) []MessageAnnotation {
 	out := slices.Clone(annotations)
 	for i := range out {
 		out[i].Value = CloneJSONDocument(annotations[i].Value)
+		if annotations[i].Scope != nil {
+			scope := *annotations[i].Scope
+			out[i].Scope = &scope
+		}
 	}
 	return out
 }
@@ -67,16 +81,26 @@ func ValidateMessageAnnotations(annotations []MessageAnnotation) error {
 		if strings.TrimSpace(annotation.Kind) == "" || !json.Valid(annotation.Value) {
 			return fmt.Errorf("%w: invalid message annotation", ErrProviderState)
 		}
+		if annotation.Required && annotation.Scope == nil {
+			return fmt.Errorf("%w: required message annotation has no scope", ErrProviderState)
+		}
+		if scope := annotation.Scope; scope != nil {
+			if ValidateEndpointIdentity(scope.Endpoint) != nil || strings.TrimSpace(scope.Provider) == "" ||
+				strings.TrimSpace(scope.Endpoint) == "" ||
+				(strings.TrimSpace(scope.Model) == "" && strings.TrimSpace(scope.ModelFamily) == "") {
+				return fmt.Errorf("%w: invalid message annotation scope", ErrProviderState)
+			}
+		}
 	}
 	return nil
 }
 
 func clonePartStates(states []PartState) []PartState {
 	out := slices.Clone(states)
-	for i := range out {
-		out[i].Envelope.Payload = bytes.Clone(states[i].Envelope.Payload)
-		if states[i].Envelope.ExpiresAt != nil {
-			value := *states[i].Envelope.ExpiresAt
+	for i, state := range out {
+		out[i].Envelope.Payload = bytes.Clone(state.Envelope.Payload)
+		if state.Envelope.ExpiresAt != nil {
+			value := *state.Envelope.ExpiresAt
 			out[i].Envelope.ExpiresAt = &value
 		}
 	}
@@ -126,6 +150,9 @@ func ValidateContinuation(messages []ChatMessage, destination ProfileIdentity, n
 		if message.ContinuationUnavailable {
 			return ErrStateUnavailable
 		}
+		if err := validateAnnotationDestination(message.MessageAnnotations, destination); err != nil {
+			return err
+		}
 		if err := ValidatePartAssociations(message.Content, message.ProviderState, message.Annotations); err != nil {
 			return err
 		}
@@ -138,6 +165,16 @@ func ValidateContinuation(messages []ChatMessage, destination ProfileIdentity, n
 			if state.Envelope.ExpiresAt != nil && !now.Before(*state.Envelope.ExpiresAt) {
 				return ErrStateExpired
 			}
+		}
+	}
+	return nil
+}
+
+func validateAnnotationDestination(annotations []MessageAnnotation, destination ProfileIdentity) error {
+	for _, annotation := range annotations {
+		if scope := annotation.Scope; scope != nil &&
+			(scope.Provider != destination.Provider || scope.Endpoint != destination.Endpoint || !stateModelMatches(*scope, destination)) {
+			return ErrStateDestination
 		}
 	}
 	return nil

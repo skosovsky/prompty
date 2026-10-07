@@ -14,11 +14,17 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-// MapSchema accepts only tool schemas whose existing fields survive SDK serialization.
-// Output schema and explicit lossy lowering are not implemented by this adapter.
+// MapSchema preserves output schema objects as native Format JSON and accepts
+// tool schemas only when every source field survives SDK serialization.
 func (*Adapter) MapSchema(request prompty.SchemaMappingRequest) (prompty.SchemaMapping, error) {
 	if request.Profile.Provider != "ollama" {
 		return prompty.SchemaMapping{}, schemaLoss("", "foreign schema profile")
+	}
+	if request.Role == prompty.SchemaOutput {
+		if _, err := prompty.SchemaDocumentAsMap(request.Source); err != nil {
+			return prompty.SchemaMapping{}, schemaLoss("", "native Format requires a JSON Schema object")
+		}
+		return prompty.SchemaMapping{Schema: prompty.CloneJSONDocument(request.Source)}, nil
 	}
 	if request.Role != prompty.SchemaToolInput {
 		return prompty.SchemaMapping{}, adapter.ErrStructuredOutputNotSupported

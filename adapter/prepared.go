@@ -112,7 +112,8 @@ func Prepare[Req, Resp any](
 
 func snapshotDispatchState(exec *prompty.PromptExecution) *prompty.PromptExecution {
 	for _, message := range exec.Messages {
-		if len(message.ProviderState) != 0 || message.ContinuationUnavailable {
+		if len(message.ProviderState) != 0 || message.ContinuationUnavailable ||
+			prompty.HasScopedMessageAnnotations(message.MessageAnnotations) {
 			return exec.Clone()
 		}
 	}
@@ -152,7 +153,7 @@ func prepareNativeRequest[Req any](adp any, req Req, mode prompty.StreamMode) (R
 
 func validateAdapterState(adp any, exec *prompty.PromptExecution, destination prompty.ProfileIdentity) error {
 	for _, message := range exec.Messages {
-		if len(message.ProviderState) == 0 {
+		if len(message.ProviderState) == 0 && !requiredMessageAnnotations(message.MessageAnnotations) {
 			continue
 		}
 		stateful, ok := adp.(ProviderStateAdapter)

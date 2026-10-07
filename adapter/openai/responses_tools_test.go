@@ -58,8 +58,8 @@ func TestResponsesNativeFunctionsSDKAndOriginalSchemaRebinding(t *testing.T) {
 	exec.Tools, exec.ForcedTool = responseToolDefinitions(), "lookup"
 	// Act.
 	created, err := manager.Create(t.Context(), prompty.RemoteResponseRequest{
-		Execution: exec, Store: new(true), Background: true,
-		HostedTools: []prompty.HostedToolRequest{{Kind: HostedWebSearch}},
+		Execution: withResponseHostedTools(exec,
+			[]prompty.HostedToolRequest{{Kind: HostedWebSearch}}), Store: new(true), Background: true,
 	})
 	require.NoError(t, err)
 	document, err := prompty.EncodeRemoteResponseHandle(*created.Handle)

@@ -20,11 +20,11 @@ func ExampleHostedSearchItems() {
 	// Bind a caller-owned profile declaring create/web-search/file-search.
 	manager := hostedFixtureAdapter(server)
 	result, err := manager.Create(context.Background(), prompty.RemoteResponseRequest{
-		Execution: prompty.SimplePrompt("Find reference material"), Store: new(false),
-		HostedTools: []prompty.HostedToolRequest{
-			{Kind: HostedWebSearch},
-			{Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
-		},
+		Execution: withResponseHostedTools(prompty.SimplePrompt("Find reference material"),
+			[]prompty.HostedToolRequest{
+				{Kind: HostedWebSearch},
+				{Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
+			}), Store: new(false),
 	})
 	if err != nil {
 		panic(err)

@@ -53,7 +53,7 @@ func preserveHostedHistory(items []responses.ResponseOutputItemUnion, response *
 		return prompty.ErrRemoteResponse
 	}
 	response.MessageAnnotations = append(response.MessageAnnotations, prompty.MessageAnnotation{
-		Kind: hostedHistoryAnnotation, Value: encoded,
+		Kind: hostedHistoryAnnotation, Value: encoded, Scope: new(profile), Required: true,
 	})
 	return nil
 }
@@ -62,6 +62,9 @@ func decodeHostedHistory(message prompty.ChatMessage) (responseHistoryManifest, 
 	var manifest responseHistoryManifest
 	found := false
 	for _, annotation := range message.MessageAnnotations {
+		if !annotation.Required || annotation.Scope == nil {
+			return manifest, prompty.ErrProviderState
+		}
 		if annotation.Kind != hostedHistoryAnnotation {
 			if annotation.Kind != hostedItemAnnotation {
 				return manifest, adapter.ErrUnsupportedCapability
@@ -80,6 +83,11 @@ func decodeHostedHistory(message prompty.ChatMessage) (responseHistoryManifest, 
 	}
 	if !found {
 		return manifest, prompty.ErrProviderState
+	}
+	for _, annotation := range message.MessageAnnotations {
+		if *annotation.Scope != manifest.Scope {
+			return manifest, prompty.ErrProviderState
+		}
 	}
 	return manifest, nil
 }
@@ -169,7 +177,13 @@ func responseHistoryPublicItem(source prompty.JSONDocument, index int, expected 
 		if item.Status != "completed" && item.Status != "failed" {
 			return zero, prompty.ErrProviderState
 		}
-		if preserveHostedItem(index, string(source), []string{HostedWebSearch, HostedFileSearch}, expected) != nil {
+		if preserveHostedItem(
+			index,
+			string(source),
+			[]string{HostedWebSearch, HostedFileSearch},
+			expected,
+			profile,
+		) != nil {
 			return zero, prompty.ErrProviderState
 		}
 	default:

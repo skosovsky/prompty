@@ -23,6 +23,7 @@ type PromptExecutionWire struct {
 	Format         string                `json:"format"`
 	Messages       []MessageWire         `json:"messages"`
 	Tools          []ToolWire            `json:"tools,omitempty"`
+	HostedTools    []HostedToolRequest   `json:"hosted_tools,omitempty"`
 	RequiredTools  []string              `json:"required_tools,omitempty"`
 	ForcedTool     string                `json:"forced_tool,omitempty"`
 	ModelOptions   *ModelOptionsWire     `json:"model_options,omitempty"`
@@ -98,6 +99,9 @@ func MarshalExecution(exec *PromptExecution, policy WirePolicy) (PromptExecution
 	if err := ValidateExecutionToolScope(exec); err != nil {
 		return zero, err
 	}
+	if err := ValidateHostedToolRequests(exec.HostedTools); err != nil {
+		return zero, err
+	}
 	if err := ValidateRequestCachePolicy(exec.RequestCache); err != nil {
 		return zero, err
 	}
@@ -139,6 +143,7 @@ func MarshalExecution(exec *PromptExecution, policy WirePolicy) (PromptExecution
 		Requirements:   cloneRequirements(exec.Requirements),
 		Messages:       messages,
 		Tools:          toolsToWire(exec.Tools),
+		HostedTools:    CloneHostedToolRequests(exec.HostedTools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
 		ForcedTool:     exec.ForcedTool,
 		ModelOptions:   modelOptionsToWire(exec.ModelOptions),
@@ -172,6 +177,9 @@ func UnmarshalExecution(wire PromptExecutionWire) (*PromptExecution, error) {
 	if schemaErr := ValidateWireJSON(serialized, ExecutionWireFormat); schemaErr != nil {
 		return nil, schemaErr
 	}
+	if err := ValidateHostedToolRequests(wire.HostedTools); err != nil {
+		return nil, err
+	}
 	if policyErr := ValidateSchemaPolicy(wire.Requirements.Schema); policyErr != nil {
 		return nil, policyErr
 	}
@@ -201,6 +209,7 @@ func UnmarshalExecution(wire PromptExecutionWire) (*PromptExecution, error) {
 		Requirements:   cloneRequirements(wire.Requirements),
 		Messages:       messages,
 		Tools:          toolsFromWire(wire.Tools),
+		HostedTools:    CloneHostedToolRequests(wire.HostedTools),
 		RequiredTools:  cloneStringSlice(wire.RequiredTools),
 		ForcedTool:     wire.ForcedTool,
 		ModelOptions:   modelOptionsFromWire(wire.ModelOptions, wire.Provider),

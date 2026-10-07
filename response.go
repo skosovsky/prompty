@@ -77,6 +77,9 @@ const (
 	OutcomeToolCalls  Outcome = "tool_calls"
 	OutcomeRefusal    Outcome = "refusal"
 	OutcomeIncomplete Outcome = "incomplete"
+	// OutcomePaused ends this provider operation while leaving model work resumable
+	// by an explicit caller request. It grants neither output success nor tool execution.
+	OutcomePaused Outcome = "paused"
 )
 
 // ErrResponseOutcome indicates that the provider did not complete a successful output.
@@ -126,7 +129,11 @@ type ResponseChunk struct {
 	ProviderState []PartState `json:"-" yaml:"-"`
 	// StateUpdates explicitly replace opaque state for the same logical tool call.
 	// Indices refer to Content in this frame. Other content kinds are invalid.
-	StateUpdates            []PartState `json:"-" yaml:"-"`
+	StateUpdates []PartState `json:"-" yaml:"-"`
+	// Finalizations collapse already observed logical fragments without adding
+	// content. Sources must preserve their exact semantic value and finalize before
+	// emitting source-order metadata that contains canonical part indices.
+	Finalizations           []StreamPartFinalization `json:"-" yaml:"-"`
 	Annotations             []PartAnnotation
 	MessageAnnotations      []MessageAnnotation
 	ContinuationUnavailable bool

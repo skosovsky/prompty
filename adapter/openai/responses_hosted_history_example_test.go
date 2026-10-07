@@ -25,9 +25,9 @@ func ExampleNewResponses_hostedHistory() {
 	defer server.Close()
 	manager := hostedFixtureAdapter(server)
 	created, err := manager.Create(context.Background(), prompty.RemoteResponseRequest{
-		Execution: prompty.SimplePrompt("Search"), Store: new(false), HostedTools: []prompty.HostedToolRequest{
+		Execution: withResponseHostedTools(prompty.SimplePrompt("Search"), []prompty.HostedToolRequest{
 			{Kind: HostedWebSearch}, {Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)},
-		},
+		}), Store: new(false),
 	})
 	if err != nil {
 		panic(err)

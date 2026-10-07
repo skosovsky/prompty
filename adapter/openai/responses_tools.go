@@ -89,15 +89,27 @@ func prepareResponseTools(
 	exec *prompty.PromptExecution,
 	contract responseToolContract,
 	params *responses.ResponseNewParams,
+	strict bool,
 ) error {
 	for _, tool := range exec.Tools {
 		parameters, err := prompty.SchemaDocumentAsMap(contract.schemas[tool.Name].Translated())
 		if err != nil {
 			return err
 		}
-		params.Tools = append(params.Tools, responses.ToolUnionParam{OfFunction: &responses.FunctionToolParam{
-			Name: tool.Name, Description: sdk.String(tool.Description), Parameters: parameters, Strict: sdk.Bool(false),
-		}})
+		if strict {
+			if err := validateStrictFunctionSchema(parameters); err != nil {
+				return err
+			}
+		}
+		params.Tools = append(
+			params.Tools,
+			responses.ToolUnionParam{OfFunction: &responses.FunctionToolParam{
+				Name:        tool.Name,
+				Description: sdk.String(tool.Description),
+				Parameters:  schemaSDKMap(parameters),
+				Strict:      sdk.Bool(strict),
+			}},
+		)
 	}
 	// Replace hosted preparation's explicit empty tools extra field with the final
 	// combined list, so local functions cannot be shadowed during SDK encoding.
@@ -140,7 +152,8 @@ func parseResponseFunction(
 			return prompty.ErrRemoteResponse
 		}
 	}
-	if call.Status != "" && call.Status != "completed" && call.Status != "in_progress" && call.Status != "incomplete" {
+	if call.Status != "" && call.Status != "completed" && call.Status != "in_progress" &&
+		call.Status != "incomplete" {
 		return prompty.ErrRemoteResponse
 	}
 	index := len(response.Content)
@@ -180,7 +193,10 @@ func parseResponseFunction(
 	return nil
 }
 
-func validateResponseToolSelection(response *prompty.Response, contract responseToolContract) error {
+func validateResponseToolSelection(
+	response *prompty.Response,
+	contract responseToolContract,
+) error {
 	if contract.forced == "" || response.Outcome == prompty.OutcomeRefusal ||
 		response.Outcome == prompty.OutcomeIncomplete {
 		return nil

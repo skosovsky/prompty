@@ -118,11 +118,16 @@ func thinkingState(
 }
 
 // ValidateProviderState checks scope and exact signed text before any SDK request.
-func (*Adapter) ValidateProviderState(exec *prompty.PromptExecution, destination prompty.ProfileIdentity) error {
+func (a *Adapter) ValidateProviderState(exec *prompty.PromptExecution, destination prompty.ProfileIdentity) error {
 	if err := prompty.ValidateContinuation(exec.Messages, destination, time.Now()); err != nil {
 		return err
 	}
 	for _, message := range exec.Messages {
+		if len(message.MessageAnnotations) > 0 {
+			if _, err := a.hostedHistoryMessage(message, destination); err != nil {
+				return err
+			}
+		}
 		if len(message.ProviderState) > 0 && prompty.ValidateCachePolicy(message.CachePolicy) != nil {
 			return prompty.ErrProviderState
 		}
@@ -185,6 +190,13 @@ func reasoningValue(part prompty.ContentPart) (prompty.ReasoningPart, bool) {
 }
 
 func (a *Adapter) assistantMessageWithState(message prompty.ChatMessage) (anthropic.MessageParam, error) {
+	if len(message.MessageAnnotations) > 0 {
+		manifest, err := decodeHostedHistory(message)
+		if err != nil {
+			return anthropic.MessageParam{}, err
+		}
+		return a.hostedHistoryMessage(message, manifest.Scope)
+	}
 	states := make(map[int]prompty.PartState, len(message.ProviderState))
 	for _, state := range message.ProviderState {
 		states[state.PartIndex] = state
@@ -240,6 +252,8 @@ func anthropicOutcome(reason anthropic.StopReason) prompty.Outcome {
 		return prompty.OutcomeToolCalls
 	case anthropic.StopReasonRefusal:
 		return prompty.OutcomeRefusal
+	case anthropic.StopReasonPauseTurn:
+		return prompty.OutcomePaused
 	default:
 		return prompty.OutcomeIncomplete
 	}

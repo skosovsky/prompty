@@ -59,7 +59,7 @@ func ExecuteWithTypedTools(
 	if metadataErr := ValidateResponseMetadata(resp); metadataErr != nil {
 		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: metadataErr}
 	}
-	if resp.Outcome == OutcomeRefusal || resp.Outcome == OutcomeIncomplete {
+	if resp.Outcome == OutcomeRefusal || resp.Outcome == OutcomeIncomplete || resp.Outcome == OutcomePaused {
 		return workExec, &ToolDispatchError{
 			Response: cloneResponse(resp),
 			Err:      &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason},

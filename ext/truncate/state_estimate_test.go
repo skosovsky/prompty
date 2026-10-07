@@ -89,6 +89,27 @@ func TestInvalidStateAssociationIsNotRepairedByDeletion(t *testing.T) {
 	require.Nil(t, result)
 }
 
+func TestScopedMessageMetadataIsAConservativeOpaqueDependency(t *testing.T) {
+	t.Parallel()
+	// Arrange: required message-level state has no artificial reasoning part.
+	scope := prompty.ProfileIdentity{Provider: "fixture", Endpoint: "https://fixture.invalid", Model: "model"}
+	state := prompty.NewAssistantMessage("hosted")
+	state.MessageAnnotations = []prompty.MessageAnnotation{
+		{Kind: "fixture.history", Value: prompty.JSONDocument(`{"opaque":true}`), Scope: new(scope), Required: true},
+	}
+	exec := prompty.NewExecution(
+		[]prompty.ChatMessage{prompty.NewUserMessage("old"), state, prompty.NewUserMessage("current"), state},
+	)
+	before := exec.Clone()
+	// Act.
+	result, err := Apply(t.Context(), exec, budget(1))
+	// Assert: removing only one dependent turn cannot make the estimate fit.
+	require.ErrorIs(t, err, ErrBudgetUnsatisfied)
+	require.Empty(t, result.Report.Removed)
+	require.Equal(t, before, result.Execution)
+	require.Equal(t, before, exec)
+}
+
 func TestExecutionCoverageIncludesFixedToolsAndSchemaCosts(t *testing.T) {
 	t.Parallel()
 	// Arrange: two messages fit, but declared execution estimate also counts fixed request material.

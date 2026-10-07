@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"iter"
 	"maps"
 	"strings"
 )
@@ -17,7 +18,10 @@ const (
 	CapabilityResponseContinuation = "response_continuation"
 	CapabilityResponseBackground   = "response_background"
 	CapabilityHostedWebSearch      = "hosted_web_search"
+	CapabilityHostedWebFetch       = "hosted_web_fetch"
 	CapabilityHostedFileSearch     = "hosted_file_search"
+	// CapabilityStrictTools declares provider-native conformance to local tool schemas.
+	CapabilityStrictTools = "strict_tools"
 )
 
 type RemoteResponseStatus string
@@ -59,19 +63,14 @@ type RemoteResponseHandle struct {
 	ToolCalls             map[string]string `json:"tool_calls,omitempty"`
 }
 
-// HostedToolRequest is an explicit provider tool, never a local handler binding.
-// Settings are adapter-validated JSON; arbitrary extensions are not silently sent.
-type HostedToolRequest struct {
-	Kind     string       `json:"kind"`
-	Settings JSONDocument `json:"settings,omitempty"`
-}
-
 type RemoteResponseRequest struct {
-	Execution   *PromptExecution
-	Previous    *RemoteResponseHandle
-	Background  bool
-	Store       *bool
-	HostedTools []HostedToolRequest
+	Execution  *PromptExecution
+	Previous   *RemoteResponseHandle
+	Background bool
+	Store      *bool
+	// StrictTools requires native strict enforcement for all local tools in this
+	// Create. It never permits schema lowering or enables hosted/local execution.
+	StrictTools bool
 }
 
 // RemoteResponseOperationOptions contains runtime ports and original output schema
@@ -96,6 +95,25 @@ type RemoteResponseManager interface {
 	Create(context.Context, RemoteResponseRequest) (*RemoteResponseResult, error)
 	Get(context.Context, RemoteResponseHandle, ...RemoteResponseOperationOptions) (*RemoteResponseResult, error)
 	Cancel(context.Context, RemoteResponseHandle, ...RemoteResponseOperationOptions) (*RemoteResponseResult, error)
+}
+
+// RemoteResponseStream reuses the common single-use lazy Stream lifecycle while
+// exposing separately observed remote identity. RemoteResult and Status return
+// owned snapshots; callers persist a known handle explicitly. An IO failure or
+// cancellation does not erase a previously observed handle and does not authorize
+// automatic retries, polling or continuation.
+type RemoteResponseStream interface {
+	Events() iter.Seq2[*ResponseChunk, error]
+	Close() error
+	Status() StreamStatus
+	RemoteResult() *RemoteResponseResult
+}
+
+// RemoteResponseStreamer is an optional native foreground-create port. Creating
+// the handle performs no dispatch. Background create, Get and Cancel remain
+// explicit operations of RemoteResponseManager.
+type RemoteResponseStreamer interface {
+	CreateStream(context.Context, RemoteResponseRequest) RemoteResponseStream
 }
 
 func ValidateRemoteResponseHandle(handle RemoteResponseHandle) error {

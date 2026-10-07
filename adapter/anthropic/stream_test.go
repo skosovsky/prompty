@@ -186,12 +186,12 @@ func TestNativeTextAndInterleavedTools(t *testing.T) {
 	require.Equal(t, prompty.StreamCompleted, status.State)
 	require.Equal(t, prompty.OutcomeToolCalls, status.Result.Outcome)
 	require.Equal(t, 10, status.Result.Usage.TotalTokens)
-	require.Len(t, status.Result.Content, 4)
-	require.Equal(t, "early", status.Result.Content[1].(prompty.TextPart).Text)
-	require.Equal(t, "a", status.Result.Content[2].(prompty.ToolCallPart).ID)
-	require.JSONEq(t, `{"x":1}`, status.Result.Content[2].(prompty.ToolCallPart).Args)
-	require.Equal(t, "b", status.Result.Content[3].(prompty.ToolCallPart).ID)
-	require.JSONEq(t, `{"x":2}`, status.Result.Content[3].(prompty.ToolCallPart).Args)
+	require.Len(t, status.Result.Content, 3)
+	require.Equal(t, "early", status.Result.Content[0].(prompty.TextPart).Text)
+	require.Equal(t, "a", status.Result.Content[1].(prompty.ToolCallPart).ID)
+	require.JSONEq(t, `{"x":1}`, status.Result.Content[1].(prompty.ToolCallPart).Args)
+	require.Equal(t, "b", status.Result.Content[2].(prompty.ToolCallPart).ID)
+	require.JSONEq(t, `{"x":2}`, status.Result.Content[2].(prompty.ToolCallPart).Args)
 }
 
 func TestNativeIncompleteAndConsumerBreakRetainPartial(t *testing.T) {

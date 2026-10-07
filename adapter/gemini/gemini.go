@@ -96,7 +96,14 @@ func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option
 
 // Translate converts PromptExecution into *Request (Contents + Config).
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
+	if err := adapter.RejectUnsupportedHostedTools(exec); err != nil {
+		return nil, err
+	}
+
 	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.ValidateMessageAnnotationMappings(exec, a.RuntimeDescriptor()); err != nil {
 		return nil, err
 	}
 	if err := adapter.RejectRequestCache(exec); err != nil {
@@ -111,6 +118,13 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	working := adapter.PrepareTranslateExecution(exec)
 	if err := validateGeminiCorrelation(working.Messages); err != nil {
 		return nil, err
+	}
+	if hasFunctionResultMedia(working.Messages) {
+		checked := working.Clone()
+		checked.Requirements.Capabilities = append(checked.Requirements.Capabilities, CapabilityFunctionResultMedia)
+		if _, err := adapter.Preflight(a.RuntimeDescriptor(), checked, "", true); err != nil {
+			return nil, err
+		}
 	}
 	if stateErr := a.ValidateProviderState(working, a.destinationIdentity(working)); stateErr != nil {
 		return nil, stateErr
@@ -364,13 +378,7 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 		default:
 			return nil, fmt.Errorf("%w: unexpected %T in tool message", adapter.ErrUnsupportedContentType, p)
 		}
-		// Fail-fast on MediaPart: FunctionResponse expects map[string]any (JSON), no native image support
-		for _, cp := range tr.Content {
-			if _, ok := cp.(prompty.MediaPart); ok {
-				return nil, adapter.ErrUnsupportedContentType
-			}
-		}
-		text, err := prompty.StrictTextFromParts(tr.Content)
+		response, media, err := a.functionResultParts(tr.Content)
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +386,7 @@ func (a *Adapter) toolResultContent(parts []prompty.ContentPart) (*genai.Content
 		if tr.IsError {
 			key = "error"
 		}
-		part := genai.NewPartFromFunctionResponse(tr.Name, map[string]any{key: text})
+		part := genai.NewPartFromFunctionResponseWithParts(tr.Name, map[string]any{key: response}, media)
 		part.FunctionResponse.ID = tr.ToolCallID
 		genParts = append(genParts, part)
 	}

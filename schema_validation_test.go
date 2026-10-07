@@ -134,7 +134,7 @@ func TestStructuredStreamValidatesWholeDocument(t *testing.T) {
 
 func TestStructuredStreamRefusalAndIncompleteAreNotSuccess(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []Outcome{OutcomeRefusal, OutcomeIncomplete, OutcomeToolCalls} {
+	for _, outcome := range []Outcome{OutcomeRefusal, OutcomeIncomplete, OutcomeToolCalls, OutcomePaused} {
 		t.Run(string(outcome), func(t *testing.T) {
 			t.Parallel()
 			// Arrange.

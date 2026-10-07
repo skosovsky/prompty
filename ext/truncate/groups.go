@@ -71,7 +71,7 @@ func linkTurns(graph *messageGraph, messages []prompty.ChatMessage, boundary int
 func linkOpaqueState(graph *messageGraph, messages []prompty.ChatMessage) {
 	first := -1
 	for i, message := range messages {
-		if len(message.ProviderState) == 0 {
+		if len(message.ProviderState) == 0 && !prompty.HasScopedMessageAnnotations(message.MessageAnnotations) {
 			continue
 		}
 		if first < 0 {

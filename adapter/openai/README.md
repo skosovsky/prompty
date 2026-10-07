@@ -64,9 +64,35 @@ independent audits remain required by task37, not completed by this checkpoint.
 
 ## Separate Responses operations
 
+Responses accepts its own allowlisted `ProviderSettings.reasoning_effort`
+(none/minimal/low/medium/high/xhigh) and `reasoning_summary`
+(auto/concise/detailed), validated by the endpoint/model profile's
+`ModelOptionsSchema` and `reasoning` capability. Chat settings are not inherited.
+Unsupported combinations or unknown controls fail before dispatch. Summary is
+independent of encrypted provider-state inclusion; deprecated generate_summary
+is rejected. See [reasoning controls](https://developers.openai.com/api/docs/guides/reasoning).
+
+The native strict local-tool subset accepts object root, closed objects and all
+properties required; nested schemas use type/$ref/anyOf. Allowed keywords:
+`$schema`, `$id`, `$ref`, `$defs`, `definitions`, `type`, `title`, `description`,
+`properties`, `required`, `additionalProperties`, `items`, `anyOf`, `enum`,
+`const`, `format`, `pattern`, `minimum`, `maximum`, `exclusiveMinimum`,
+`exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`. Unknown keywords and
+boolean child schemas are rejected. This mapping boundary does not certify that
+every model supports each constraint; the host verifies its profile. Strict mode
+requires original compatible schemas, never hidden closing/nullability changes.
+See [native strict tools](https://developers.openai.com/api/docs/guides/function-calling).
+Run `go test -run ExampleNewResponses_strictReasoning` for an offline actual SDK
+example with original-schema rejection before dispatch.
+
 Local ToolDefinition inputs now map to native function declarations alongside
 hosted search. ForcedTool uses native named choice with its separate capability.
-Tool schemas remain original with explicit strict=false; completed arguments
+Tool schemas remain original with explicit strict=false by default. Set
+`RemoteResponseRequest.StrictTools=true` to require native strict declarations
+for every local tool; declare `strict_tools` in the endpoint/model profile.
+Strict mode checks closed objects, required properties and the adapter's explicit
+keyword subset before dispatch, without lowering even if lowering was authorized.
+Hosted tools are unaffected. Completed arguments
 must pass original-schema validation before successful tool_calls outcome. No
 handler executes. Native call_id is the canonical tool ID, not the output item ID.
 Original function items remain required scoped opaque state. Handles persist
@@ -91,6 +117,12 @@ are referenced, never duplicated in public metadata. Edited/missing/foreign hist
 and duplicate native IDs fail before I/O. Current tools remain explicit, even empty.
 ExampleNewResponses_hostedHistory is runnable offline; no corpus CRUD or tool handler
 is introduced. Historical metadata without the manifest is not silently bridged.
+
+Hosted history records and the manifest use required scoped MessageAnnotations.
+Persist their markers with the payload; unmarked legacy hosted history is rejected.
+History reuse requires confirmed provider_state support as well as hosted feature
+knowledge, while it does not request new encrypted reasoning automatically.
+StateOmit removes this continuation metadata and marks the checkpoint unavailable.
 
 `NewResponses(accountBinding, opts...)` implements caller-driven Create/Get/Cancel
 through the Responses SDK, not Chat Completions or an Invoker fallback. Declare
@@ -119,13 +151,17 @@ subsets to total. Semantic capture uses five common stages, metadata-only defaul
 redaction, safe errors and retained accepted results on post-dispatch sink failure.
 HTTP byte fidelity/physical attempts are unsupported, not inferred from JSON.
 
-HostedTools accepts HostedWebSearch/HostedFileSearch with separate profile
+PromptExecution.HostedTools accepts HostedWebSearch/HostedFileSearch with separate profile
 capabilities. Settings are checked JSON, not request overrides: web search supports
 context size, approximate location, allowed domains and external_web_access;
 file search requires host-owned vector_store_ids and supports result limits,
 comparison/compound metadata filters and ranking options. Numeric filter values
 are sent without float rounding. Unknown/reserved/duplicate settings fail before
 I/O. No corpus CRUD, vector-store deployment or local handlers are introduced.
+
+Migration: hosted declarations now belong to the canonical execution; the former
+RemoteResponseRequest.HostedTools field is removed. Clone, execution wire and batch
+identity preserve declaration settings independently of local ToolScope.
 
 HostedSearchItems(response) projects ordered provider items from MessageAnnotations
 with original output indices/JSON, typed sources/results and honest coverage:
@@ -166,13 +202,36 @@ and retains its observed outcome and missing-state error without auto-fetching.
 A new Create with Previous uses only the new execution's state requirement.
 Get/Cancel original-schema validation does not require current native generation
 schema support. Old wire without provider_state_required is rejected, not defaulted.
-Hosted/local-tool history and expanded conformance still need implementation.
+Local/hosted history uses checked source-order manifests and scoped provider state.
+The runnable examples use local actual SDK fixtures; live account/model support
+is not verified.
 
-Local tools, broader provider-state projection and expanded conformance remain required by
-task37; unsupported inputs fail before I/O rather than disappear.
-This is not completion of the selected Responses scope. ExampleNewResponses runs
-against a local SDK fixture, as do the media and hosted examples; live account/model
-support is not verified.
+`Responses.CreateStream(ctx, request)` implements the optional
+`prompty.RemoteResponseStreamer` port for foreground native SSE. Its lazy,
+single-use handle delegates Events/Close/Status to the common Stream and exposes
+RemoteResult for an owned remote handle plus canonical partial/final response.
+The request is prepared and snapshotted without IO; consumption dispatches one
+SDK streaming request with retries disabled. Require confirmed `response_create`
+and `native_stream`, together with capabilities/settings of the actual request.
+Background streaming is rejected before IO; Get/Cancel remain explicit operations.
+
+Text, reasoning summaries, local function arguments and declared web/file-search
+records use stable logical part IDs. Complete native items finalize existing
+fragments without publishing completed content twice. Available encrypted state
+and citations survive late errors. Terminal output uses the same original schema,
+tool selection and outcome validation as Create. Native usage comes from present
+Response.Usage fields; known zero differs from absence. EOF before completion,
+contradictory identities/content and unsupported events fail with the retained
+prefix. Close cancels local transport and releases its body; it does not claim
+remote cancellation. Persist/reconcile a known remote handle explicitly.
+
+SSE capture records decoded semantic events and a separate stream end summary;
+it does not preread the body or claim HTTP-byte/physical-attempt coverage. Capture
+failure after observing an accepted resource retains its identity. Run
+`go test -run ExampleResponses_CreateStream` for an offline mixed-output example
+and a rejected background request. Expanded task43 conformance is still under
+development and has not passed independent acceptance. See the provider's
+[streaming guide](https://developers.openai.com/api/docs/guides/streaming-responses).
 
 Store intent does not guarantee durability or no retention. Current provider
 background policy can retain data temporarily even with store=false; host owns

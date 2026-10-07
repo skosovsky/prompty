@@ -70,6 +70,9 @@ type messageStreamBlock struct {
 	kind, id, name, thinking, signature, data string
 	closed, arguments                         bool
 	initialArguments                          bool
+	source                                    map[string]json.RawMessage
+	input                                     string
+	privateSource                             []byte
 }
 
 type messageStreamState struct {
@@ -79,9 +82,15 @@ type messageStreamState struct {
 	started     bool
 	stopped     bool
 	finish      string
+	published   int64
+	ids         map[string]string
+	completed   map[string]bool
 }
 
 func (s *messageStreamState) accept(event anthropic.MessageStreamEventUnion) (*prompty.ResponseChunk, error) {
+	if err := validateNativeEventSource(event); err != nil {
+		return nil, err
+	}
 	if s.stopped {
 		return nil, prompty.ErrStreamProtocol
 	}
@@ -112,8 +121,12 @@ func (s *messageStreamState) accept(event anthropic.MessageStreamEventUnion) (*p
 			return nil, prompty.ErrStreamProtocol
 		}
 		if event.Type == "content_block_stop" {
+			chunk, err := s.closeBlock(event.Index, block)
+			if err != nil {
+				return nil, err
+			}
 			block.closed = true
-			return s.closeBlock(event.Index, block)
+			return s.publishHostedPrefix(chunk)
 		}
 		return s.delta(event, block)
 	case "message_delta":
@@ -134,9 +147,12 @@ func (s *messageStreamState) accept(event anthropic.MessageStreamEventUnion) (*p
 		if s.finish == "" {
 			return nil, prompty.ErrStreamProtocol
 		}
+		chunk, err := s.finishHosted()
+		if err != nil {
+			return nil, err
+		}
 		s.stopped = true
-		return &prompty.ResponseChunk{Kind: prompty.StreamFinish, FinishReason: s.finish,
-			Outcome: anthropicOutcome(anthropic.StopReason(s.finish))}, nil
+		return chunk, nil
 	default:
 		// Unknown content/event semantics must not become successful lossy output.
 		return nil, adapter.ErrUnsupportedContentType
@@ -155,9 +171,15 @@ func (s *messageStreamState) startBlock(event anthropic.MessageStreamEventUnion)
 	value := event.ContentBlock
 	block := &messageStreamBlock{kind: value.Type, id: value.ID, name: value.Name,
 		thinking: value.Thinking, signature: value.Signature, data: value.Data}
+	if !uniqueSyntheticJSON([]byte(value.RawJSON())) || json.Unmarshal([]byte(value.RawJSON()), &block.source) != nil {
+		return nil, adapter.ErrInvalidResponse
+	}
 	s.blocks[event.Index] = block
 	switch block.kind {
 	case "text":
+		if err := validateHostedText([]byte(value.RawJSON())); err != nil {
+			return nil, err
+		}
 		chunk := blockChunk(event.Index, prompty.TextPart{Text: value.Text})
 		for _, citation := range value.Citations {
 			chunk.Annotations = append(chunk.Annotations, prompty.PartAnnotation{
@@ -181,10 +203,16 @@ func (s *messageStreamState) startBlock(event anthropic.MessageStreamEventUnion)
 		if len(object) > 0 {
 			part.ArgsChunk = string(raw["input"])
 			block.arguments, block.initialArguments = true, true
+			block.input = string(raw["input"])
 		}
 		return blockChunk(event.Index, part), nil
+	case "server_tool_use":
+		return nil, s.startHostedCall(block)
+	case "web_search_tool_result", "web_fetch_tool_result":
+		_, _, _, err := validateHostedSource([]byte(value.RawJSON()))
+		return nil, err
 	case "thinking", "redacted_thinking":
-		return nil, nil
+		return nil, block.validatePrivateStart()
 	default:
 		return nil, adapter.ErrUnsupportedContentType
 	}
@@ -196,8 +224,14 @@ func (s *messageStreamState) delta(
 	d := event.Delta
 	switch {
 	case block.kind == "text" && d.Type == "text_delta":
+		var text string
+		_ = json.Unmarshal(block.source["text"], &text)
+		block.source["text"], _ = json.Marshal(text + d.Text)
 		return blockChunk(event.Index, prompty.TextPart{Text: d.Text}), nil
 	case block.kind == "text" && d.Type == "citations_delta":
+		if err := block.appendCitation([]byte(d.Citation.RawJSON())); err != nil {
+			return nil, err
+		}
 		chunk := blockChunk(event.Index, prompty.TextPart{})
 		chunk.Annotations = []prompty.PartAnnotation{{
 			PartIndex: 0, Kind: "anthropic.citation", Value: prompty.JSONDocument(d.Citation.RawJSON()),
@@ -208,9 +242,17 @@ func (s *messageStreamState) delta(
 			return nil, prompty.ErrStreamProtocol
 		}
 		block.arguments = true
+		block.input += d.PartialJSON
 		return blockChunk(event.Index, prompty.ToolCallPart{
 			ID: block.id, Name: block.name, ArgsChunk: d.PartialJSON,
 		}), nil
+	case block.kind == "server_tool_use" && d.Type == "input_json_delta":
+		if block.initialArguments {
+			return nil, prompty.ErrStreamProtocol
+		}
+		block.arguments = true
+		block.input += d.PartialJSON
+		return nil, nil
 	case block.kind == "thinking" && d.Type == "thinking_delta":
 		block.thinking += d.Thinking
 		return nil, nil
@@ -224,10 +266,21 @@ func (s *messageStreamState) delta(
 
 func (s *messageStreamState) closeBlock(index int64, block *messageStreamBlock) (*prompty.ResponseChunk, error) {
 	switch block.kind {
+	case "server_tool_use":
+		return nil, block.finishInput()
 	case "tool_use":
-		if !block.arguments {
-			return blockChunk(index, prompty.ToolCallPart{ID: block.id, Name: block.name, ArgsChunk: "{}"}), nil
+		if err := block.finishInput(); err != nil {
+			return nil, err
 		}
+		if !block.arguments {
+			return block.finalPart(
+				index,
+				blockChunk(index, prompty.ToolCallPart{ID: block.id, Name: block.name, ArgsChunk: "{}"}),
+			)
+		}
+		return block.finalPart(index, nil)
+	case "text":
+		return block.finalPart(index, nil)
 	case "thinking", "redacted_thinking":
 		value := anthropic.ContentBlockUnion{
 			Type: block.kind, Thinking: block.thinking, Signature: block.signature, Data: block.data,
@@ -238,6 +291,10 @@ func (s *messageStreamState) closeBlock(index int64, block *messageStreamBlock) 
 		}
 		chunk := blockChunk(index, part)
 		chunk.ProviderState = []prompty.PartState{state}
+		block.privateSource = state.Envelope.Payload
+		if json.Unmarshal(state.Envelope.Payload, &block.source) != nil {
+			return nil, prompty.ErrProviderState
+		}
 		return chunk, nil
 	}
 	return nil, nil

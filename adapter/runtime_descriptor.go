@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 
 	"github.com/skosovsky/prompty"
@@ -17,6 +18,11 @@ type RuntimeDescriptor struct {
 	DefaultModel      string                      `json:"default_model"`
 	Profiles          []prompty.CapabilityProfile `json:"profiles,omitempty"`
 	ReasoningSettings []string                    `json:"reasoning_settings,omitempty"`
+	// HostedToolCapabilities binds implemented adapter kinds to profile guarantees.
+	HostedToolCapabilities map[string]string `json:"hosted_tool_capabilities,omitempty"`
+	// MessageAnnotationCapabilities gates provider history features on the same
+	// profile and operation combinations as requested execution features.
+	MessageAnnotationCapabilities map[string][]string `json:"message_annotation_capabilities,omitempty"`
 }
 
 // RuntimeDescriber is implemented by adapters that expose runtime metadata.
@@ -105,6 +111,11 @@ func (c *runtimeClient[Req, Resp]) RuntimeDescriptor() (RuntimeDescriptor, error
 func CloneRuntimeDescriptor(desc RuntimeDescriptor) RuntimeDescriptor {
 	out := desc
 	out.ReasoningSettings = slices.Clone(desc.ReasoningSettings)
+	out.HostedToolCapabilities = maps.Clone(desc.HostedToolCapabilities)
+	out.MessageAnnotationCapabilities = maps.Clone(desc.MessageAnnotationCapabilities)
+	for kind, capabilities := range out.MessageAnnotationCapabilities {
+		out.MessageAnnotationCapabilities[kind] = slices.Clone(capabilities)
+	}
 	out.Profiles = make([]prompty.CapabilityProfile, len(desc.Profiles))
 	for i, profile := range desc.Profiles {
 		out.Profiles[i] = prompty.CloneCapabilityProfile(profile)

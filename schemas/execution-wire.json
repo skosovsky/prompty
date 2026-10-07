@@ -9,6 +9,11 @@
     "metadata"
   ],
   "properties": {
+	"hosted_tools": {
+		"type": "array",
+		"items": {"type": "object", "additionalProperties": false, "required": ["kind"],
+			"properties": {"kind": {"type": "string", "minLength": 1}, "settings": {"type": "object"}}}
+	},
     "format": {
       "const": "prompty.execution.v2"
     },

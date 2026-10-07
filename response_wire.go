@@ -55,6 +55,16 @@ func projectMessages(messages []ChatMessage, policy WirePolicy) ([]ChatMessage, 
 				message.ContinuationUnavailable = message.ContinuationUnavailable || state.Envelope.Required
 			}
 			message.ProviderState = nil
+			message.MessageAnnotations = slices.DeleteFunc(
+				message.MessageAnnotations,
+				func(annotation MessageAnnotation) bool {
+					if annotation.Scope == nil {
+						return false
+					}
+					message.ContinuationUnavailable = message.ContinuationUnavailable || annotation.Required
+					return true
+				},
+			)
 		}
 	}
 	return out, nil

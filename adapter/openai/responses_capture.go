@@ -14,6 +14,7 @@ type responseCapture struct {
 	operation  string
 	dispatched bool
 	source     *responseSource
+	sseSource  *responseSSESource
 	report     prompty.ExecutionDiagnostics
 }
 
@@ -61,9 +62,16 @@ func (c *responseCapture) emit(ctx context.Context, stage prompty.CaptureStage, 
 		status := c.source.status
 		metadata.HTTPStatus = &status
 	}
+	if stage == prompty.CaptureProviderResponse && c.sseSource != nil && c.sseSource.status > 0 {
+		status := c.sseSource.status
+		metadata.HTTPStatus = &status
+	}
 	record.Projection = prompty.CaptureProjection{Payload: data, Accuracy: prompty.CaptureSemantic, Complete: true,
 		Codec: "openai.responses.operation", MediaType: "application/json",
 		Metadata: metadata}
+	if stage == prompty.CaptureProviderResponse && c.sseSource != nil {
+		record.Projection.Codec = "openai.responses.sse.event"
+	}
 	return c.session.Emit(ctx, record)
 }
 
@@ -126,6 +134,23 @@ func (c *responseCapture) finish(
 func (c *responseCapture) captureSource(ctx context.Context) error {
 	if !c.dispatched {
 		return nil
+	}
+	if c.sseSource != nil && c.sseSource.status > 0 {
+		data, err := json.Marshal(struct {
+			Events   int  `json:"events_observed"`
+			Complete bool `json:"stream_complete"`
+		}{Events: c.sseSource.events, Complete: c.sseSource.complete})
+		if err != nil {
+			return c.session.RecordFailure(prompty.CaptureProviderResponse, true, "encoding", err)
+		}
+		status := c.sseSource.status
+		return c.session.Emit(ctx, prompty.CaptureRecord{
+			Stage: prompty.CaptureProviderResponse, AfterDispatch: true,
+			Projection: prompty.CaptureProjection{Payload: data, Accuracy: prompty.CaptureSemantic,
+				Complete: c.sseSource.complete, Codec: "openai.responses.sse.end", MediaType: "application/json",
+				Metadata: prompty.CaptureRecordMetadata{HTTPStatus: &status,
+					SchemaDigests: prompty.CaptureSchemaDigests(c.report.Schemas)}},
+		})
 	}
 	if c.source != nil && c.source.complete && json.Valid(c.source.data) {
 		return c.emit(ctx, prompty.CaptureProviderResponse, json.RawMessage(c.source.data))

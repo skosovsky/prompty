@@ -63,7 +63,7 @@ func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
 	}
 	return adapter.CloneRuntimeDescriptor(adapter.RuntimeDescriptor{
 		Name: "ollama", Endpoint: endpoint, DefaultModel: a.defaultModel,
-		Profiles: a.profiles,
+		Profiles: a.profiles, ReasoningSettings: []string{"think"},
 	})
 }
 
@@ -80,7 +80,14 @@ func WithProfiles(endpoint string, profiles ...prompty.CapabilityProfile) Option
 
 // Translate converts PromptExecution into *api.ChatRequest.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, error) {
+	if err := adapter.RejectUnsupportedHostedTools(exec); err != nil {
+		return nil, err
+	}
+
 	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.ValidateMessageAnnotationMappings(exec, a.RuntimeDescriptor()); err != nil {
 		return nil, err
 	}
 	if err := adapter.RejectRequestCache(exec); err != nil {
@@ -105,8 +112,18 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			adapter.ErrUnsupportedCapability,
 		)
 	}
-	if exec.ResponseFormat != nil {
-		return nil, adapter.ErrStructuredOutputNotSupported
+	settings, err := prompty.ProviderSettingsMap(exec.ModelOptions)
+	if err != nil {
+		return nil, err
+	}
+	if _, thinking := settings["think"]; thinking || exec.ResponseFormat != nil {
+		checked := exec.Clone()
+		if thinking {
+			checked.Requirements.Capabilities = append(checked.Requirements.Capabilities, prompty.CapabilityReasoning)
+		}
+		if _, err := adapter.Preflight(a.RuntimeDescriptor(), checked, "", true); err != nil {
+			return nil, err
+		}
 	}
 	model := a.defaultModel
 	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
@@ -115,6 +132,16 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 	req := &api.ChatRequest{
 		Model:    model,
 		Messages: make([]api.Message, 0, len(working.Messages)),
+	}
+	if exec.ResponseFormat != nil {
+		mapping, err := a.MapSchema(prompty.SchemaMappingRequest{
+			Profile: prompty.ProfileIdentity{Provider: "ollama"}, Role: prompty.SchemaOutput,
+			Source: exec.ResponseFormat.Schema,
+		})
+		if err != nil {
+			return nil, err
+		}
+		req.Format = mapping.Schema
 	}
 	if exec.ModelOptions != nil {
 		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
@@ -138,7 +165,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*api.ChatRequest, er
 			if len(exec.ModelOptions.Stop) > 0 {
 				req.Options["stop"] = exec.ModelOptions.Stop
 			}
-			if err := applyOllamaProviderSettings(req.Options, providerSettings); err != nil {
+			if err := applyOllamaProviderSettings(req, providerSettings); err != nil {
 				return nil, err
 			}
 		}
@@ -458,15 +485,23 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 var _ adapter.ProviderAdapter[*api.ChatRequest, *api.ChatResponse] = (*Adapter)(nil)
 
 func ollamaProviderSettingKeys() []string {
-	return []string{"top_k", "seed", "num_ctx", "repeat_penalty"}
+	return []string{"top_k", "seed", "num_ctx", "repeat_penalty", "think"}
 }
 
-func applyOllamaProviderSettings(options map[string]any, settings map[string]any) error {
-	if options == nil || len(settings) == 0 {
+func applyOllamaProviderSettings(request *api.ChatRequest, settings map[string]any) error {
+	if len(settings) == 0 {
 		return nil
 	}
 	if err := adapter.RejectUnknownProviderSettingKeys(settings, ollamaProviderSettingKeys()); err != nil {
 		return err
+	}
+	options := request.Options
+	if raw, ok := settings["think"]; ok {
+		think := &api.ThinkValue{Value: raw}
+		if !think.IsValid() {
+			return adapter.ProviderSettingError("think", errors.New("expected boolean, null, low, medium or high"))
+		}
+		request.Think = think
 	}
 	if raw, ok := settings["top_k"]; ok {
 		topK, err := cast.ToInt32(raw)

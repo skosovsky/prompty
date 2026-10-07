@@ -76,7 +76,10 @@ func NewSyntheticOutput(opts ...Option) *SyntheticOutputAdapter {
 }
 
 func (a *SyntheticOutputAdapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
-	return a.base.RuntimeDescriptor()
+	desc := a.base.RuntimeDescriptor()
+	desc.HostedToolCapabilities = nil
+	desc.MessageAnnotationCapabilities = nil
+	return desc
 }
 
 // CaptureCoverage identifies the SDK used for semantic sync/buffered capture.
@@ -114,7 +117,13 @@ var syntheticToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 // Translate rejects conflicts without dropping caller tools or reasoning.
 func (a *SyntheticOutputAdapter) Translate(exec *prompty.PromptExecution) (*SyntheticRequest, error) {
+	if err := adapter.RejectUnsupportedHostedTools(exec); err != nil {
+		return nil, err
+	}
 	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.ValidateMessageAnnotationMappings(exec, a.RuntimeDescriptor()); err != nil {
 		return nil, err
 	}
 	if exec.Requirements.OutputMode != prompty.OutputSyntheticTool {

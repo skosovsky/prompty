@@ -78,6 +78,9 @@ func ValidateExecution(exec *prompty.PromptExecution) error {
 	if exec == nil {
 		return ErrNilExecution
 	}
+	if err := prompty.ValidateHostedToolRequests(exec.HostedTools); err != nil {
+		return err
+	}
 	if err := prompty.ValidateRequestCachePolicy(exec.RequestCache); err != nil {
 		return err
 	}
@@ -156,7 +159,7 @@ func RejectProviderState(exec *prompty.PromptExecution) error {
 		if message.ContinuationUnavailable {
 			return prompty.ErrStateUnavailable
 		}
-		if len(message.ProviderState) != 0 {
+		if len(message.ProviderState) != 0 || prompty.HasScopedMessageAnnotations(message.MessageAnnotations) {
 			return prompty.ErrProviderState
 		}
 	}

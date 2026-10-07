@@ -233,6 +233,8 @@ The [executable SDK/local-SSE example](adapter/openai/checked_example_test.go) d
 
 Read `Response.Outcome` before interpreting text as success, and `Usage.Known`/`Availability()` before interpreting zero counters. Save through `MarshalResponse` with explicit `WirePolicy`, restore through `DecodeResponseJSON`, and build continuation through `AssistantMessage` rather than copying Content alone. Required opaque state omitted for logging cannot be reused as a continuation checkpoint.
 
+Message annotations may carry provider continuation data without an artificial content part. `MessageAnnotation.Scope` binds metadata to a provider/endpoint/model (or declared model family); `Required:true` requires that scope and an implemented annotation mapping on the receiving adapter. Checked execution verifies profile guarantees and calls the provider state validator even when there is no `PartState`. `StateOmit` removes scoped annotations and marks continuation unavailable when required data was removed. Unscoped optional metadata remains caller-owned; core never decodes provider annotation payloads.
+
 Strict schema fidelity either preserves the original contract or fails before dispatch. Explicit lowering needs named permissions and final original-schema validation; JSON decode and provisional stream items are not that validation. Local tool helpers validate the whole execution-scoped batch before any handler. Capture is optional and host-projected; SDK JSON is semantic capture, not HTTP bytes or physical-attempt evidence. Request cache controls describe disposition, not hits or cache resource lifecycle.
 
 ## Migration Notes
@@ -445,3 +447,5 @@ go test -bench=BenchmarkRenderPlanExecute -benchmem ./...
 MIT. See [LICENSE](LICENSE).
 
 The [schema and JSON data contract](docs/schema-data-contract.md) defines exact dynamic numbers, reflection errors, input composition and generated presence validation. `ExtractSchema` returns both the schema and an error.
+
+Provider feature gates and migration are documented in the [capability matrix](docs/provider-capability-matrix.md). Local SDK fixtures do not establish live model support.

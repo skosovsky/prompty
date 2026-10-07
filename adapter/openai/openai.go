@@ -133,7 +133,14 @@ func schemaTypeIncludes(value any, target string) bool {
 
 // Translate converts PromptExecution into *openai.ChatCompletionNewParams.
 func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompletionNewParams, error) {
+	if err := adapter.RejectUnsupportedHostedTools(exec); err != nil {
+		return nil, err
+	}
+
 	if err := adapter.ValidateExecution(exec); err != nil {
+		return nil, err
+	}
+	if err := adapter.ValidateMessageAnnotationMappings(exec, a.RuntimeDescriptor()); err != nil {
 		return nil, err
 	}
 	if err := adapter.RejectSyntheticOutput(exec); err != nil {

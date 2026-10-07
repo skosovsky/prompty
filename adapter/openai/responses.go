@@ -30,15 +30,22 @@ func NewResponses(accountBinding string, opts ...Option) *Responses {
 func (r *Responses) RuntimeDescriptor() adapter.RuntimeDescriptor {
 	desc := r.base.RuntimeDescriptor()
 	desc.Name = "openai.responses"
-	desc.ReasoningSettings = nil
+	desc.ReasoningSettings = []string{"reasoning_effort", "reasoning_summary"}
+	desc.HostedToolCapabilities = map[string]string{HostedWebSearch: prompty.CapabilityHostedWebSearch,
+		HostedFileSearch: prompty.CapabilityHostedFileSearch}
+	desc.MessageAnnotationCapabilities = map[string][]string{
+		hostedHistoryAnnotation: {
+			prompty.CapabilityProviderState,
+		},
+		hostedItemAnnotation: {prompty.CapabilityProviderState},
+	}
 	return desc
 }
 
 var responseResourceID = regexp.MustCompile(`^resp_[A-Za-z0-9_-]+$`)
 
-func (r *Responses) preflight(
-	exec *prompty.PromptExecution,
-	capabilities ...string,
+func (r *Responses) preflightMode(
+	exec *prompty.PromptExecution, mode prompty.StreamMode, capabilities ...string,
 ) (prompty.ExecutionDiagnostics, error) {
 	var zero prompty.ExecutionDiagnostics
 	if r.base.client == nil {
@@ -56,7 +63,17 @@ func (r *Responses) preflight(
 	}
 	working := exec.Clone()
 	working.Requirements.Capabilities = append(working.Requirements.Capabilities, capabilities...)
-	return adapter.Preflight(desc, working, "", false)
+	settings, err := prompty.ProviderSettingsMap(working.ModelOptions)
+	if err != nil {
+		return zero, err
+	}
+	for _, key := range desc.ReasoningSettings {
+		if _, exists := settings[key]; exists {
+			working.Requirements.Capabilities = append(working.Requirements.Capabilities, prompty.CapabilityReasoning)
+			break
+		}
+	}
+	return adapter.Preflight(desc, working, mode, mode == prompty.StreamNative)
 }
 
 func (r *Responses) validateHandle(handle prompty.RemoteResponseHandle, profile prompty.ProfileIdentity) error {
@@ -72,10 +89,22 @@ func (r *Responses) validateHandle(handle prompty.RemoteResponseHandle, profile 
 	return nil
 }
 
-func (r *Responses) Create(
-	ctx context.Context,
+type preparedResponseCreate struct {
+	execution *prompty.PromptExecution
+	canonical prompty.RemoteResponseRequest
+	report    prompty.ExecutionDiagnostics
+	request   preparedRemoteResponse
+	handle    prompty.RemoteResponseHandle
+}
+
+// prepareCreate owns all mutable request inputs and performs no provider dispatch.
+func (r *Responses) prepareCreate(
 	input prompty.RemoteResponseRequest,
-) (*prompty.RemoteResponseResult, error) {
+	mode prompty.StreamMode,
+) (*preparedResponseCreate, error) {
+	if mode == prompty.StreamNative && input.Background {
+		return nil, adapter.ErrUnsupportedCombination
+	}
 	if input.Store == nil {
 		return nil, prompty.ErrRemoteResponse
 	}
@@ -90,6 +119,12 @@ func (r *Responses) Create(
 		input.Previous = &previous
 	}
 	capabilities := []string{prompty.CapabilityResponseCreate}
+	if input.StrictTools {
+		if len(exec.Tools) == 0 {
+			return nil, prompty.ErrRemoteResponse
+		}
+		capabilities = append(capabilities, prompty.CapabilityStrictTools)
+	}
 	for _, message := range exec.Messages {
 		if len(message.MessageAnnotations) != 0 {
 			items, historyErr := HostedSearchItems(&prompty.Response{MessageAnnotations: message.MessageAnnotations})
@@ -111,11 +146,11 @@ func (r *Responses) Create(
 			}
 		}
 	}
-	hosted, hostedCaps, err := cloneHostedRequests(input.HostedTools)
+	hosted, hostedCaps, err := cloneHostedRequests(exec.HostedTools)
 	if err != nil {
 		return nil, err
 	}
-	input.HostedTools = hosted
+	exec.HostedTools = hosted
 	// Canonical capture owns the caller's intent before checked preparation
 	// drops advisory controls from the independent dispatch execution.
 	canonicalInput := input
@@ -127,7 +162,7 @@ func (r *Responses) Create(
 	if input.Background {
 		capabilities = append(capabilities, prompty.CapabilityResponseBackground)
 	}
-	report, err := r.preflight(exec, capabilities...)
+	report, err := r.preflightMode(exec, mode, capabilities...)
 	if err != nil {
 		return nil, err
 	}
@@ -150,15 +185,29 @@ func (r *Responses) Create(
 	handle := prompty.RemoteResponseHandle{
 		Format: prompty.RemoteResponseWireFormat, Identity: report.Profile, AccountBinding: r.accountBinding,
 		Status: prompty.RemoteResponseUnknown, Background: input.Background, Store: *input.Store,
-		ProviderStateRequired: responseRequiresState(report),
+		ProviderStateRequired: responseRequiresOutputState(exec),
 		ToolSchemaDigests:     prepared.tools.digests, ForcedTool: prepared.tools.forced,
 	}
-	for _, tool := range input.HostedTools {
+	for _, tool := range exec.HostedTools {
 		handle.HostedTools = append(handle.HostedTools, tool.Kind)
 	}
 	if prepared.schema != nil {
 		handle.OutputSchemaDigest = responseSchemaBindingDigest(prepared.schema)
 	}
+	return &preparedResponseCreate{execution: exec, canonical: canonicalInput, report: report,
+		request: prepared, handle: handle}, nil
+}
+
+func (r *Responses) Create(
+	ctx context.Context,
+	input prompty.RemoteResponseRequest,
+) (*prompty.RemoteResponseResult, error) {
+	creation, err := r.prepareCreate(input, "")
+	if err != nil {
+		return nil, err
+	}
+	exec, report := creation.execution, creation.report
+	canonicalInput, prepared, handle := creation.canonical, creation.request, creation.handle
 	result := &prompty.RemoteResponseResult{Diagnostics: report}
 	capture, err := newResponseCapture("response.create", report, exec.Requirements.Capture, exec.Capture)
 	if err != nil {

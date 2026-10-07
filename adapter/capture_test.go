@@ -43,6 +43,41 @@ type captureBindingFixture struct {
 	onRecord func(prompty.CaptureRecord)
 }
 
+func TestCanonicalCaptureExplicitPartFinalization(t *testing.T) {
+	t.Parallel()
+	// Arrange: metadata-only frame closes a previously observed reasoning part.
+	var records []prompty.CaptureRecord
+	ports := captureBindingFixture{records: &records}
+	var coverage prompty.CaptureCoverage
+	coverage.Stages = make(map[prompty.CaptureStage]prompty.CaptureAccuracy)
+	coverage.Stages[prompty.CaptureCanonicalParts] = prompty.CaptureSemantic
+	session, err := prompty.NewCaptureSession(prompty.CaptureRequirement{Accuracy: prompty.CaptureSemantic},
+		&prompty.CaptureBinding{Sink: ports, Projector: ports}, coverage, prompty.ProfileIdentity{})
+	require.NoError(t, err)
+	envelope := prompty.ProviderEnvelope{Format: prompty.ProviderStateFormat,
+		Scope: prompty.ProfileIdentity{Provider: "fixture", Endpoint: "https://fixture.invalid", Model: "fixture"},
+		Codec: "opaque", Required: true, Payload: prompty.JSONDocument(`{"private":true}`)}
+	frame := &prompty.ResponseChunk{Kind: prompty.StreamDelta, Finalizations: []prompty.StreamPartFinalization{
+		{PartID: "reasoning", Content: prompty.ReasoningPart{Text: "final"}, ProviderState: &envelope},
+	}}
+	// Act.
+	err = captureCanonicalChunk(t.Context(), session, frame)
+	// Assert: capture records explicit intent and the complete canonical part.
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	var projection struct {
+		Finalizations []capturePartFinalization `json:"finalizations"`
+	}
+	require.NoError(t, json.Unmarshal(records[0].Projection.Payload, &projection))
+	require.Len(t, projection.Finalizations, 1)
+	require.Equal(t, "reasoning", projection.Finalizations[0].PartID)
+	restored, err := prompty.UnmarshalExecution(projection.Finalizations[0].Partial)
+	require.NoError(t, err)
+	require.Equal(t, []prompty.ContentPart{prompty.ReasoningPart{Text: "final"}}, restored.Messages[0].Content)
+	require.Equal(t, []prompty.PartState{{PartIndex: 0, Envelope: envelope}}, restored.Messages[0].ProviderState)
+	require.True(t, restored.Messages[0].ContinuationUnavailable)
+}
+
 func TestCanonicalCaptureStateUpdateEventSemantics(t *testing.T) {
 	t.Parallel()
 	// Arrange: a state update and ordinary state on different parts in one frame.

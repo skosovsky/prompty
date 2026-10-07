@@ -266,6 +266,7 @@ func captureCanonicalAt(
 		identity,
 		reports,
 		nil,
+		nil,
 	)
 }
 
@@ -273,6 +274,7 @@ func captureCanonicalAtWithUpdates(
 	ctx context.Context, session *prompty.CaptureSession, stage prompty.CaptureStage,
 	response *prompty.Response, errorKind string, after bool, streamKind prompty.StreamEventKind,
 	identity *prompty.StreamIdentity, reports []prompty.SchemaCompilationReport, stateUpdateParts []int,
+	finalizations []prompty.StreamPartFinalization,
 ) error {
 	var metadata prompty.CaptureRecordMetadata
 	metadata.SchemaDigests = prompty.CaptureSchemaDigests(reports)
@@ -280,6 +282,10 @@ func captureCanonicalAtWithUpdates(
 		metadata.Usage, metadata.Outcome = &response.Usage, response.Outcome
 	}
 	return emitCaptureMetadata(ctx, session, stage, after, metadata, func() ([]byte, error) {
+		finalized, err := captureFinalizations(finalizations)
+		if err != nil {
+			return nil, err
+		}
 		var wire *prompty.ResponseWire
 		var partial *prompty.PromptExecutionWire
 		var partialUsage *prompty.Usage
@@ -315,6 +321,7 @@ func captureCanonicalAtWithUpdates(
 			StreamKind          prompty.StreamEventKind      `json:"stream_kind,omitempty"`
 			StreamIdentity      *prompty.StreamIdentity      `json:"stream_identity,omitempty"`
 			StateUpdateParts    []int                        `json:"state_update_parts,omitempty"`
+			Finalizations       []capturePartFinalization    `json:"finalizations,omitempty"`
 		}{
 			Response:            wire,
 			Partial:             partial,
@@ -324,6 +331,7 @@ func captureCanonicalAtWithUpdates(
 			StreamKind:          streamKind,
 			StreamIdentity:      identity,
 			StateUpdateParts:    stateUpdateParts,
+			Finalizations:       finalized,
 		})
 	})
 }
@@ -344,5 +352,32 @@ func captureCanonicalChunk(ctx context.Context, session *prompty.CaptureSession,
 		updateParts = append(updateParts, state.PartIndex)
 	}
 	return captureCanonicalAtWithUpdates(ctx, session, prompty.CaptureCanonicalParts, response, "", true, chunk.Kind,
-		&chunk.Identity, chunk.Diagnostics.Schemas, updateParts)
+		&chunk.Identity, chunk.Diagnostics.Schemas, updateParts, chunk.Finalizations)
+}
+
+type capturePartFinalization struct {
+	PartID  string                      `json:"part_id"`
+	Partial prompty.PromptExecutionWire `json:"partial"`
+}
+
+func captureFinalizations(finalizations []prompty.StreamPartFinalization) ([]capturePartFinalization, error) {
+	var records []capturePartFinalization
+	for _, finalization := range finalizations {
+		message := prompty.ChatMessage{
+			Role:                    prompty.RoleAssistant,
+			Content:                 []prompty.ContentPart{finalization.Content},
+			Annotations:             finalization.Annotations,
+			ContinuationUnavailable: true,
+		}
+		if finalization.ProviderState != nil {
+			message.ProviderState = []prompty.PartState{{PartIndex: 0, Envelope: *finalization.ProviderState}}
+		}
+		wire, err := prompty.MarshalExecution(prompty.NewExecution([]prompty.ChatMessage{message}),
+			prompty.WirePolicy{State: prompty.StatePreserve})
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, capturePartFinalization{PartID: finalization.PartID, Partial: wire})
+	}
+	return records, nil
 }

@@ -158,8 +158,10 @@ type PromptExecution struct {
 	// CacheResource explicitly selects a scoped remote cache, not a request hint.
 	CacheResource *CacheResourceHandle `json:"cache_resource,omitempty" yaml:"cache_resource,omitempty"`
 
-	Messages       []ChatMessage
-	Tools          []ToolDefinition
+	Messages []ChatMessage
+	Tools    []ToolDefinition
+	// HostedTools declares provider execution, separate from local ToolScope/handlers.
+	HostedTools    []HostedToolRequest
 	RequiredTools  []string
 	ForcedTool     string
 	ModelOptions   *ModelOptions

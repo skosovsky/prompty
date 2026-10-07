@@ -108,6 +108,7 @@ type Stream struct {
 	frameObserver      StreamFrameObserver
 	partBindings       map[string]streamPartBinding
 	toolParts          map[string]string
+	finalizedParts     map[string]bool
 	lifecycleObservers []StreamLifecycleObserver
 	sourceCtx          context.Context
 	sourceCancel       context.CancelFunc
@@ -143,6 +144,7 @@ func NewStream(
 		sourceCancel:       sourceCancel,
 		frameObserver:      nil,
 		partBindings:       make(map[string]streamPartBinding),
+		finalizedParts:     make(map[string]bool),
 		toolParts:          make(map[string]string),
 		lifecycleObservers: nil,
 	}
@@ -393,7 +395,7 @@ func checkStreamEvent(chunk *ResponseChunk, finished bool) (bool, error) {
 	}
 	switch chunk.Kind {
 	case StreamStart, StreamDelta, StreamUsage:
-		if finished && (chunk.Kind != StreamUsage || len(chunk.Content) != 0) {
+		if finished && (chunk.Kind != StreamUsage || len(chunk.Content) != 0 || len(chunk.Finalizations) != 0) {
 			return finished, ErrStreamProtocol
 		}
 	case StreamFinish:
@@ -410,7 +412,10 @@ func checkStreamEvent(chunk *ResponseChunk, finished bool) (bool, error) {
 }
 
 func validOutcome(outcome Outcome) bool {
-	return slices.Contains([]Outcome{OutcomeCompleted, OutcomeToolCalls, OutcomeRefusal, OutcomeIncomplete}, outcome)
+	return slices.Contains(
+		[]Outcome{OutcomeCompleted, OutcomeToolCalls, OutcomeRefusal, OutcomeIncomplete, OutcomePaused},
+		outcome,
+	)
 }
 
 func (s *Stream) begin() error {
@@ -436,7 +441,10 @@ func (s *Stream) accumulate(chunk *ResponseChunk) error {
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
-	result := s.status.Result
+	result, identity := s.accumulationCandidate(len(chunk.Finalizations) != 0)
+	if err := s.rejectFinalizedContent(chunk.Identity.PartIDs); err != nil {
+		return err
+	}
 	bindings, err := checkStreamIdentity(chunk, s.status.Identity.MessageID, s.partBindings, s.toolParts)
 	if err != nil {
 		return err
@@ -466,13 +474,7 @@ func (s *Stream) accumulate(chunk *ResponseChunk) error {
 	result.ContinuationUnavailable = result.ContinuationUnavailable || chunk.ContinuationUnavailable
 	result.Content = append(result.Content, cloneContentParts(chunk.Content)...)
 	chunk.Identity.MessageID = s.status.Identity.MessageID
-	s.status.Identity.PartIDs = append(s.status.Identity.PartIDs, chunk.Identity.PartIDs...)
-	for id, binding := range bindings {
-		s.partBindings[id] = binding
-		if binding.toolID != "" {
-			s.toolParts[binding.toolID] = id
-		}
-	}
+	identity.PartIDs = append(identity.PartIDs, chunk.Identity.PartIDs...)
 	result.Usage = usage
 	if chunk.Outcome != "" {
 		result.Outcome = chunk.Outcome
@@ -482,6 +484,37 @@ func (s *Stream) accumulate(chunk *ResponseChunk) error {
 	}
 	if chunk.Diagnostics.Snapshot != "" {
 		result.Diagnostics = CloneExecutionDiagnostics(chunk.Diagnostics)
+	}
+	if err := finalizeStreamParts(result, &identity, chunk.Finalizations, s.finalizedParts); err != nil {
+		return err
+	}
+	s.status.Result, s.status.Identity = result, identity
+	for _, finalization := range chunk.Finalizations {
+		s.finalizedParts[finalization.PartID] = true
+	}
+	for id, binding := range bindings {
+		s.partBindings[id] = binding
+		if binding.toolID != "" {
+			s.toolParts[binding.toolID] = id
+		}
+	}
+	return nil
+}
+
+// Called under mu. Only finalizations need a detached candidate for atomic
+// validation; ordinary deltas retain the existing incremental allocation path.
+func (s *Stream) accumulationCandidate(finalizing bool) (*Response, StreamIdentity) {
+	if finalizing {
+		return cloneResponse(s.status.Result), cloneStreamIdentity(s.status.Identity)
+	}
+	return s.status.Result, s.status.Identity
+}
+
+func (s *Stream) rejectFinalizedContent(ids []string) error {
+	for _, id := range ids {
+		if s.finalizedParts[id] {
+			return fmt.Errorf("%w: content after logical part finalization", ErrStreamProtocol)
+		}
 	}
 	return nil
 }
@@ -526,9 +559,14 @@ func (s *Stream) materialize() error {
 func (s *Stream) revokeFailedContinuation() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.status.State == StreamRunning && len(s.status.Result.Content) != 0 {
+	if s.status.State == StreamRunning && streamHasContinuationEvidence(s.status.Result) {
 		s.status.Result.ContinuationUnavailable = true
 	}
+}
+
+func streamHasContinuationEvidence(result *Response) bool {
+	return len(result.Content) != 0 || len(result.ProviderState) != 0 ||
+		HasScopedMessageAnnotations(result.MessageAnnotations)
 }
 
 func (s *Stream) complete(state StreamState, err error) {
@@ -537,7 +575,7 @@ func (s *Stream) complete(state StreamState, err error) {
 	if s.status.State != StreamCreated && s.status.State != StreamRunning {
 		return
 	}
-	if state != StreamCompleted && len(s.status.Result.Content) != 0 {
+	if state != StreamCompleted && streamHasContinuationEvidence(s.status.Result) {
 		s.status.Result.ContinuationUnavailable = true
 	}
 	s.status.State, s.status.Err = state, err
@@ -580,6 +618,7 @@ func cloneResponseChunk(chunk *ResponseChunk) *ResponseChunk {
 	out.Content = cloneContentParts(chunk.Content)
 	out.ProviderState = clonePartStates(chunk.ProviderState)
 	out.StateUpdates = clonePartStates(chunk.StateUpdates)
+	out.Finalizations = cloneStreamFinalizations(chunk.Finalizations)
 	out.Annotations = clonePartAnnotations(chunk.Annotations)
 	out.MessageAnnotations = cloneMessageAnnotations(chunk.MessageAnnotations)
 	out.Usage.Known = slices.Clone(chunk.Usage.Known)

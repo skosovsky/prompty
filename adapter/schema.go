@@ -85,6 +85,12 @@ func (p preparedSchemas) validate(response *prompty.Response) error {
 	if response.Outcome == prompty.OutcomeRefusal || response.Outcome == prompty.OutcomeIncomplete {
 		return &prompty.OutcomeError{Outcome: response.Outcome, FinishReason: response.FinishReason}
 	}
+	if response.Outcome == prompty.OutcomePaused {
+		// Validate any local call data, but do not claim completed output schema
+		// success or turn a valid provider pause into a failed exchange.
+		_, err := p.validateToolParts(response.Content)
+		return err
+	}
 	calls, err := p.validateToolParts(response.Content)
 	if err != nil {
 		return err
@@ -110,6 +116,9 @@ func (p preparedSchemas) validate(response *prompty.Response) error {
 func validateCompiledOutput(schema *prompty.CompiledProviderSchema, parts []prompty.ContentPart) error {
 	var text strings.Builder
 	for _, part := range parts {
+		if _, reasoning := part.(prompty.ReasoningPart); reasoning {
+			continue
+		}
 		t, ok := part.(prompty.TextPart)
 		if !ok {
 			return fmt.Errorf("%w: non-text structured output", prompty.ErrSchemaMismatch)

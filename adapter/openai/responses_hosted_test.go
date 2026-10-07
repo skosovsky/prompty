@@ -20,7 +20,17 @@ func hostedFixtureAdapter(server *httptest.Server) *Responses {
 	adp := responseFixtureAdapter(server)
 	adp.base.profiles[0].Capabilities[prompty.CapabilityHostedWebSearch] = prompty.CapabilitySupported
 	adp.base.profiles[0].Capabilities[prompty.CapabilityHostedFileSearch] = prompty.CapabilitySupported
+	adp.base.profiles[0].Capabilities[prompty.CapabilityProviderState] = prompty.CapabilitySupported
 	return adp
+}
+
+func withResponseHostedTools(
+	exec *prompty.PromptExecution,
+	tools []prompty.HostedToolRequest,
+) *prompty.PromptExecution {
+	owned := exec.Clone()
+	owned.HostedTools = prompty.CloneHostedToolRequests(tools)
+	return owned
 }
 
 func TestResponsesHostedActualSDKWireAndExplicitContinuation(t *testing.T) {
@@ -53,7 +63,7 @@ func TestResponsesHostedActualSDKWireAndExplicitContinuation(t *testing.T) {
 	}
 	// Act.
 	created, err := adp.Create(t.Context(), prompty.RemoteResponseRequest{
-		Execution: prompty.SimplePrompt("search"), Store: new(false), HostedTools: tools,
+		Execution: withResponseHostedTools(prompty.SimplePrompt("search"), tools), Store: new(false),
 	})
 	require.NoError(t, err)
 	handleJSON, err := prompty.EncodeRemoteResponseHandle(*created.Handle)
@@ -122,11 +132,19 @@ func TestResponsesHostedInvalidSettingsBeforeIO(t *testing.T) {
 			adp := hostedFixtureAdapter(server)
 			// Act.
 			_, err := adp.Create(t.Context(), prompty.RemoteResponseRequest{
-				Execution: prompty.SimplePrompt("search"), Store: new(false),
-				HostedTools: []prompty.HostedToolRequest{{Kind: HostedWebSearch, Settings: []byte(settings)}},
+				Execution: withResponseHostedTools(
+					prompty.SimplePrompt("search"),
+					[]prompty.HostedToolRequest{
+						{Kind: HostedWebSearch, Settings: []byte(settings)},
+					},
+				), Store: new(false),
 			})
 			// Assert.
-			require.ErrorIs(t, err, prompty.ErrRemoteResponse)
+			if settings == "null" {
+				require.ErrorIs(t, err, prompty.ErrHostedToolRequest)
+			} else {
+				require.ErrorIs(t, err, prompty.ErrRemoteResponse)
+			}
 			require.Zero(t, calls.Load())
 		})
 	}
@@ -150,7 +168,9 @@ func TestHostedCoverageDoesNotInventUnavailableResults(t *testing.T) {
 			raw := `{"id":"fs_fixture","type":"file_search_call","status":"` + fixture.status + `","queries":[]` + fixture.suffix + `}`
 			response := prompty.NewResponse(nil)
 			// Act.
-			err := preserveHostedItem(0, raw, []string{HostedFileSearch}, response)
+			err := preserveHostedItem(0, raw, []string{HostedFileSearch}, response, prompty.ProfileIdentity{
+				Provider: "openai.responses", Endpoint: "https://fixture.invalid", Model: "fixture",
+			})
 			require.NoError(t, err)
 			items, err := HostedSearchItems(response)
 			// Assert.
@@ -175,8 +195,8 @@ func TestResponsesHostedCapabilitiesFailBeforeIO(t *testing.T) {
 			adp := responseFixtureAdapter(server)
 			// Act.
 			_, err := adp.Create(t.Context(), prompty.RemoteResponseRequest{
-				Execution: prompty.SimplePrompt("search"), Store: new(false),
-				HostedTools: []prompty.HostedToolRequest{{Kind: kind}},
+				Execution: withResponseHostedTools(prompty.SimplePrompt("search"),
+					[]prompty.HostedToolRequest{{Kind: kind}}), Store: new(false),
 			})
 			// Assert.
 			require.Error(t, err)
@@ -205,9 +225,12 @@ func TestHostedMalformedItemsDoNotBecomeSuccessfulResponse(t *testing.T) {
 			adp := hostedFixtureAdapter(server)
 			// Act.
 			result, err := adp.Create(t.Context(), prompty.RemoteResponseRequest{
-				Execution: prompty.SimplePrompt("search"), Store: new(false),
-				HostedTools: []prompty.HostedToolRequest{{Kind: HostedWebSearch},
-					{Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`)}},
+				Execution: withResponseHostedTools(prompty.SimplePrompt("search"),
+					[]prompty.HostedToolRequest{{Kind: HostedWebSearch},
+						{
+							Kind:     HostedFileSearch,
+							Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`),
+						}}), Store: new(false),
 			})
 			// Assert.
 			require.ErrorIs(t, err, prompty.ErrRemoteResponse)

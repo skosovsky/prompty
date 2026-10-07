@@ -55,6 +55,16 @@ func Preflight(
 	}
 	reasoning := checkModelOptions(&report, desc, profile, exec)
 	required := requiredCapabilities(exec, mode)
+	for _, tool := range exec.HostedTools {
+		capability, implemented := desc.HostedToolCapabilities[tool.Kind]
+		if !implemented || capability == "" {
+			report.Checks = append(report.Checks, prompty.RequirementCheck{Requirement: "hosted_tool:" + tool.Kind,
+				Status: prompty.CapabilityUnsupported, Reason: "adapter mapping unavailable"})
+		} else if !slices.Contains(required, capability) {
+			required = append(required, capability)
+		}
+	}
+	required = addHistoryRequirements(desc, exec, &report, required)
 	for _, capability := range required {
 		report.Checks = append(report.Checks, capabilityCheck(profile, capability, mode, hasNative))
 	}
@@ -69,6 +79,32 @@ func Preflight(
 		report.Checks = append(report.Checks, mimeCheck("output_mime", mime, profile.OutputMIME, profile.Provenance))
 	}
 	return report, requirementError(report)
+}
+
+func addHistoryRequirements(
+	desc RuntimeDescriptor,
+	exec *prompty.PromptExecution,
+	report *prompty.ExecutionDiagnostics,
+	required []string,
+) []string {
+	for _, message := range exec.Messages {
+		for _, annotation := range message.MessageAnnotations {
+			if _, implemented := desc.MessageAnnotationCapabilities[annotation.Kind]; annotation.Required &&
+				!implemented {
+				report.Checks = append(
+					report.Checks,
+					prompty.RequirementCheck{Requirement: "message_annotation:" + annotation.Kind,
+						Status: prompty.CapabilityUnsupported, Reason: "adapter mapping unavailable"},
+				)
+			}
+			for _, capability := range desc.MessageAnnotationCapabilities[annotation.Kind] {
+				if !slices.Contains(required, capability) {
+					required = append(required, capability)
+				}
+			}
+		}
+	}
+	return required
 }
 
 func resolveProfile(
@@ -182,7 +218,8 @@ func requiredCapabilities(exec *prompty.PromptExecution, mode prompty.StreamMode
 		required = append(required, prompty.CapabilityNativeStream)
 	}
 	for _, message := range exec.Messages {
-		if len(message.ProviderState) != 0 || message.ContinuationUnavailable {
+		if len(message.ProviderState) != 0 || message.ContinuationUnavailable ||
+			requiredMessageAnnotations(message.MessageAnnotations) {
 			required = append(required, prompty.CapabilityProviderState)
 			break
 		}

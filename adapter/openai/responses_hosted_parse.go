@@ -56,7 +56,13 @@ type hostedItemProjection struct {
 	Item        prompty.JSONDocument `json:"item"`
 }
 
-func preserveHostedItem(index int, raw string, allowed []string, response *prompty.Response) error {
+func preserveHostedItem(
+	index int,
+	raw string,
+	allowed []string,
+	response *prompty.Response,
+	scope prompty.ProfileIdentity,
+) error {
 	projection := hostedItemProjection{OutputIndex: index, Item: []byte(raw)}
 	item, err := parseHostedItem(projection)
 	if err != nil {
@@ -70,7 +76,7 @@ func preserveHostedItem(index int, raw string, allowed []string, response *promp
 		return prompty.ErrRemoteResponse
 	}
 	response.MessageAnnotations = append(response.MessageAnnotations, prompty.MessageAnnotation{
-		Kind: hostedItemAnnotation, Value: encoded,
+		Kind: hostedItemAnnotation, Value: encoded, Scope: new(scope), Required: true,
 	})
 	return nil
 }
@@ -87,6 +93,9 @@ func HostedSearchItems(response *prompty.Response) ([]HostedSearchItem, error) {
 	for _, annotation := range response.MessageAnnotations {
 		if annotation.Kind != hostedItemAnnotation {
 			continue
+		}
+		if !annotation.Required || annotation.Scope == nil {
+			return nil, prompty.ErrRemoteResponse
 		}
 		fields, err := hostedObject(annotation.Value, "output_index", "item")
 		if err != nil || len(fields) != 2 || bytes.Equal(fields["output_index"], []byte("null")) {

@@ -68,7 +68,7 @@ func TestAnthropicOutcomeAndEmptyMetadata(t *testing.T) {
 		{anthropic.StopReasonStopSequence, prompty.OutcomeCompleted},
 		{anthropic.StopReasonRefusal, prompty.OutcomeRefusal},
 		{anthropic.StopReasonMaxTokens, prompty.OutcomeIncomplete},
-		{anthropic.StopReasonPauseTurn, prompty.OutcomeIncomplete},
+		{anthropic.StopReasonPauseTurn, prompty.OutcomePaused},
 		{"future_stop_reason", prompty.OutcomeIncomplete},
 	} {
 		t.Run(string(test.reason), func(t *testing.T) {

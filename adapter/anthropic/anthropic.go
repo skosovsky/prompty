@@ -59,6 +59,13 @@ func (a *Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
 		Name: "anthropic", Endpoint: endpoint, DefaultModel: string(a.defaultModel),
 		Profiles:          a.profiles,
 		ReasoningSettings: []string{"thinking_mode", "thinking_budget", "thinking_visibility", "reasoning_effort"},
+		HostedToolCapabilities: map[string]string{HostedWebSearch: prompty.CapabilityHostedWebSearch,
+			HostedWebFetch: prompty.CapabilityHostedWebFetch},
+		MessageAnnotationCapabilities: map[string][]string{
+			hostedHistoryAnnotation:        {prompty.CapabilityProviderState},
+			hostedAnnotation("web_search"): {prompty.CapabilityHostedWebSearch},
+			hostedAnnotation("web_fetch"):  {prompty.CapabilityHostedWebFetch},
+		},
 	})
 }
 
@@ -78,6 +85,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 	if err := adapter.ValidateExecution(exec); err != nil {
 		return nil, err
 	}
+	if err := adapter.ValidateMessageAnnotationMappings(exec, a.RuntimeDescriptor()); err != nil {
+		return nil, err
+	}
 	if err := adapter.RejectRequestCache(exec); err != nil {
 		return nil, err
 	}
@@ -88,12 +98,22 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		return nil, err
 	}
 	working := adapter.PrepareTranslateExecution(exec)
+	hosted, err := prepareHostedTools(working)
+	if err != nil {
+		return nil, err
+	}
+	if len(hosted) > 0 || hasHostedHistory(working.Messages) {
+		if _, err := adapter.Preflight(a.RuntimeDescriptor(), working, prompty.StreamBuffered, true); err != nil {
+			return nil, err
+		}
+	}
 	if stateErr := a.ValidateProviderState(working, a.destinationIdentity(working)); stateErr != nil {
 		return nil, stateErr
 	}
 	params := &anthropic.MessageNewParams{
 		MaxTokens: defaultMaxTokens,
 		Model:     a.defaultModel,
+		Tools:     hosted,
 	}
 	if exec.ModelOptions != nil {
 		if exec.ModelOptions.Model != "" {
@@ -705,6 +725,9 @@ func (a *Adapter) ParseResponseForProfile(
 				)
 			}
 			out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
+		case "server_tool_use", "web_search_tool_result", "web_fetch_tool_result":
+			// Hosted execution remains provider metadata; source validation below
+			// checks types and call/result linkage without authorizing a handler.
 		default:
 			blockType := block.Type
 			if blockType == "" {
@@ -724,6 +747,9 @@ func (a *Adapter) ParseResponseForProfile(
 	resp := prompty.NewResponse(out)
 	resp.ProviderState = states
 	resp.Annotations = annotations
+	if err := preserveHostedHistory(msg, resp, destination); err != nil {
+		return nil, err
+	}
 	resp.Outcome = outcome
 	usage, usageErr := usageFromAnthropic(msg.Usage)
 	resp.Usage = usage

@@ -39,10 +39,10 @@ func TestResponsesRequiredStateHandleSDKGetAndFreshCreate(t *testing.T) {
 	exec.Requirements.Capabilities = []string{prompty.CapabilityProviderState}
 	// Act.
 	accepted, err := manager.Create(t.Context(), prompty.RemoteResponseRequest{
-		Execution: exec, Store: new(true), Background: true,
-		HostedTools: []prompty.HostedToolRequest{{Kind: HostedWebSearch}, {
-			Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`),
-		}},
+		Execution: withResponseHostedTools(exec,
+			[]prompty.HostedToolRequest{{Kind: HostedWebSearch}, {
+				Kind: HostedFileSearch, Settings: []byte(`{"vector_store_ids":["vs_fixture"]}`),
+			}}), Store: new(true), Background: true,
 	})
 	require.NoError(t, err)
 	document, err := prompty.EncodeRemoteResponseHandle(*accepted.Handle)

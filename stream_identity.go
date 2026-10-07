@@ -9,7 +9,8 @@ import (
 
 // StreamIdentity is local logical correlation, not a provider or physical-attempt ID.
 // PartIDs aligns with frame Content, or with retained Result.Content in status/terminal.
-// Repeated IDs across frames refer to the same logical part; source fragments remain distinct.
+// Repeated IDs across frames refer to the same logical part. Text/reasoning
+// fragments stay distinct until the source explicitly finalizes their logical part.
 type StreamIdentity struct {
 	MessageID string   `json:"message_id"`
 	PartIDs   []string `json:"part_ids,omitempty"`
