@@ -102,7 +102,7 @@ func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.Re
 		return nil, err
 	}
 	usage, usageErr := usageFromOllama(&raw)
-	frame := &prompty.ResponseChunk{Kind: prompty.StreamDelta, Content: parts, Usage: usage}
+	frame := &prompty.ResponseChunk{Kind: prompty.StreamDelta, Model: raw.Model, Content: parts, Usage: usage}
 	if !hasContent {
 		frame.Kind = prompty.StreamUsage
 	}

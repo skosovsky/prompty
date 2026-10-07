@@ -25,6 +25,7 @@ const (
 type WirePolicy struct{ State StateProjection }
 
 type ResponseWire struct {
+	Model                   string               `json:"model,omitempty"`
 	Format                  string               `json:"format"`
 	Content                 []ContentPartWire    `json:"content"`
 	ProviderState           []PartState          `json:"provider_state,omitempty"`
@@ -112,7 +113,7 @@ func MarshalResponse(response *Response, policy WirePolicy) (ResponseWire, error
 	usage := response.Usage
 	usage.Known = slices.Clone(usage.Known)
 	return ResponseWire{
-		Format: ResponseWireFormat, Content: content, ProviderState: messages[0].ProviderState,
+		Format: ResponseWireFormat, Model: response.Model, Content: content, ProviderState: messages[0].ProviderState,
 		Annotations: messages[0].Annotations, ContinuationUnavailable: messages[0].ContinuationUnavailable,
 		MessageAnnotations: messages[0].MessageAnnotations,
 		Usage:              usage, Outcome: response.Outcome, FinishReason: response.FinishReason,
@@ -170,6 +171,7 @@ func UnmarshalResponse(wire ResponseWire) (*Response, error) {
 	usage := wire.Usage
 	usage.Known = slices.Clone(usage.Known)
 	return &Response{
+		Model:                   wire.Model,
 		Content:                 content,
 		ProviderState:           clonePartStates(wire.ProviderState),
 		Annotations:             clonePartAnnotations(wire.Annotations),

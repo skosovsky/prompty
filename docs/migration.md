@@ -1,0 +1,36 @@
+# Clear-break migration: tasks38–43
+
+These contracts replace previous behaviour. Regenerate and validate persisted data
+at the application boundary; no compatibility loader, wrapper or instruction to
+ignore admission errors is supplied. The [capability matrix](provider-capability-matrix.md)
+is the current implementation map. [task37 migration](task37/migration.md) remains
+historical evidence for its own checkpoint, not the state of the current tree.
+
+| Change | Required consumer action | Executable contract / evidence |
+| --- | --- | --- |
+| 38: ExtractSchema now returns schema and error; malformed explicit providers do not fall back to reflection | Handle the error; provide explicit schema for recursive/custom codecs and unsupported inference | [schema contract](schema-data-contract.md), [reflection](../schema_reflect.go) |
+| 38: dynamic numbers are exact json.Number; composition rejects conflicting property/root constraints | Remove float64 assumptions and local schema override expectations; preserve original validation separately from domain Validate | [JSON document](../jsondoc.go), [composition](../manifest/compose.go) |
+| 38: generated DTOs validate original schema and track presence, not nonzero | Regenerate recipes/DTOs. Required zero/false/empty can be valid; optional nullable pointer layers distinguish missing/null/value. Generated numeric fields use json.Number | [generator](../cmd/prompty-gen/gen/schema.go), [schema contract](schema-data-contract.md) |
+| 39: explicit empty ToolScope.Allowed denies all tools; nil scope differs | Use WithToolScope; supply required definitions and exact schemas/dialects/capabilities. Do not mutate a retained scope or use a broader registry as admission | [tool contract](tool-execution-contract.md), [scope](../tool_contract.go) |
+| 39: handlers and tool invocation receive context.Context | Change ToolHandler.Handle, constructor callbacks, TypedTool.Invoke and ToolInvoker.InvokeTool signatures/calls. Propagate context to IO; handle retained result + error/cancellation | [binding](../tool_binding.go), [orchestration](../tool_orchestration.go) |
+| 39: execution wire is prompty.execution.v2 with explicit scope | Persist/restore with designated MarshalExecution/UnmarshalExecution, not arbitrary json.Marshal of execution. Old wire markers are rejected; runtime recipe scope is explicitly rebound | [execution wire](../wire.go), [tool contract](tool-execution-contract.md) |
+| 40: captured immutable source generation replaces Verify then separate Plan | Use CaptureManifest/VerifiedManifestPlan and the capture port for custom verified registries; retain the captured snapshot under host restore policy. Ordinary BYOT Registry remains a low-level unverified path | [source contract](source-snapshot-contract.md), [snapshot](../manifest_snapshot.go) |
+| 40: source descriptors and compiled wire version3 replace old digest/compiled constructors | Regenerate checkpoints/constructors; create compiled checkpoints FromRenderPlan(ctx, capturedPlan), not by rereading registry. Bind immutable remote revisions explicitly; mutable capture is not atomic remote revision | [source contract](source-snapshot-contract.md), [compiled checkpoint](../internal/compiled) |
+| 42: Gemini source arguments and native result IDs preserved; unverifiable SDK floats fail | Use adapter-owned observed IO/encoding paths or exact caller numeric representations. Preserve native IDs; declare tool_name_correlation for ID-less histories, never invent IDs from names | [exchange contract](provider-exchange-contract.md), [Gemini source](../adapter/gemini/response_source.go) |
+| 42: IsError is preserved only with a native mapping; Ollama reasoning interleaving limited | Handle explicit unsupported errors on Chat/Responses/Ollama error results; use Gemini output/error or Anthropic is_error when appropriate. Keep Ollama reasoning as a contiguous prefix | [exchange contract](provider-exchange-contract.md), [Ollama continuation fixtures](../adapter/ollama/reasoning_continuation_test.go) |
+| 41: DropOldest/DropOldestStrategy/TruncateWithStrategy and message Strategy.Truncate removed | Use execution-based Apply with explicit estimator, protection/removal policy and report. Default middleware blocks unsatisfied budgets; advisory is explicit. Message estimates do not guarantee whole-request limits | [budget migration](../ext/truncate/README.md), [middleware](../middleware/contextx/README.md) |
+| 43: RemoteResponseRequest.HostedTools removed | Move declarations to PromptExecution.HostedTools; keep adapter-owned kinds/settings separate from local ToolScope. Clone/wire/batch identity preserve declarations | [hosted contract](../hosted_tools.go), [matrix](provider-capability-matrix.md) |
+| 43: hosted history requires scoped Required MessageAnnotations and a verified source-order manifest | Retain complete AssistantMessage via StatePreserve. Unmarked/edited/foreign history is rejected. StateOmit revokes continuation when required metadata is omitted; private state stays in envelopes | [annotation scope](../provider_state.go), [Anthropic history](../adapter/anthropic/hosted_history.go), [Responses history](../adapter/openai/responses_hosted_history.go) |
+| 43: Anthropic pause_turn is OutcomePaused | Distinguish pause from completed/incomplete/refused. Persist known response and explicitly choose a new request; typed output/tool helpers do not accept pause as success or handler permission | [outcomes](../response.go), [pause fixture](../adapter/anthropic/paused_test.go) |
+| 43: Responses native stream/strict controls, Ollama Format/Think and Gemini image results require explicit profiles | Select existing ports and allowed settings/feature combinations. No native-to-buffered/synthetic fallback, model-name inference or hidden strict-schema rewriting. Close lazy streams and inspect partial Status/RemoteResult | [matrix](provider-capability-matrix.md), [Responses stream example](../adapter/openai/responses_stream_example_test.go), [Ollama example](../adapter/ollama/format_think_example_test.go), [Gemini example](../adapter/gemini/function_result_media_example_test.go) |
+
+Restore validators/transports/capture policy explicitly; runtime ports and credentials
+are not persisted. Error results can retain known provider output/usage/identity;
+inspect that evidence before host reconciliation. Library cancellation does not
+roll back tool effects, cancel a remote job automatically, or authorize retry.
+
+Historical independent acceptance and checks remain in
+[task38](../.cursor/task/reports/task38/), [task39](../.cursor/task/reports/task39/),
+[task40](../.cursor/task/reports/task40/), [task42](../.cursor/task/reports/task42/),
+[task41](../.cursor/task/reports/task41/) and [task43](../.cursor/task/reports/task43/).
+They attest their frozen snapshots; current documentation is separate evidence.

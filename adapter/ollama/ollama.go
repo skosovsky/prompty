@@ -419,6 +419,7 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 		return nil, adapter.ErrEmptyResponse
 	}
 	result := prompty.NewResponse(out)
+	result.Model = resp.Model
 	result.FinishReason = resp.DoneReason
 	result.Outcome = prompty.OutcomeIncomplete
 	if resp.Done && resp.DoneReason == "stop" {
@@ -571,6 +572,7 @@ func partialOllamaFailure(raw *api.ChatResponse, parts []prompty.ContentPart, ca
 		return nil, cause
 	}
 	response := prompty.NewResponse(parts)
+	response.Model = raw.Model
 	response.Outcome = "" // Failed argument decoding cannot confirm completion.
 	response.ContinuationUnavailable = true
 	usage, err := usageFromOllama(raw)

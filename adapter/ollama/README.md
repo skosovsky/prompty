@@ -19,7 +19,7 @@ For exact numeric arguments, construct `NewHTTPChatClient(endpointURL, hostHTTPC
 
 Ordinary tools are mapped, but native named-tool selection is not implemented. ForcedTool now fails with `adapter.ErrUnsupportedCapability`, including raw Translate, instead of adding a system instruction. A profile override cannot create that mapping; use ordinary tools without the forced guarantee or a supported adapter.
 
-Bind caller-owned `WithProfiles(endpoint, profiles...)` to the actual injected client/model. Required unknown support fails before dispatch. SDK representability is not model capability evidence. See the [migration guide](../../docs/task37/migration.md).
+Bind caller-owned `WithProfiles(endpoint, profiles...)` to the actual injected client/model. Required unknown support fails before dispatch. SDK representability is not model capability evidence. See the [migration guide](../../docs/migration.md).
 
 `WithClient` alone no longer implies the default endpoint. Checked execution requires `WithProfiles(actualEndpoint)` even without capability profiles; configure the SDK URL from the same caller-owned value. Missing/blank binding fails before translation or dispatch. An execution override cannot replace this binding, and the adapter does not inspect SDK-private configuration.
 
@@ -36,3 +36,5 @@ These new features also require profile knowledge for direct `Translate`. For na
 - **Helpers:** `prompty.StrictTextFromParts`, `prompty.JoinAdapterTextParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama) for the full API.
+
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.

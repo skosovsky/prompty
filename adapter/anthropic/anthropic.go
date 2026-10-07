@@ -745,6 +745,11 @@ func (a *Adapter) ParseResponseForProfile(
 		return nil, adapter.ErrEmptyResponse
 	}
 	resp := prompty.NewResponse(out)
+	model, modelErr := observedMessageModel(msg)
+	resp.Model = model
+	if modelErr != nil {
+		resp.ContinuationUnavailable = true
+	}
 	resp.ProviderState = states
 	resp.Annotations = annotations
 	if err := preserveHostedHistory(msg, resp, destination); err != nil {
@@ -759,7 +764,7 @@ func (a *Adapter) ParseResponseForProfile(
 	if err := prompty.ValidatePartAssociations(resp.Content, resp.ProviderState, resp.Annotations); err != nil {
 		return nil, err
 	}
-	return resp, usageErr
+	return resp, errors.Join(modelErr, usageErr)
 }
 
 var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] = (*Adapter)(nil)

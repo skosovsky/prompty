@@ -246,7 +246,7 @@ func (c *clientImpl[Req, Resp]) bufferedEvents(
 		}
 		if !yield(&prompty.ResponseChunk{
 			Identity: prompty.StreamIdentity{MessageID: "", PartIDs: bufferedPartIDs(len(resp.Content))},
-			Content:  resp.Content, Usage: resp.Usage, Kind: kind,
+			Model:    resp.Model, Content: resp.Content, Usage: resp.Usage, Kind: kind,
 			ProviderState: resp.ProviderState, Annotations: resp.Annotations,
 			MessageAnnotations:      resp.MessageAnnotations,
 			ContinuationUnavailable: resp.ContinuationUnavailable,

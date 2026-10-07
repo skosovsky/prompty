@@ -26,6 +26,10 @@ func (h *responseStreamHandle) Events() iter.Seq2[*prompty.ResponseChunk, error]
 	return h.stream.Events()
 }
 
+func (h *responseStreamHandle) ObserveLifecycle(observer prompty.StreamLifecycleObserver) error {
+	return h.stream.ObserveLifecycle(observer)
+}
+
 func (h *responseStreamHandle) Close() error { return h.stream.Close() }
 
 func (h *responseStreamHandle) Status() prompty.StreamStatus { return h.stream.Status() }

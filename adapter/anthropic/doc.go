@@ -1,4 +1,7 @@
-// Package anthropic provides a prompty adapter for the Anthropic Messages API.
+// Package anthropic provides checked Messages, explicit synthetic output and Message Batches ports.
+// Versioned hosted search/fetch retain scoped source history across sync/native/batch.
+// OutcomePaused requires explicit caller continuation and never authorizes local handlers.
+// The separate synthetic profile does not implement hosted tools or native streaming.
 // Translate returns *anthropic.MessageNewParams; ParseResponse expects *anthropic.Message.
 // Caller-owned effective profiles gate native output, reasoning, cache controls
 // and combinations. StreamEvents supplies native Messages SSE; use explicit buffered

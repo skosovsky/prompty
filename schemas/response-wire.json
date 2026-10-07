@@ -4,6 +4,7 @@
   "type": "object", "additionalProperties": false,
   "required": ["format", "content", "usage", "outcome", "diagnostics"],
   "properties": {
+    "model": {"type": "string"},
     "format": {"const": "prompty.response"},
     "content": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/part"}},
     "provider_state": {"type": "array", "items": {"$ref": "https://prompty.invalid/wire-common#/$defs/state"}},

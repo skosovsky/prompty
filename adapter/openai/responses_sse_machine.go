@@ -71,7 +71,7 @@ func (s *responseSSEMachine) accept(event responses.ResponseStreamEventUnion) ([
 			return nil, prompty.ErrStreamProtocol
 		}
 		s.started = true
-		frames := []*prompty.ResponseChunk{{Kind: prompty.StreamStart,
+		frames := []*prompty.ResponseChunk{{Kind: prompty.StreamStart, Model: event.Response.Model,
 			Diagnostics: prompty.CloneExecutionDiagnostics(s.creation.report)}}
 		usage, usageErr := responseSSELifecycleUsage(&event.Response)
 		return append(frames, usage...), usageErr

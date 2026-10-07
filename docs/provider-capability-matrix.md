@@ -1,51 +1,67 @@
-# Provider capability mappings
+# Provider capability matrix
 
-Profiles are caller-owned knowledge for the exact provider, endpoint and effective
-model. The following table describes implemented mappings, not live account/model
-certification. Offline SDK fixtures exercise request serialization and response
-protocols. A field in an SDK or a familiar model name does not establish support.
+This is the current implementation map, including accepted tasks38–43. It is not a
+model catalogue or live account certification. SDK versions below are pinned in
+the adapter modules. The evidence column links implementation and offline fixtures;
+fixtures exercise serialization, local admission and protocol interpretation.
+Historical [task37 evidence](task37/) records its own checkpoint and is unchanged.
 
-| Endpoint and operation | Mapping | Required knowledge and limits |
-| --- | --- | --- |
-| OpenAI Responses foreground Create | `reasoning_effort`, `reasoning_summary` | `reasoning` and the profile's ModelOptionsSchema. Effort: none/minimal/low/medium/high/xhigh; summary: auto/concise/detailed. The profile may narrow them. Summary does not request encrypted state. |
-| OpenAI Responses foreground Create | `RemoteResponseRequest.StrictTools` | Explicit `strict_tools`, local tools, original schemas compatible with the adapter's strict subset. Closed objects and all properties required; no implicit schema rewriting. Returned arguments still validate against the original schema. |
-| OpenAI Responses foreground CreateStream | Native SDK SSE | `response_create`, `native_stream`, plus actual features and combinations. Text, summary/encrypted state, function arguments, supported hosted search/citations and late usage; partial output and observed handle retained on failure. No Get polling, reconnect or automatic resume. |
-| OpenAI Responses Get/Cancel/background | Explicit existing remote operations | Independent operation knowledge; background is selected explicitly. These operations do not acquire native streaming or strict generation requirements automatically. |
-| Ollama Chat and native stream | Native Format from original output schema | `structured_output`; completed output validates against original schema. Nonterminal JSON is provisional. No prompt/synthetic fallback. |
-| Ollama Chat and native stream | Top-level Think | `reasoning` and ModelOptionsSchema; bool/null/low/medium/high are mapped where explicitly supported. No model-name inference. |
-| Gemini GenerateContent sync/stream/batch | Multimodal function results | `gemini.function_result_media`, tool knowledge and InputMIME. Text plus PNG/JPEG/WebP, preserving ToolCallID and order. Developer backend: inline bytes; Vertex: inline bytes or valid `gs://bucket/object`. No implicit upload/download. |
-| Anthropic Messages sync/native stream/batch | Versioned hosted declarations and source history | `hosted_web_search` / `hosted_web_fetch`, actual operation combinations, and `provider_state` for required continuation metadata. Search `web_search_20250305`; fetch `web_fetch_20250910`. Server calls/results/errors remain hosted records. |
-| Anthropic synthetic output | Separate checked synthetic mapping | Hosted declarations/history have no implemented port and fail before dispatch. Native streaming is unsupported for this separate adapter. |
+**Implemented** means a port exists; a caller-owned profile must still confirm the
+exact provider, actual endpoint, effective model, MIME types, settings and feature
+combinations. **Unknown** means that knowledge is absent. **Unsupported** means the
+mapping/port is absent or the declared profile rejects it. Neither may be promoted
+to support by a model name, SDK field, profile override or silent fallback.
 
-## Portable continuation and migration
+Checked generation uses `adapter.NewClient`/`NewRuntimeClient`; separate Responses,
+batch and resource managers perform their own operation admission. Raw
+Translate/SDK Execute/ParseResponse does not provide the complete checked
+profile/schema lifecycle. Some raw mappers reject impossible contracts themselves;
+that does not confer the guarantees of the checked path. Explicit `StreamBuffered`
+uses synchronous execution; it never satisfies `native_stream`. No port implements
+agent loops, model discovery, automatic resume/polling or host retry policy.
 
-Declare hosted tools in `PromptExecution.HostedTools`; the former Responses-only
-request field has been removed. Each kind has an adapter-owned closed settings
-contract. Unknown kinds, settings, shapes and profile combinations fail before IO.
+| Adapter / API / pinned SDK | Operation and stream | Local / hosted tools | Reasoning controls and continuation | Output / media and result shapes | Batch / cache | Code and offline evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenAI Chat Completions; openai-go/v3 v3.24.0 | Checked sync, buffered and native SDK SSE; lazy single-use native lifecycle | Native functions and named ForcedTool; hosted unsupported; results text-only, IsError unsupported | `reasoning_effort` requires reasoning + profile ModelOptionsSchema; no opaque reasoning-state mapper | Native strict JSON schema with explicit named lowering permissions when selected; final original validation; user image/audio/file MIME mapping | Separate Chat batch; implicit-prefix request controls | [mapper](../adapter/openai/openai.go), [schema](../adapter/openai/schema.go), [checked SDK example](../adapter/openai/checked_example_test.go), [native protocol](../adapter/openai/stream_contract_test.go), [result rejection](../adapter/openai/tool_error_contract_test.go) |
+| OpenAI Responses; same SDK, profile provider `openai.responses` | Explicit foreground Create and native CreateStream; background Create selected explicitly; no native background streaming or Get polling | Native local functions, call_id correlation and forced selection; StrictTools opt-in requires strict_tools and compatible original closed/all-required schemas; hosted web/file search | effort none/minimal/low/medium/high/xhigh; summary auto/concise/detailed via profile options schema. Summary does not request encrypted state. Private original items use scoped envelopes | Native JSON schema/original final validation; ordered text, PNG/JPEG/WebP/GIF input bytes/HTTP(S), document URL/inline PDF; function results text/image/PDF arrays, IsError unsupported; no audio/video output | Request implicit-prefix controls; Responses batch unsupported | [request](../adapter/openai/responses_request.go), [strict](../adapter/openai/responses_tools.go), [controls fixture](../adapter/openai/responses_controls_test.go), [input fixture](../adapter/openai/responses_input_test.go), [result fixture](../adapter/openai/responses_function_result_test.go), [native mixed SSE](../adapter/openai/responses_stream_conformance_test.go) |
+| OpenAI Responses; same endpoint binding | Explicit Get / Cancel / Previous continuation; operation capabilities separate from generation | Original tool/schema bindings required for retrieval; current declarations are explicit on new Create | Retains observed handle/status and known partial result; encrypted-state requirement persisted. Cancel closes remote operation only when provider acknowledges; local Close does not claim remote cancel | Same original validation for retrieved output; missing/changed bindings fail before IO | No automatic reconciliation or persistence | [operations](../adapter/openai/responses.go), [operation-only fixtures](../adapter/openai/responses_operation_options_test.go), [state retrieval](../adapter/openai/responses_state_retrieve_test.go), [stream close](../adapter/openai/responses_stream_close_test.go) |
+| OpenAI Responses hosted search; same SDK | Create/native CreateStream and explicit history replay | HostedWebSearch / HostedFileSearch in execution.HostedTools; checked closed settings; no local handler, corpus CRUD or vector-store deployment | Required scoped message records + verified output-order manifest; private state referenced, not copied; StateOmit revokes continuation | Ordered native sources/results with unknown/unavailable/available/partial coverage; text citations retain binding | No hosted execution service in core | [hosted mapper](../adapter/openai/responses_hosted_request.go), [records fixture](../adapter/openai/responses_hosted_test.go), [history SDK example](../adapter/openai/responses_hosted_history_example_test.go), [mixed stream](../adapter/openai/responses_stream_test.go) |
+| OpenAI Batch; same SDK, Chat endpoint only | Submit / Get / Cancel / Results; no generation stream | Checked Chat requests and original result bindings; no handlers | Same applicable Chat contracts | Native file JSONL preserves per-item source, outcomes and usage; job/download/correlation/item success are separate | Caller-bound BatchFileTransport; optional NewBatchFiles SDK port; no Responses/embeddings batch | [manager](../adapter/openai/batch.go), [files](../adapter/openai/batch_files.go), [fault fixtures](../adapter/openai/batch_test.go), [example](../adapter/openai/batch_example_test.go) |
+| Anthropic Messages; anthropic-sdk-go v1.26.0 | Checked sync/buffered/native Messages SSE | Local tool_use and named ForcedTool; is_error and supported text/media result blocks | thinking_mode/budget/visibility/reasoning_effort gated by profile options schema; signed/redacted blocks in required scoped state | Native OutputConfig.Format with original validation; image bytes/URL, PDF bytes/URL, text/plain inline document; MIME required | Ephemeral block markers, separate batch | [mapper](../adapter/anthropic/anthropic.go), [state](../adapter/anthropic/state.go), [schema fixture](../adapter/anthropic/native_output_test.go), [native example](../adapter/anthropic/stream_example_test.go), [cache fixture](../adapter/anthropic/cache_test.go) |
+| Anthropic hosted Messages; same SDK | Sync/native stream/batch + explicit pause continuation | Only web_search_20250305 and web_fetch_20250910; server calls/results/errors stay hosted annotations, never local ToolCallPart | pause_turn → OutcomePaused; no automatic resume or handler permission; verified source-order manifest + private-state digests; required metadata scope | Search/fetch citations and exact nullable fields; fetched text/PDF document source preserved without download | Hosted declarations participate in batch digests; synthetic profile unsupported | [declarations](../adapter/anthropic/hosted_request.go), [source](../adapter/anthropic/hosted_source.go), [history](../adapter/anthropic/hosted_history.go), [stream fixtures](../adapter/anthropic/hosted_stream_test.go), [batch fixtures](../adapter/anthropic/hosted_batch_test.go), [offline example](../adapter/anthropic/hosted_example_test.go) |
+| Anthropic SyntheticOutputAdapter; same SDK | Explicit sync/buffered received-result validation; native stream unsupported | One named synthetic output tool; real tools/ForcedTool conflict; hosted declarations/history unsupported | Incoming supported signed state checked; manual enabled thinking conflicts with synthetic mode | OutputSyntheticTool + caller response name and separate synthetic/tools/forced-selection profile; final original-schema validation, no constrained-decoding claim | Not an implicit native-output fallback | [mapper](../adapter/anthropic/synthetic.go), [fixture/example](../adapter/anthropic/synthetic_example_test.go), [buffered fixture](../adapter/anthropic/synthetic_buffered_test.go) |
+| Anthropic Message Batches; same SDK | Submit / Get / Cancel / Results | Checked ordinary Messages items, local and supported hosted parsing, no handlers | Same state/pause source contract | Bounded original JSONL and original execution binding; per-item outcomes/usage separate from ended job | Multiple models allowed with individual profiles; no scheduler/retry | [manager](../adapter/anthropic/batch.go), [results](../adapter/anthropic/batch_results.go), [fault fixtures](../adapter/anthropic/batch_test.go), [example](../adapter/anthropic/batch_example_test.go) |
+| Gemini GenerateContent; google.golang.org/genai v1.48.0; Developer API and Vertex | Checked sync/buffered/native SSE | Native functions, ForcedTool ANY + one name; native call IDs, explicit name-only correlation capability for ID-less history; output/error result key | thinking/budget/level require profile schema; original signed parts and source ordinals retain interleaved continuation | Strict typed schema subset: type/properties/required/items/description/enum; unsupported keywords fail, no lowering. URI/inline input parts; backend/MIME profile remains caller-owned | Separate Developer batch and managed cache ports | [mapper](../adapter/gemini/gemini.go), [schema](../adapter/gemini/schema.go), [source fidelity](../adapter/gemini/response_source.go), [exchange fixtures](../adapter/gemini/exchange_precision_test.go), [native fixture](../adapter/gemini/stream_test.go), [source binding fixture](../adapter/gemini/mixed_source_binding_test.go) |
+| Gemini Google Search grounding; same SDK | GenerateContent sync/native mapped setting | `gemini_search_grounding=true` selects native GoogleSearch; distinct from canonical hosted declarations and local handlers | Candidate grounding/citation metadata stays message-level, provider indices are not invented canonical part indices | Ordered metadata updates retain exact observed JSON; host owns rendering/redaction | No search service or model inference | [setting mapper](../adapter/gemini/gemini.go), [request fixture](../adapter/gemini/gemini_test.go), [metadata fixtures](../adapter/gemini/message_metadata_test.go) |
+| Gemini Vertex incremental arguments; same SDK | Native only; explicit gemini.partial_args and tools/native profile | Path/value progress is provisional annotation; final complete Args snapshot; provider IDs may interleave | Signed partial original parts + state updates/ordinals; completed verified Vertex continuation only | MLDev mapping unsupported; no JSON ArgsChunk emulation; sync/buffered rejected | No implicit backend switch | [partial stream](../adapter/gemini/partial_stream.go), [partial state](../adapter/gemini/partial_state.go), [offline example](../adapter/gemini/partial_example_test.go), [state fixtures](../adapter/gemini/partial_state_test.go) |
+| Gemini multimodal function results; both backends | Sync/native/batch checked translation | gemini.function_result_media; preserve native ToolCallID/name, output/error and ordered text + image refs | Existing signature/order rules retained | PNG/JPEG/WebP inline bytes both backends; gs://bucket/object URI only Vertex; query/fragment/userinfo and other MIME rejected; no upload/download | Same canonical execution/result representation | [mapper](../adapter/gemini/function_result_media.go), [SDK fixtures](../adapter/gemini/function_result_media_test.go), [offline example](../adapter/gemini/function_result_media_example_test.go) |
+| Gemini Developer Batch; same SDK | Inline NewBatches or file-backed NewFileBatches: Submit / Get / Cancel / Results | Checked GenerateContent items + original result contracts | Same source-number/state parsing | Native keys/JSONL, separate remote/download/correlation/item outcomes; one model | Vertex batch, embeddings and inline file-result fallback unsupported; host file transport explicit | [inline](../adapter/gemini/batch.go), [file](../adapter/gemini/batch_file.go), [fixtures](../adapter/gemini/batch_test.go), [file example](../adapter/gemini/batch_file_example_test.go) |
+| Gemini CachedContent; same SDK | Create / Get / UpdateExpiry / Delete; generation reuse separate | Explicit immutable system/tools contract, conflicting base reuse rejected | Scope/account/expiry checked; no implicit recache | Resource TokenCount known-zero/unknown separate from billed generation usage | Caller TTL/expiry; capability cache_reuse + WithCacheAccountBinding for generation; no store/cleanup worker | [manager](../adapter/gemini/cache_resources.go), [dispatch](../adapter/gemini/cache_resources.go), [SDK fixtures](../adapter/gemini/cache_resources_test.go), [offline example](../adapter/gemini/cache_resources_example_test.go) |
+| Ollama Chat; ollama v0.17.4 | Checked sync/buffered/native Chat callbacks; exact NewHTTPChatClient NDJSON port | Native functions and explicit name correlation; ForcedTool unsupported; text-only results, IsError unsupported | think bool/null/low/medium/high requires reasoning + profile schema, even false/null. Contiguous ReasoningPart prefix maps Message.Thinking; later interleaving rejected; no opaque-state mapper | Native original object schema → Format; final original validation, fragments provisional; user inline image only, URL resolution explicit | Batch/managed cache/block markers unsupported; no invented implicit-cache mapping | [mapper](../adapter/ollama/ollama.go), [exact HTTP](../adapter/ollama/chat_http.go), [format schema](../adapter/ollama/schema.go), [SDK fixtures](../adapter/ollama/capabilities_task43_test.go), [thinking continuation](../adapter/ollama/reasoning_continuation_test.go), [offline example](../adapter/ollama/format_think_example_test.go) |
+| Request caching across generation adapters | Checked intent, not a cache-resource lifecycle or hit guarantee | Does not change tool execution | Profile-scoped disposition only | OpenAI Chat/Responses prompt_cache_key + retention; Anthropic block markers/TTL; Gemini only profile-known implicit prefix, no fabricated request field; Ollama unmapped intent rejected/diagnosed | Required unknown/unsupported fails; advisory omission is diagnostic | [generic admission](../adapter/request_cache.go), [OpenAI mapper + fixture](../adapter/openai/request_cache_test.go), [Anthropic fixture](../adapter/anthropic/cache_test.go), [Gemini fixture](../adapter/gemini/cache_dispatch_test.go), [generic negatives](../adapter/cache_combination_test.go) |
 
-Hosted history records use required scoped `MessageAnnotations` and a verified
-source-order manifest. Preserve them with response/execution wire `StatePreserve`
-and pass the unchanged `AssistantMessage` into an explicit caller request. Core
-checks scope and required mappings without decoding provider DTOs. Missing legacy
-markers, foreign destinations and edited source fail before dispatch. `StateOmit`
-removes scoped annotations and revokes continuation when required metadata is lost.
-Private signed state remains in provider envelopes, not duplicated into manifests.
+## Shared fidelity and observation boundary
 
-Anthropic `pause_turn` maps to `OutcomePaused`. It completes the current transport
-operation but does not claim completed structured output or authorize execution
-of local handlers. Callers choose when and whether to issue another request. The
-library supplies no resume loop, browser executor, sandbox or session service.
+Checked schema admission compiles original contracts before IO. Explicit lowering
+requires named permissions and never replaces final original-schema validation.
+Refusal, incomplete and paused outputs are outcomes, not successful structured
+values. Known usage zero remains distinct from unknown; cache/reasoning subsets
+are not added twice to total. Tool helpers admit the whole scoped batch before
+handlers and propagate the invocation context. See [schema contract](schema-data-contract.md),
+[exchange contract](provider-exchange-contract.md) and [migration](migration.md).
 
-`RemoteResponseStreamer` is an optional native port. Canonical stream part
-finalization seals observed fragments against complete provider output; unknown
-mandatory events, malformed consumed source fields and inconsistent terminal output produce explicit errors. SDK coercion does not establish source fidelity.
-Consumers should use canonical stream/result APIs instead of treating semantic
-capture as HTTP bytes. Cancellation and premature EOF retain available partial
-output and usage while revoking unfinished continuation.
+Source observation is adapter-local, bounded and used where SDK conversion would
+lose numeric/state fidelity. Direct SDK float DTOs without source cannot establish
+original precision; exact JSON numbers or Go integers are accepted where documented.
+This does not make semantic capture HTTP-byte evidence or a count of physical
+attempts. Capture defaults to host-projected metadata and does not imply telemetry
+of prompt/tool/reasoning/opaque content. Separate remote/batch/cache operations do
+not pass through ordinary Invoker middleware; use explicit extension observation
+wrappers for those ports. See [telemetry extension](../ext/otelprompty/README.md).
 
-## Verification boundary
-
-Task43 passed independent completeness and error acceptance using offline SDK conformance checks. Local protocol
-fixtures are runnable offline; live support requires separate caller verification
-for the configured account, endpoint, model and selected feature combinations.
-See adapter READMEs for concrete examples, settings and rejected forms.
+Core is the module boundary for contracts, templates, local/embed registries,
+parser/manifest and schema/runtime/codegen consumer types. Vendor SDKs stay in four
+adapter modules; remote Git, generator, telemetry and example modules remain
+optional. [go.work](../go.work) is the authoritative workspace inventory. There is
+no browser executor, sandbox, session service, pricing catalogue or durable agent
+memory hidden behind these mappings.

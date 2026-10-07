@@ -46,13 +46,23 @@ var (
 	ErrStreamMode     = errors.New("prompty: explicit native or buffered stream mode required")
 )
 
+// StreamStopReason records the observed cause of local stream interruption.
+type StreamStopReason string
+
+const (
+	StreamStopConsumer StreamStopReason = "consumer_stop"
+	StreamStopClosed   StreamStopReason = "closed"
+	StreamStopCanceled StreamStopReason = "canceled"
+)
+
 // StreamStatus remains readable after early termination. Result is a cloned snapshot.
 type StreamStatus struct {
-	Identity StreamIdentity
-	State    StreamState
-	Mode     StreamMode
-	Result   *Response
-	Err      error
+	StopReason StreamStopReason
+	Identity   StreamIdentity
+	State      StreamState
+	Mode       StreamMode
+	Result     *Response
+	Err        error
 }
 
 // StreamFinalizer validates a cloned assembled result after source EOF and trailing
@@ -131,11 +141,12 @@ func NewStream(
 		mu:     sync.Mutex{},
 		used:   false,
 		status: StreamStatus{
-			Identity: StreamIdentity{MessageID: rand.Text(), PartIDs: nil},
-			State:    StreamCreated,
-			Mode:     mode,
-			Result:   &Response{},
-			Err:      nil,
+			StopReason: "",
+			Identity:   StreamIdentity{MessageID: rand.Text(), PartIDs: nil},
+			State:      StreamCreated,
+			Mode:       mode,
+			Result:     &Response{},
+			Err:        nil,
 		},
 		finalizer:          nil,
 		chunkValidator:     nil,
@@ -193,12 +204,15 @@ func (s *Stream) Status() StreamStatus {
 // immediately; a running iterator publishes final status after unwind/closeout.
 // It is safe to call concurrently and repeatedly, including from a callback.
 func (s *Stream) Close() error {
-	s.cancel()
 	s.mu.Lock()
+	if s.status.State == StreamCreated || s.status.State == StreamRunning {
+		s.status.StopReason = StreamStopClosed
+	}
 	if s.status.State == StreamCreated {
 		s.status.State, s.status.Err = StreamCanceled, context.Canceled
 	}
 	s.mu.Unlock()
+	s.cancel()
 	return nil
 }
 
@@ -220,6 +234,7 @@ func (s *Stream) Events() iter.Seq2[*ResponseChunk, error] {
 		}
 		stopped, err := s.consume(yield)
 		if stopped {
+			s.markConsumerStopped()
 			err = s.observeCapture(errors.Join(context.Canceled, err))
 			s.complete(StreamCanceled, err)
 			return
@@ -238,6 +253,17 @@ func (s *Stream) Events() iter.Seq2[*ResponseChunk, error] {
 			state = failureState(err)
 		}
 		s.deliverTerminal(yield, state, err)
+	}
+}
+
+func (s *Stream) markConsumerStopped() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.StopReason == "" {
+		s.status.StopReason = StreamStopConsumer
+		if s.ctx.Err() != nil {
+			s.status.StopReason = StreamStopCanceled
+		}
 	}
 }
 
@@ -411,6 +437,21 @@ func checkStreamEvent(chunk *ResponseChunk, finished bool) (bool, error) {
 	return finished, nil
 }
 
+func updateObservedResponseMetadata(result *Response, chunk *ResponseChunk) {
+	if chunk.Model != "" {
+		result.Model = chunk.Model
+	}
+	if chunk.Outcome != "" {
+		result.Outcome = chunk.Outcome
+	}
+	if chunk.FinishReason != "" {
+		result.FinishReason = chunk.FinishReason
+	}
+	if chunk.Diagnostics.Snapshot != "" {
+		result.Diagnostics = CloneExecutionDiagnostics(chunk.Diagnostics)
+	}
+}
+
 func validOutcome(outcome Outcome) bool {
 	return slices.Contains(
 		[]Outcome{OutcomeCompleted, OutcomeToolCalls, OutcomeRefusal, OutcomeIncomplete, OutcomePaused},
@@ -476,15 +517,7 @@ func (s *Stream) accumulate(chunk *ResponseChunk) error {
 	chunk.Identity.MessageID = s.status.Identity.MessageID
 	identity.PartIDs = append(identity.PartIDs, chunk.Identity.PartIDs...)
 	result.Usage = usage
-	if chunk.Outcome != "" {
-		result.Outcome = chunk.Outcome
-	}
-	if chunk.FinishReason != "" {
-		result.FinishReason = chunk.FinishReason
-	}
-	if chunk.Diagnostics.Snapshot != "" {
-		result.Diagnostics = CloneExecutionDiagnostics(chunk.Diagnostics)
-	}
+	updateObservedResponseMetadata(result, chunk)
 	if err := finalizeStreamParts(result, &identity, chunk.Finalizations, s.finalizedParts); err != nil {
 		return err
 	}
@@ -578,6 +611,9 @@ func (s *Stream) complete(state StreamState, err error) {
 	if state != StreamCompleted && streamHasContinuationEvidence(s.status.Result) {
 		s.status.Result.ContinuationUnavailable = true
 	}
+	if state == StreamCanceled && s.status.StopReason == "" {
+		s.status.StopReason = StreamStopCanceled
+	}
 	s.status.State, s.status.Err = state, err
 }
 
@@ -586,7 +622,7 @@ func (s *Stream) deliverTerminal(yield func(*ResponseChunk, error) bool, state S
 	status := s.Status()
 	yield(&ResponseChunk{
 		Identity: status.Identity,
-		Kind:     StreamTerminal, Result: status.Result, Outcome: status.Result.Outcome,
+		Model:    status.Result.Model, Kind: StreamTerminal, Result: status.Result, Outcome: status.Result.Outcome,
 		Usage: status.Result.Usage, FinishReason: status.Result.FinishReason,
 	}, status.Err)
 }
@@ -597,6 +633,9 @@ func failureState(err error) StreamState {
 	}
 	return StreamFailed
 }
+
+// CloneResponse returns an isolated response including opaque state and diagnostics.
+func CloneResponse(resp *Response) *Response { return cloneResponse(resp) }
 
 func cloneResponse(resp *Response) *Response {
 	if resp == nil {

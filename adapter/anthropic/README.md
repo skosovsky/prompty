@@ -53,8 +53,7 @@ Neither grants permission for automatic retry; Cancel may race ended processing.
 Optional semantic capture uses common host redaction/acknowledgement policy, not
 HTTP-byte or physical-attempt evidence. ExampleNewMessageBatches and local SDK
 fault fixtures are runnable; live model/account support remains unverified.
-OpenAI/Gemini batch transports and expanded conformance/final audits are still
-required by task37, not replaced by this provider checkpoint.
+See the current [matrix](../../docs/provider-capability-matrix.md) for separate OpenAI/Gemini batch ports and their fixtures; task37 reports remain historical evidence.
 
 Checked `ForcedTool` needs `CapabilityForcedToolSelection` in the effective profile in addition to `CapabilityTools`; the adapter maps native named tool choice. This is separate from native output schemas and does not promise an infallible provider response.
 
@@ -82,7 +81,7 @@ messages:
 
 ## Implemented mappings
 
-Bind caller-owned `WithProfiles(endpoint, profiles...)` to the injected transport/effective model. SDK field mapping is not universal model support. Required cache controls, native output and reasoning settings need explicit profile knowledge. See the [migration guide](../../docs/task37/migration.md).
+Bind caller-owned `WithProfiles(endpoint, profiles...)` to the injected transport/effective model. SDK field mapping is not universal model support. Required cache controls, native output and reasoning settings need explicit profile knowledge. See the [migration guide](../../docs/migration.md).
 
 `WithClient` alone no longer implies the default endpoint. Checked execution requires `WithProfiles(actualEndpoint)` even without capability profiles; configure the SDK URL from the same caller-owned value. Missing/blank binding fails before translation or dispatch. An execution override cannot replace this binding, and the adapter does not inspect SDK-private configuration.
 
@@ -98,3 +97,5 @@ Bind caller-owned `WithProfiles(endpoint, profiles...)` to the injected transpor
 - **Helpers:** `prompty.StrictTextFromParts`, `prompty.JoinAdapterTextParts`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/anthropic) for the full API.
+
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.

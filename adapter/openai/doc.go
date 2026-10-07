@@ -1,4 +1,7 @@
-// Package openai provides a prompty adapter for the OpenAI Chat Completions API.
+// Package openai provides separate prompty Chat Completions, Responses and Batch ports.
+// Responses Create/Get/Cancel and foreground native CreateStream have independent
+// checked operation contracts; hosted search is distinct from local tools.
+// Batch targets Chat Completions only and has explicit caller-bound file transport.
 // Translate returns *openai.ChatCompletionNewParams; ParseResponse expects *openai.ChatCompletion.
 // Checked clients require effective endpoint/model knowledge for requested
 // guarantees. Native StreamEvents supplies a lazy single-use checked stream;

@@ -104,7 +104,7 @@ func (s *messageStreamState) accept(event anthropic.MessageStreamEventUnion) (*p
 		}
 		s.started = true
 		usage, err := s.mergeUsage(event.Message.Usage.RawJSON())
-		return &prompty.ResponseChunk{Kind: prompty.StreamStart, Usage: usage}, err
+		return &prompty.ResponseChunk{Kind: prompty.StreamStart, Model: string(event.Message.Model), Usage: usage}, err
 	}
 	if !s.started {
 		return nil, prompty.ErrStreamProtocol

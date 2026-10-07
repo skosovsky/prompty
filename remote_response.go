@@ -103,6 +103,8 @@ type RemoteResponseManager interface {
 // cancellation does not erase a previously observed handle and does not authorize
 // automatic retries, polling or continuation.
 type RemoteResponseStream interface {
+	// ObserveLifecycle attaches to the original lazy stream without consuming it.
+	ObserveLifecycle(StreamLifecycleObserver) error
 	Events() iter.Seq2[*ResponseChunk, error]
 	Close() error
 	Status() StreamStatus

@@ -99,6 +99,8 @@ func (*OutcomeError) Unwrap() error { return ErrResponseOutcome }
 
 // Response is the canonical full model response for sync calls.
 type Response struct {
+	// Model is the provider-reported response model; empty means unobserved.
+	Model                   string               `json:"model,omitempty"`
 	Content                 []ContentPart        `json:"content"`
 	ProviderState           []PartState          `json:"-"                                  yaml:"-"`
 	Annotations             []PartAnnotation     `json:"annotations,omitempty"`
@@ -121,6 +123,8 @@ func NewResponse(parts []ContentPart) *Response {
 // ResponseChunk is one chunk of the stream.
 // In streaming providers Usage and FinishReason are typically populated only in the final chunk.
 type ResponseChunk struct {
+	// Model preserves an observed response model independently of request/profile.
+	Model string
 	// Identity references the handle's local message and logical content parts.
 	// Sources declare PartIDs aligned with Content and leave MessageID empty.
 	// On terminal events PartIDs instead aligns with Result.Content.

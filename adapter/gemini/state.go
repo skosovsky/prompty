@@ -32,6 +32,7 @@ func parseGeminiResponse(
 	if len(raw.Candidates) == 0 {
 		if raw.PromptFeedback != nil && raw.PromptFeedback.BlockReason != "" {
 			return &prompty.Response{
+				Model:        raw.ModelVersion,
 				Outcome:      prompty.OutcomeRefusal,
 				FinishReason: string(raw.PromptFeedback.BlockReason),
 				Usage:        geminiUsage(raw),
@@ -47,6 +48,7 @@ func parseGeminiResponse(
 		return nil, err
 	}
 	response := &prompty.Response{
+		Model:        raw.ModelVersion,
 		Outcome:      geminiOutcome(candidate.FinishReason),
 		FinishReason: string(candidate.FinishReason),
 		Usage:        geminiUsage(raw),

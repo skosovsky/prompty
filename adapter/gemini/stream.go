@@ -203,7 +203,7 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 	if len(raw.Candidates) > 1 || (len(raw.Candidates) == 1 && raw.Candidates[0] == nil) {
 		return nil, adapter.ErrInvalidResponse
 	}
-	frame := &prompty.ResponseChunk{Kind: prompty.StreamUsage}
+	frame := &prompty.ResponseChunk{Kind: prompty.StreamUsage, Model: raw.ModelVersion}
 	var frameErr error
 	groundingChunks := s.groundingChunks
 	if len(raw.Candidates) == 1 {

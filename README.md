@@ -141,7 +141,7 @@ With `WithEnvironment(env)`, only `{name}.{env}.json|yaml|yml` are resolved (str
 | `github.com/skosovsky/prompty/adapter/gemini`    | `*gemini.Request`                 | Default model + overrides (`WithModel`, `ModelOptions.Model`); generic media URI/bytes     |
 | `github.com/skosovsky/prompty/adapter/ollama`    | `*api.ChatRequest`                | Native Ollama tools                                                                        |
 
-Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.StrictText()` for fail-closed plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. When URL media is unsupported by the target adapter, call `exec.ResolvedMedia(ctx, fetcher)` first; otherwise the adapter returns `adapter.ErrMediaNotResolved`. Media downloading is an explicit caller-owned step; `mediafetch.DefaultFetcher` provides an injectable HTTPS/image fetcher, not arbitrary document resolution or a host egress policy.
+Each adapter implements `Translate(exec) (Req, error)` where Req is the provider request type; `ParseResponse(raw)` returns `*prompty.Response`; use `resp.StrictText()` for fail-closed plain text. `PromptExecution.ModelOptions` carries typed model overrides such as `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop`. **Tool result:** `ToolResultPart.Content` is `[]ContentPart` (multimodal). Adapters that do not support media in tool results return `adapter.ErrUnsupportedContentType` when `MediaPart` is present. **Media:** OpenAI and Gemini can map URL media natively for supported types; Anthropic supports URL inputs for `image/*` and `application/pdf`; Ollama requires resolved inline images. Where the target mapping requires inline image data, call `exec.ResolvedMedia(ctx, fetcher)` explicitly; resolving a URL does not implement an unsupported MIME, role or tool-result shape. Media downloading is an explicit caller-owned step; `mediafetch.DefaultFetcher` provides an injectable HTTPS/image fetcher, not arbitrary document resolution or a host egress policy.
 
 ## Provider settings
 
@@ -159,14 +159,14 @@ model_options:
 
 Supported `provider_settings` keys:
 
-- OpenAI: `presence_penalty`, `frequency_penalty`, `seed`, `logprobs`, `top_logprobs`, `reasoning_effort`
-- Gemini: `top_k`, `presence_penalty`, `frequency_penalty`, `stop_sequences`, `thinking`, `thinking_budget`, `thinking_level`, `gemini_search_grounding`
+- OpenAI Chat: `presence_penalty`, `frequency_penalty`, `seed`, `logprobs`, `top_logprobs`, `reasoning_effort`; separate Responses: `reasoning_effort`, `reasoning_summary`
+- Gemini: `stream_function_call_arguments` (Vertex native only), `top_k`, `presence_penalty`, `frequency_penalty`, `stop_sequences`, `thinking`, `thinking_budget`, `thinking_level`, `gemini_search_grounding`
 - Anthropic: `top_k`, `stop_sequences`, `thinking_mode`, `thinking_budget`, `thinking_visibility`, `reasoning_effort`
-- Ollama: `top_k`, `seed`, `num_ctx`, `repeat_penalty`
+- Ollama: `top_k`, `seed`, `num_ctx`, `repeat_penalty`, `think` (top-level native thinking control)
 
 Provider settings validation is fail-closed: unknown keys or invalid values return `adapter.ErrInvalidProviderSettings` (no silent ignore).
 
-Reasoning settings additionally require a caller-owned `CapabilityProfile.ModelOptionsSchema` for the effective endpoint/model on checked execution. It validates the full `ModelOptions` object and allowed combinations; absent knowledge is unknown and fails before dispatch. Declared schema/resources are local or explicitly injected, never fetched implicitly. SDK mappings are not a claim that all models support the listed settings. See [migration](docs/task37/migration.md) for explicit modes and the removed OpenAI model-name heuristics.
+Reasoning settings additionally require a caller-owned `CapabilityProfile.ModelOptionsSchema` for the effective endpoint/model on checked execution. It validates the full `ModelOptions` object and allowed combinations; absent knowledge is unknown and fails before dispatch. Declared schema/resources are local or explicitly injected, never fetched implicitly. SDK mappings are not a claim that all models support the listed settings. See [migration](docs/migration.md) for current clear-break contracts and [task37 migration](docs/task37/migration.md) for earlier explicit modes and the removed OpenAI model-name heuristics.
 
 ## Architecture
 
@@ -199,7 +199,7 @@ Core contracts do not own model routing, retries, agent loops, storage, IAM or s
 
 Output/tool definitions carry an optional `Dialect`, preserved by clone and execution wire. Empty selects `SchemaDialect2020`; set `SchemaDialect7` explicitly for a schema declaring that dialect. Checked preparation and structured/tool helpers reject incompatible declarations or unavailable validation before dispatch. The runtime validator port is not persisted; rebind it after restore when using explicit resources or application-specific validation. Schema validation precedes domain `Validate()` and is not replaced by successful Go decoding.
 
-Final source validation separates `ErrSchemaJSONDecode` (invalid/truncated/multiple documents) from `ErrSchemaMismatch` (valid JSON violating constraints). Invalid-document errors do not become repairable `ValidationError` or executor domain feedback. Incremental syntax remains `ErrStructuredStream`; provider refusal/incomplete remain outcome errors. See [schema mapping and validation evidence](docs/task37/schema-conformance.md).
+Final source validation separates `ErrSchemaJSONDecode` (invalid/truncated/multiple documents) from `ErrSchemaMismatch` (valid JSON violating constraints). Invalid-document errors do not become repairable `ValidationError` or executor domain feedback. Incremental syntax remains `ErrStructuredStream`; provider refusal/incomplete remain outcome errors. See [current schema/data contract](docs/schema-data-contract.md) and [historical task37 schema evidence](docs/task37/schema-conformance.md).
 
 ```go
 stream := client.ExecuteStream(ctx, exec, prompty.StreamNative)
@@ -216,7 +216,7 @@ status := stream.Status()
 _ = status // inspect State, Err and Result even after early consumer stop
 ```
 
-Choose `StreamBuffered` explicitly for a synchronous request exposed through the stream lifecycle; it cannot satisfy native requirements. OpenAI, Anthropic, Gemini and Ollama adapters now have initial native transports and protocol fixtures, not a universal supported-model catalogue. Gemini signed incremental binding and expanded provider conformance remain required unfinished work. No automatic replay occurs after partial output.
+Choose `StreamBuffered` explicitly for a synchronous request exposed through the stream lifecycle; it cannot satisfy native requirements. OpenAI, Anthropic, Gemini and Ollama adapters have native transports and offline protocol fixtures; endpoint/model support remains caller-owned. Gemini Vertex signed incremental arguments retain verified source ordering/state; Developer API incremental arguments remain unsupported. The [capability matrix](docs/provider-capability-matrix.md) links implemented operations and offline fixtures. No automatic replay occurs after partial output.
 
 Custom native sources use `ResponseChunk.StateUpdates` to explicitly replace
 opaque state for the same source-proven logical tool call. Bind each update to
@@ -239,7 +239,7 @@ Strict schema fidelity either preserves the original contract or fails before di
 
 ## Migration Notes
 
-This change is a clear break: old iterator/IsFinished semantics, adjacency-based tool assembly, Type-only cache hints and implicit synthetic structured-output tools are removed. No compatibility bridge or lossy legacy-wire restore is supplied. See the [migration guide](docs/task37/migration.md), [contract specification](docs/task37/contracts.md) and [release/issue closeout checklist](docs/task37/release-closeout.md). All five owner-selected extension directions are required, including a new explicit synthetic-output profile; unfinished operations are not delivered features, and implementation progress is not a release announcement.
+This change is a clear break: old iterator/IsFinished semantics, adjacency-based tool assembly, Type-only cache hints and implicit synthetic structured-output tools are removed. No compatibility bridge or lossy legacy-wire restore is supplied. See the [current clear-break migration](docs/migration.md) and [capability matrix](docs/provider-capability-matrix.md). The [task37 contracts](docs/task37/contracts.md) and [release/issue closeout checklist](docs/task37/release-closeout.md) retain historical checkpoint evidence, not a claim about current live support.
 
 Regression gates: `make lint` and `make test` across all modules, including race checks and generator fixtures.
 
@@ -401,7 +401,7 @@ for attempt := 0; attempt < maxAttempts; attempt++ {
 
 ## Prompt Security (Data Isolation)
 
-To prevent prompt injection (e.g. user input closing a trusted XML-like tag), escape user content and use randomized delimiters so the model cannot guess them. Example in a message template:
+To prevent delimiter collisions (e.g. user input closing an XML-like tag), escape user content and use randomized delimiters to reduce accidental or exact delimiter reuse; this is data formatting, not an authorization boundary. Example in a message template:
 
 ```yaml
 {{ $delim := randomHex 8 }}
@@ -410,7 +410,7 @@ To prevent prompt injection (e.g. user input closing a trusted XML-like tag), es
 </data_{{ $delim }}>
 ```
 
-- **escapeXML** — uses `html.EscapeString`; keeps user text from being interpreted as markup.
+- **escapeXML** — uses `html.EscapeString`; escapes markup characters; it does not prevent a model from following instructions inside that text.
 - **randomHex** — e.g. `randomHex 8` yields a 16-character hex string; use in opening and closing tags so the delimiter is unpredictable.
 
 See `examples/secure_prompt` for a runnable example.
@@ -432,7 +432,7 @@ cd adapter/ollama && go build . && go test . && cd ../..
 cd remoteregistry/git && go build . && go test . && cd ../..
 ```
 
-Ensure `go.work` includes: `.`, `./adapter/openai`, `./adapter/anthropic`, `./adapter/gemini`, `./adapter/ollama`, `./remoteregistry/git`.
+`go.work` is the authoritative module inventory; `make lint` and `make test` cover all workspace modules and generated consumers.
 
 **Benchmarks:** the library is optimized for zero-allocation rendering (sync.Pool). To check allocs/op and B/op (and ensure PRs do not regress them), run:
 

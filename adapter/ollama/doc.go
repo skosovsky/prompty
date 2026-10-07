@@ -1,7 +1,8 @@
 // Package ollama provides a prompty adapter for the Ollama Chat API.
 // Translate returns *api.ChatRequest; ParseResponse expects *api.ChatResponse.
 // Caller-owned effective profiles gate requested guarantees. Native streaming
-// uses Chat callbacks; native constrained output and opaque-state translation are not implemented.
+// uses Chat callbacks. Native Format and Think require explicit effective profiles;
+// completed output validates against the original schema. Opaque-state translation is unsupported.
 // Explicit buffered streaming preserves available outcome/usage. Tool schemas
 // must survive actual SDK serialization without field loss or numeric rounding.
 //

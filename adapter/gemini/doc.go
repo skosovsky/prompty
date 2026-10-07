@@ -3,7 +3,7 @@
 // Caller-owned effective profiles gate requested guarantees. Native streaming
 // uses bounded original SSE JSON, complete tool snapshots and no sync fallback.
 // Explicit CapabilityIncrementalToolArguments enables Vertex path/value progress;
-// signed incremental calls remain unsupported. Candidate citations/grounding are
+// signed incremental calls retain verified Vertex source ordering/state; MLDev mapping is unsupported. Candidate citations/grounding are
 // message-level annotations, including ordered metadata-only stream updates.
 // Ordered signed parts
 // use explicit wire/continuation projection. Unknown usage is not known zero;

@@ -30,9 +30,11 @@ func parseRemoteResponse(
 		handle.ProviderID = raw.ID
 		result.Handle = &handle
 	}
-	if !uniqueResponseJSON([]byte(raw.RawJSON())) || !raw.JSON.ID.Valid() || !raw.JSON.Model.Valid() ||
-		!raw.JSON.Status.Valid() || handle.ProviderID == "" || raw.ID != handle.ProviderID || raw.Model != handle.Identity.Model {
-		return result, prompty.ErrRemoteResponseUnknown
+	model, modelErr := observedModel(raw.RawJSON(), raw.Model)
+	if !uniqueResponseJSON([]byte(raw.RawJSON())) || !raw.JSON.ID.Valid() ||
+		!raw.JSON.Status.Valid() || handle.ProviderID == "" || raw.ID != handle.ProviderID ||
+		(modelErr == nil && (!raw.JSON.Model.Valid() || model != handle.Identity.Model)) {
+		return result, errors.Join(prompty.ErrRemoteResponseUnknown, modelErr)
 	}
 	status := prompty.RemoteResponseStatus(raw.Status)
 	if raw.Status == responses.ResponseStatusCancelled {
@@ -47,6 +49,8 @@ func parseRemoteResponse(
 	}
 	result.Handle = &handle
 	response := prompty.NewResponse(nil)
+	response.ContinuationUnavailable = modelErr != nil
+	response.Model = model
 	response.Diagnostics = prompty.CloneExecutionDiagnostics(result.Diagnostics)
 	response.FinishReason = string(raw.Status)
 	if handle.Status != prompty.RemoteResponseCompleted {
@@ -55,7 +59,10 @@ func parseRemoteResponse(
 	result.Response = response
 	usage, usageErr := responseUsage(raw.Usage)
 	response.Usage = usage
-	parseErr := parseRemoteItems(raw.Output, response, handle.HostedTools, handle.Identity, tools)
+	parseErr := errors.Join(
+		modelErr,
+		parseRemoteItems(raw.Output, response, handle.HostedTools, handle.Identity, tools),
+	)
 	if parseErr != nil && response.Outcome != prompty.OutcomeRefusal {
 		response.Outcome = prompty.OutcomeIncomplete
 	}

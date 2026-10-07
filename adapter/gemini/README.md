@@ -28,7 +28,7 @@ Default projection omits payload; an explicit host projector owns redaction.
 Canonical input/SDK parameters/original provider JSON/result/terminal are separate
 semantic stages, not HTTP bytes or physical-attempt coverage. Required early
 failure stops dispatch; post-dispatch failure retains known resource result and
-does not authorize retry. Broader conformance/final audits remain unfinished.
+does not authorize retry. Offline cache lifecycle/fault fixtures are linked in the current capability matrix.
 Executable ExampleNewCacheResources
 uses a local SDK fixture, not live model conformance or a cache-hit guarantee.
 
@@ -50,12 +50,12 @@ go get github.com/skosovsky/prompty/adapter/gemini
 
 ForcedTool maps to native ANY with a single allowed function name, never an injected system instruction. Checked use needs a caller-owned `CapabilityForcedToolSelection` profile in addition to `CapabilityTools`; request mapping is not live model certification. Ordinary tools and ID-less name correlation remain separate guarantees.
 
-Use caller-owned `WithProfiles(endpoint, profiles...)` for the actual injected transport/effective model. Required unknown support fails before dispatch; SDK mappings are not a universal model support catalog. See the [migration guide](../../docs/task37/migration.md).
+Use caller-owned `WithProfiles(endpoint, profiles...)` for the actual injected transport/effective model. Required unknown support fails before dispatch; SDK mappings are not a universal model support catalog. See the [migration guide](../../docs/migration.md).
 
 `WithClient` alone no longer implies the default endpoint. Checked execution requires `WithProfiles(actualEndpoint)` even without capability profiles; configure the SDK URL from the same caller-owned value. Missing/blank binding fails before translation or dispatch. An execution override cannot replace this binding, and the adapter does not inspect SDK-private configuration.
 
 - **Types:** `Translate` returns `*gemini.Request` (Model, Contents and Config); `ParseResponse(raw)` expects `*genai.GenerateContentResponse`. `StreamEvents` uses native GenerateContent SSE with no synchronous fallback; choose `StreamBuffered` explicitly for a synchronous call through the checked lifecycle. The old `ParseStreamChunk` API is removed: it lost ordered/signed parts and mislabeled complete tool snapshots as JSON fragments.
-- **Native stream:** caller profiles must explicitly declare native support for the endpoint/model. `StreamEventsForProfile` preserves full checked state scope. Source JSON is bounded per SSE line (including framing) by `WithResponsePayloadLimit`; exact arguments use Number before SDK conversion. Complete calls use `Args` snapshots, not `ArgsChunk`. Late usage and message metadata after candidate finish are accepted; read failures and missing finish fail with retained partial content. Break/cancel closes the SDK body and does not repeat completion. Signed incremental calls preserve original parts through explicit state updates, source-order provenance and Vertex continuation, including interleaving. Expanded conformance is still pending. The offline executable example is in `stream_example_test.go`.
+- **Native stream:** caller profiles must explicitly declare native support for the endpoint/model. `StreamEventsForProfile` preserves full checked state scope. Source JSON is bounded per SSE line (including framing) by `WithResponsePayloadLimit`; exact arguments use Number before SDK conversion. Complete calls use `Args` snapshots, not `ArgsChunk`. Late usage and message metadata after candidate finish are accepted; read failures and missing finish fail with retained partial content. Break/cancel closes the SDK body and does not repeat completion. Signed incremental calls preserve original parts through explicit state updates, source-order provenance and Vertex continuation, including interleaving. The offline executable example is in `stream_example_test.go`.
 
 Signed partial calls retain unsigned and signed original fragments in the separate
 `gemini.partial_parts.json` codec. Arguments are only a canonical projection; the
@@ -68,8 +68,7 @@ parts, never signature payloads. Restore validates complete unique source covera
 and canonical projections before sending interleaved original parts in ordinal
 order. Missing/duplicate provenance fails, with no repair from canonical order.
 Unsigned empty args may follow SDK omission semantics; signed source remains
-strict. Expanded conformance and final audits remain required; local SDK fixtures
-do not certify live models.
+strict. Local SDK fixtures do not certify live models; current implemented contracts and evidence are linked in the capability matrix.
 - **Candidate metadata:** read `Response.MessageAnnotations` / `ResponseChunk.MessageAnnotations`, not a fabricated annotation on content part zero. `candidate_citation_metadata` and `candidate_grounding_metadata` preserve exact observed JSON (including REST `citationSources`), with ordered updates in streams. Grounding chunk indices reference accumulated provider chunks across updates; byte segments and provider part indices are not canonical content indices. The adapter validates chunk references and segment shape without inventing text bindings. History/wire/capture retain these values; the host owns redaction and rendering. SDK-only parsing without observed source preserves SDK DTO semantics, not unobserved source bytes.
 - **Incremental arguments:** require `gemini.CapabilityIncrementalToolArguments` (`gemini.partial_args`) and supported endpoint/model profile knowledge, alongside tools/native support. This opt-in sends `streamFunctionCallArguments=true` through the Vertex SDK mapper. `stream_function_call_arguments` is an optional boolean provider control; true requires that explicit capability, and false cannot contradict it. The installed MLDev mapper cannot send this field and rejects before I/O; sync/buffered requests cannot select it. Provisional calls have empty `Args`, with exact path/value progress in `gemini.partial_function_call` annotations; these are not JSON `ArgsChunk` fragments. A provider close yields one complete snapshot for common correlation/schema validation. ID-less calls require a unique open call, while provider-ID calls may interleave. No handler is run by the streaming parser. See `partial_example_test.go` for a runnable offline opt-in.
 - **Original signed source:** `WithClient` snapshots the public SDK configuration and copies its HTTP client to observe the original response before SDK float decoding, without mutating caller transport/policy. Observation is invocation-local and bounded (default 4 MiB); `WithResponsePayloadLimit(bytes)` selects a positive bound. Rebind after client reconfiguration. Signed parts use original JSON Number values; unavailable/truncated/ambiguous source fails closed. Raw signed float DTOs without original Body cannot establish fidelity. Outbound SDK representability remains a separate gate; no HTTP capture coverage or replay guarantee is implied.
@@ -115,9 +114,7 @@ storage, cleanup, egress and access decisions. Semantic operation capture uses
 common redaction and coverage; transport bytes/physical attempts are not promised.
 
 The inline input bound is 20 MB; original response observation defaults to 4 MiB
-and Results allows explicit MaxBytes/MaxLineBytes. Expanded
-protocol/error/schema/cancel conformance and final independent audits
-remain required for task37. Vertex batches, embeddings and file results are not
+and Results allows explicit MaxBytes/MaxLineBytes. Local protocol/error/schema/cancel fixtures cover the implemented ports; task37 audit checkpoints retain their original scope. Vertex batches, embeddings and file results are not
 advertised by this inline path. `ExampleNewBatches` is an executable local SDK
 fixture, not evidence of live account/model support. Protocol reference:
 [Gemini Batch API](https://ai.google.dev/gemini-api/docs/batch-api).
@@ -138,3 +135,5 @@ Bodies close once, even on failure. Bounds default to 64 MiB total and 4 MiB per
 line, configurable explicitly; input cannot exceed the provider's file limit.
 Required original-source capture needs a file-port accuracy declaration.
 `ExampleNewFileBatches` is a runnable local fixture, not live conformance.
+
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.

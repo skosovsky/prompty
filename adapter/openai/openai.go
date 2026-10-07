@@ -533,9 +533,19 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 		return nil, adapter.ErrEmptyResponse
 	}
 	usage, usageErr := usageFromOpenAI(completion.Usage)
+	model, modelErr := observedModel(completion.RawJSON(), completion.Model)
+	if modelErr != nil && outcome != prompty.OutcomeRefusal {
+		outcome = prompty.OutcomeIncomplete
+	}
 	return &prompty.Response{
-		Content: out, Annotations: annotations, Usage: usage, FinishReason: finishReason, Outcome: outcome,
-	}, usageErr
+		ContinuationUnavailable: modelErr != nil,
+		Model:                   model,
+		Content:                 out,
+		Annotations:             annotations,
+		Usage:                   usage,
+		FinishReason:            finishReason,
+		Outcome:                 outcome,
+	}, errors.Join(usageErr, modelErr)
 }
 
 func refusalAnnotation(index int, refusal string) prompty.PartAnnotation {
@@ -649,12 +659,14 @@ func (a *Adapter) StreamEvents(
 				}
 			}
 			usage, usageErr := usageFromOpenAI(chunk.Usage)
+			model, modelErr := observedModel(chunk.RawJSON(), chunk.Model)
 			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
 			finishReason := ""
 			if isFinished && chunk.Choices[0].FinishReason != "" {
 				finishReason = chunk.Choices[0].FinishReason
 			}
 			resChunk := &prompty.ResponseChunk{
+				Model:        model,
 				Identity:     prompty.StreamIdentity{MessageID: "", PartIDs: partIDs},
 				Content:      content,
 				Annotations:  annotations,
@@ -674,11 +686,19 @@ func (a *Adapter) StreamEvents(
 			} else if len(chunk.Choices) == 0 {
 				resChunk.Kind = prompty.StreamUsage
 			}
+			if modelErr != nil {
+				resChunk.Kind = prompty.StreamDelta
+				resChunk.FinishReason = ""
+				if !refused {
+					resChunk.Outcome = prompty.OutcomeIncomplete
+				}
+				modelErr = errors.Join(modelErr, prompty.ErrStreamProtocol)
+			}
 			if !yield(resChunk, nil) {
 				// Consumer requested stop; do not call yield again.
 				return
 			}
-			if frameErr := errors.Join(usageErr, captureErr); frameErr != nil {
+			if frameErr := errors.Join(usageErr, captureErr, modelErr); frameErr != nil {
 				yield(nil, frameErr)
 				return
 			}
