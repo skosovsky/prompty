@@ -1,0 +1,42 @@
+golangci-lint - .
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - adapter/anthropic
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - adapter/gemini
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - adapter/ollama
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - adapter/openai
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - cmd/prompty-gen
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - examples/basic_chat
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - examples/funcmap_tools
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - examples/git_prompts
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - examples/host_dispatch
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - examples/secure_prompt
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - ext/otelprompty
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - remoteregistry/git
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.
+golangci-lint - ./cmd/prompty-gen/testdata/gen_out
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+0 issues.

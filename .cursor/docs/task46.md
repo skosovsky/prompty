@@ -1,7 +1,7 @@
 # task46 — Контракт tool dispatch и проверяемая композиция с host
 
 Источник: https://github.com/skosovsky/prompty/issues/5
-Статус: к реализации. Это ТЗ и условия будущего запуска, не отчёт о выполнении.
+Статус: выполнено. Реализация, независимая приёмка, релиз и closeout подтверждены в [итоговом отчёте](../task/reports/task46/closeout.md).
 Основание: issue и код сверены 7 октября 2026; комментариев к issue нет. Нумерация продолжает существующие task1–45 во всех каталогах задач.
 
 ## Цель и архитектурное решение
@@ -71,18 +71,18 @@ Core и существующие production modules не получают нов
 
 ## Acceptance criteria
 
-- [ ] AC1. Контракт явно разделяет helper/full dispatch; выбранный вариант реализован, core не знает внешних lifecycle errors и не владеет approval/policy.
-- [ ] AC2. Runnable example проходит полный путь до следующего checked request; actual provider SDK + local HTTP/SSE fixture проверяет отправленную continuation, а не только DTO.
-- [ ] AC3. Одинаковые name/args с разными native IDs сохраняют ID внутри реального caller execution и в model results; duplicate/ambiguous IDs отклоняются до effects.
-- [ ] AC4. Scope violation и invalid последний call дают ноль effects; original-schema ограничения продолжают действовать после transport lowering. Значение `9007199254740993` сохраняется точно на всём пути.
-- [ ] AC5. Host pause/approval останавливает следующие effects, сохраняет `errors.Is`/`errors.As`, pending ID и completed results; явное разрешение продолжает pending call без повторения завершённых effects. Это локальный contract test, не обещание production IAM/durable engine.
-- [ ] AC6. Обычная handler error в helper продолжает admitted batch; cancellation его прекращает. Business failure при `err == nil` в полном dispatcher никогда не выдаётся за success. Audience/controls/private data не утекают в model content.
-- [ ] AC7. Round-trip проверяет state/media/error/annotations и scope. Каждый unsupported case из mapping-таблицы имеет отрицательный test: ошибка до следующего dispatch, без silent drop. State-omitted logging checkpoint отвергается для требуемого continuation.
-- [ ] AC8. Callback/concurrent/repeated Close не deadlock; Close до consumption не dispatch; отдельный completion signal подтверждает cleanup после unwind. Тесты синхронизированы каналами, без sleep-based доказательств.
-- [ ] AC9. Реальные optional integrations проходят в обоих dependency режимах; dependency graph подтверждает независимость core. CI не зависит от локальных материалов аудита.
-- [ ] AC10. AAA regressions и targeted integration checks, затем `make lint`, `make test`, `make release-check` проходят; ограничения live-проверок указаны честно. Обновлены affected docs/examples/godoc и migration guidance.
-- [ ] AC11. Два независимых приёмочных отчёта завершены: первый — полнота реализации AC1–AC10 в процентах и evidence по каждому пункту; второй — поиск ошибок, regressions и нарушений границ с severity, воспроизведением и файлами. Каждый AC засчитывается целиком; цель — 100%, без открытых подтверждённых ошибок. Исправления проверены повторно по затронутым критериям.
-- [ ] AC12. Выполнены release и closeout ниже; есть release evidence, URL комментария автору и подтверждение закрытого issue. До этого задача не называется полностью завершённой.
+- [x] AC1. Контракт явно разделяет helper/full dispatch; выбранный вариант реализован, core не знает внешних lifecycle errors и не владеет approval/policy.
+- [x] AC2. Runnable example проходит полный путь до следующего checked request; actual provider SDK + local HTTP/SSE fixture проверяет отправленную continuation, а не только DTO.
+- [x] AC3. Одинаковые name/args с разными native IDs сохраняют ID внутри реального caller execution и в model results; duplicate/ambiguous IDs отклоняются до effects.
+- [x] AC4. Scope violation и invalid последний call дают ноль effects; original-schema ограничения продолжают действовать после transport lowering. Значение `9007199254740993` сохраняется точно на всём пути.
+- [x] AC5. Host pause/approval останавливает следующие effects, сохраняет `errors.Is`/`errors.As`, pending ID и completed results; явное разрешение продолжает pending call без повторения завершённых effects. Это локальный contract test, не обещание production IAM/durable engine.
+- [x] AC6. Обычная handler error в helper продолжает admitted batch; cancellation его прекращает. Business failure при `err == nil` в полном dispatcher никогда не выдаётся за success. Audience/controls/private data не утекают в model content.
+- [x] AC7. Round-trip проверяет state/media/error/annotations и scope. Каждый unsupported case из mapping-таблицы имеет отрицательный test: ошибка до следующего dispatch, без silent drop. State-omitted logging checkpoint отвергается для требуемого continuation.
+- [x] AC8. Callback/concurrent/repeated Close не deadlock; Close до consumption не dispatch; отдельный completion signal подтверждает cleanup после unwind. Тесты синхронизированы каналами, без sleep-based доказательств.
+- [x] AC9. Реальные optional integrations проходят в обоих dependency режимах; dependency graph подтверждает независимость core. CI не зависит от локальных материалов аудита.
+- [x] AC10. AAA regressions и targeted integration checks, затем `make lint`, `make test`, `make release-check` проходят; ограничения live-проверок указаны честно. Обновлены affected docs/examples/godoc и migration guidance.
+- [x] AC11. Два независимых приёмочных отчёта завершены: первый — полнота реализации AC1–AC10 в процентах и evidence по каждому пункту; второй — поиск ошибок, regressions и нарушений границ с severity, воспроизведением и файлами. Каждый AC засчитывается целиком; цель — 100%, без открытых подтверждённых ошибок. Исправления проверены повторно по затронутым критериям.
+- [x] AC12. Выполнены release и closeout ниже; есть release evidence, URL комментария автору и подтверждение закрытого issue. До этого задача не называется полностью завершённой.
 
 ## Release guidance и closeout
 

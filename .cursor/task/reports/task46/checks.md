@@ -23,3 +23,17 @@ The published baseline cannot compile the new admission API (published-baseline.
 ## Limits
 
 Local SDK HTTP fixtures require no credentials. Evidence covers actual consumer public APIs and local host approval semantics, not live model support, production IAM/durable storage, cryptographic signature validity or remote-effect rollback. CI definition is checked through equivalent clean source fixtures locally; no hosted CI run is claimed.
+
+## Publication verification
+
+`make release-break` completed successfully (release-break-r2.log). The first attempt stopped during SSH-only ref reading before preparation; transaction remained the prior published release, no new refs existed. HTTPS was used through process-local Git URL/credential configuration for the retry; remote configuration and tokens were not changed or printed.
+
+Release v0.16.0, source c2253dc71ccc531707cf3b2fbbb89bc859d5d751, published commit 4d028f87265f687580ab6614dfcf36bb6d125b45. All 13 expected remote refs independently matched that commit (remote-refs.json); transaction status is published (release-transaction.json).
+
+Published-mode tests, lint and demo PASS (published-r1.json): GOWORK=off, no Replace entries, root/adapter v0.16.0, external tool executor v0.18.0, context v0.13.1 and lifetime v0.7.0. The new public admission API is tested through actual downloaded module artifacts. Post-publication independent acceptance reports will establish the final verdict before closeout.
+
+## Final acceptance and closeout
+
+Completeness-r3.md: 100% AC1–AC10, independently repeated published race/lint/demo (completeness-published-r3.json). Errors-r4.md: PASS, independent published adversarial/race tests, no open confirmed defects. Both final reports supersede the pre-publication verdicts.
+
+Migration comment: https://github.com/skosovsky/prompty/issues/5#issuecomment-6035108139; posted body equals migration-comment.md (issue-comment-verification.json). Issue independently read as CLOSED after close command, closedAt 2026-10-07T09:31:43Z (issue-closeout.json). AC11–AC12 satisfied. No source/runtime changes occurred after release.
