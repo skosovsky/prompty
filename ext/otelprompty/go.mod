@@ -3,7 +3,7 @@ module github.com/skosovsky/prompty/ext/otelprompty
 go 1.27.2
 
 require (
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.16.1
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.32.0
 	go.opentelemetry.io/otel/trace v1.32.0
@@ -28,5 +28,3 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..
