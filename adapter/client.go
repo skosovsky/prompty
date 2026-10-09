@@ -48,11 +48,26 @@ func (c *clientImpl[Req, Resp]) ExecuteStream(
 	}
 	if resp == nil {
 		return func(yield func(*prompty.ResponseChunk, error) bool) {
-			yield(&prompty.ResponseChunk{Content: nil, IsFinished: true}, nil)
+			yield(
+				&prompty.ResponseChunk{
+					Usage: prompty.Usage{
+						PromptTokens:              0,
+						CompletionTokens:          0,
+						TotalTokens:               0,
+						PromptTokensCached:        0,
+						PromptTokensCacheCreation: 0,
+						CompletionTokensReasoning: 0,
+					},
+					FinishReason: "",
+					Content:      nil,
+					IsFinished:   true,
+				},
+				nil,
+			)
 		}
 	}
 	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		chunk := &prompty.ResponseChunk{
+		chunk := &prompty.ResponseChunk{FinishReason: "",
 			Content:    resp.Content,
 			Usage:      resp.Usage,
 			IsFinished: true,

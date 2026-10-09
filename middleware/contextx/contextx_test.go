@@ -34,84 +34,62 @@ func countMessageTokens(msg prompty.ChatMessage, counter *mockCounter) (int, err
 func countPartsTokens(parts []prompty.ContentPart, counter *mockCounter) (int, error) {
 	total := 0
 	for _, part := range parts {
-		switch x := part.(type) {
-		case prompty.TextPart:
-			n, err := counter.Count(x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case prompty.ReasoningPart:
-			n, err := counter.Count(x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case prompty.ToolCallPart:
-			args := x.Args
-			if args == "" {
-				args = x.ArgsChunk
-			}
-			n, err := counter.Count(args)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case prompty.ToolResultPart:
-			n, err := countPartsTokens(x.Content, counter)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case prompty.MediaPart:
-			total += 256
-		case *prompty.TextPart:
-			if x == nil {
-				continue
-			}
-			n, err := counter.Count(x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *prompty.ReasoningPart:
-			if x == nil {
-				continue
-			}
-			n, err := counter.Count(x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *prompty.ToolCallPart:
-			if x == nil {
-				continue
-			}
-			args := x.Args
-			if args == "" {
-				args = x.ArgsChunk
-			}
-			n, err := counter.Count(args)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *prompty.ToolResultPart:
-			if x == nil {
-				continue
-			}
-			n, err := countPartsTokens(x.Content, counter)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *prompty.MediaPart:
-			if x != nil {
-				total += 256
-			}
+		n, err := countPartTokens(part, counter)
+		if err != nil {
+			return 0, err
 		}
+		total += n
 	}
 	return total, nil
+}
+
+func countPartTokens(part prompty.ContentPart, counter *mockCounter) (int, error) {
+	switch x := part.(type) {
+	case prompty.TextPart:
+		return counter.Count(x.Text)
+	case prompty.ReasoningPart:
+		return counter.Count(x.Text)
+	case prompty.ToolCallPart:
+		args := x.Args
+		if args == "" {
+			args = x.ArgsChunk
+		}
+		return counter.Count(args)
+	case prompty.ToolResultPart:
+		return countPartsTokens(x.Content, counter)
+	case prompty.MediaPart:
+		return 256, nil
+	case *prompty.TextPart:
+		if x == nil {
+			return 0, nil
+		}
+		return counter.Count(x.Text)
+	case *prompty.ReasoningPart:
+		if x == nil {
+			return 0, nil
+		}
+		return counter.Count(x.Text)
+	case *prompty.ToolCallPart:
+		if x == nil {
+			return 0, nil
+		}
+		args := x.Args
+		if args == "" {
+			args = x.ArgsChunk
+		}
+		return counter.Count(args)
+	case *prompty.ToolResultPart:
+		if x == nil {
+			return 0, nil
+		}
+		return countPartsTokens(x.Content, counter)
+	case *prompty.MediaPart:
+		if x != nil {
+			return 256, nil
+		}
+	}
+
+	return 0, nil
 }
 
 func TestWithTokenBudget_TrimsWhenOverLimit(t *testing.T) {
@@ -294,7 +272,7 @@ func TestWithTokenBudget_PropagatesCounterError(t *testing.T) {
 	mw := WithTokenBudget(10, counter)
 	inv := mw(
 		&invokerFunc{
-			generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) { return nil, nil },
+			generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) { return nil, nil }, //nolint:nilnil // Empty provider response is the behavior under test.
 		},
 	)
 

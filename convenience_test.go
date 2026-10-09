@@ -42,7 +42,7 @@ func TestGenerateText_NilResponse(t *testing.T) {
 
 	invoker := &scriptedInvoker{
 		generate: func(context.Context, *PromptExecution) (*Response, error) {
-			return nil, nil
+			return nil, nil //nolint:nilnil // Test provider models an empty successful response.
 		},
 	}
 

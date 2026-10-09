@@ -27,13 +27,13 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 	normalized := normalizeMapAny(raw)
 	if len(normalized) == 0 {
 		schemaDoc, err := prompty.MapToJSONDocument(map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			schemaTypeKey:       schemaObjectType,
+			schemaPropertiesKey: map[string]any{},
 		})
 		if err != nil {
 			return nil, err
 		}
-		return &prompty.SchemaDefinition{Schema: schemaDoc}, nil
+		return &prompty.SchemaDefinition{Name: "", Description: "", Schema: schemaDoc}, nil
 	}
 
 	if _, hasWrapper := normalized["schema"].(map[string]any); hasWrapper {
@@ -41,14 +41,14 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 			"inputs must use contract-style fields (inputs.<field>), inputs.schema is not supported",
 		)
 	}
-	if _, hasType := normalized["type"]; hasType {
-		if _, hasProperties := normalized["properties"].(map[string]any); hasProperties {
+	if _, hasType := normalized[schemaTypeKey]; hasType {
+		if _, hasProperties := normalized[schemaPropertiesKey].(map[string]any); hasProperties {
 			return nil, errors.New(
 				"inputs must use contract-style fields (inputs.<field>), raw JSON-schema format is not supported",
 			)
 		}
 	}
-	if _, hasProperties := normalized["properties"].(map[string]any); hasProperties {
+	if _, hasProperties := normalized[schemaPropertiesKey].(map[string]any); hasProperties {
 		return nil, errors.New(
 			"inputs must use contract-style fields (inputs.<field>), raw JSON-schema format is not supported",
 		)
@@ -85,7 +85,7 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 				return nil, fmt.Errorf("inputs.%s.format must be string", inputName)
 			}
 			if formatStr == "messages" {
-				if typ, _ := prop["type"].(string); typ != "array" {
+				if typ, _ := prop[schemaTypeKey].(string); typ != "array" {
 					return nil, fmt.Errorf("inputs.%s.format messages requires type array", inputName)
 				}
 			}
@@ -103,8 +103,8 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 	}
 
 	schema := map[string]any{
-		"type":       "object",
-		"properties": properties,
+		schemaTypeKey:       schemaObjectType,
+		schemaPropertiesKey: properties,
 	}
 	if len(required) > 0 {
 		schema["required"] = required
@@ -113,7 +113,7 @@ func DecodeInputs(raw map[string]any) (*prompty.SchemaDefinition, error) { //nol
 	if err != nil {
 		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: schemaDoc}, nil
+	return &prompty.SchemaDefinition{Name: "", Description: "", Schema: schemaDoc}, nil
 }
 
 func normalizeMapAny(in map[string]any) map[string]any {

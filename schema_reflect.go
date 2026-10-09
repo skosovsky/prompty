@@ -23,8 +23,12 @@ type schemaFieldCandidate struct {
 	order    int
 }
 
+const (
+	schemaTypeKey = "type"
+)
+
 func newSchemaBuilder() *schemaBuilder {
-	return &schemaBuilder{
+	return &schemaBuilder{order: 0,
 		active: make(map[reflect.Type]int),
 	}
 }
@@ -43,15 +47,15 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 		return b.schemaForStructType(base, depth)
 	case reflect.Slice:
 		if base.Elem().Kind() == reflect.Uint8 {
-			return map[string]any{"type": "string"}, nil
+			return map[string]any{schemaTypeKey: "string"}, nil
 		}
 		items, err := b.schemaForType(base.Elem(), depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("items: %w", err)
 		}
 		return map[string]any{
-			"type":  "array",
-			"items": items,
+			schemaTypeKey: "array",
+			"items":       items,
 		}, nil
 	case reflect.Array:
 		items, err := b.schemaForType(base.Elem(), depth+1)
@@ -59,18 +63,28 @@ func (b *schemaBuilder) schemaForType(t reflect.Type, depth int) (map[string]any
 			return nil, fmt.Errorf("items: %w", err)
 		}
 		return map[string]any{
-			"type":  "array",
-			"items": items,
+			schemaTypeKey: "array",
+			"items":       items,
 		}, nil
 	case reflect.String:
-		return map[string]any{"type": "string"}, nil
+		return map[string]any{schemaTypeKey: "string"}, nil
 	case reflect.Bool:
-		return map[string]any{"type": "boolean"}, nil
+		return map[string]any{schemaTypeKey: "boolean"}, nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return map[string]any{"type": "integer"}, nil
+		return map[string]any{schemaTypeKey: "integer"}, nil
 	case reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}, nil
+		return map[string]any{schemaTypeKey: "number"}, nil
+	case reflect.Invalid,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Chan,
+		reflect.Func,
+		reflect.Interface,
+		reflect.Map,
+		reflect.Pointer,
+		reflect.UnsafePointer:
+		fallthrough
 	default:
 		return nil, fmt.Errorf("schema: unsupported type %s", base)
 	}
@@ -105,7 +119,7 @@ func (b *schemaBuilder) schemaForStructType(t reflect.Type, depth int) (map[stri
 	}
 
 	schema := map[string]any{
-		"type":                 "object",
+		schemaTypeKey:          "object",
 		"properties":           properties,
 		"additionalProperties": false,
 	}
@@ -133,20 +147,7 @@ func (b *schemaBuilder) collectStructFields(
 
 		baseFieldType := indirectSchemaType(field.Type)
 		if field.Anonymous && !hasName && baseFieldType.Kind() == reflect.Struct {
-			if depth+1 >= maxSchemaDepth || b.active[baseFieldType] > 0 {
-				continue
-			}
-
-			b.active[baseFieldType]++
-			embedded, err := b.collectStructFields(
-				baseFieldType,
-				depth+1,
-				inheritedOptional || isPointerType(field.Type),
-			)
-			b.active[baseFieldType]--
-			if b.active[baseFieldType] == 0 {
-				delete(b.active, baseFieldType)
-			}
+			embedded, err := b.collectEmbeddedFields(baseFieldType, field.Type, depth, inheritedOptional)
 			if err != nil {
 				return nil, err
 			}
@@ -184,7 +185,7 @@ func (b *schemaBuilder) nextOrder() int {
 
 func terminalObjectSchema() map[string]any {
 	return map[string]any{
-		"type":                 "object",
+		schemaTypeKey:          "object",
 		"properties":           map[string]any{},
 		"additionalProperties": false,
 	}
@@ -298,4 +299,29 @@ func indirectSchemaType(t reflect.Type) reflect.Type {
 
 func isPointerType(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Pointer
+}
+
+func (b *schemaBuilder) collectEmbeddedFields(
+	baseFieldType, fieldType reflect.Type,
+	depth int,
+	inheritedOptional bool,
+) ([]schemaFieldCandidate, error) {
+	if depth+1 >= maxSchemaDepth || b.active[baseFieldType] > 0 {
+		return nil, nil
+	}
+
+	b.active[baseFieldType]++
+	embedded, err := b.collectStructFields(
+		baseFieldType,
+		depth+1,
+		inheritedOptional || isPointerType(fieldType),
+	)
+	b.active[baseFieldType]--
+	if b.active[baseFieldType] == 0 {
+		delete(b.active, baseFieldType)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return embedded, nil
 }

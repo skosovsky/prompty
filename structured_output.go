@@ -85,7 +85,7 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 	if err != nil {
 		return nil, fmt.Errorf("structured output: %w", err)
 	}
-	workExec.ResponseFormat = &SchemaDefinition{
+	workExec.ResponseFormat = &SchemaDefinition{Name: "", Description: "",
 		Schema: schemaDoc,
 	}
 	return workExec, nil
@@ -139,6 +139,30 @@ func isNilStructuredValue[T any](value T) bool {
 	switch rv.Kind() {
 	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
 		return rv.IsNil()
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32,
+		reflect.Float64,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Array,
+		reflect.Chan,
+		reflect.Func,
+		reflect.String,
+		reflect.Struct,
+		reflect.UnsafePointer:
+		fallthrough
 	default:
 		return false
 	}
@@ -166,12 +190,12 @@ func validatableFromValue(value reflect.Value) (Validatable, bool) {
 		return nil, false
 	}
 	if value.CanInterface() {
-		if validatable, ok := value.Interface().(Validatable); ok {
+		if validatable, ok := reflect.TypeAssert[Validatable](value); ok {
 			return validatable, true
 		}
 	}
 	if value.Kind() != reflect.Pointer && value.CanAddr() && value.Addr().CanInterface() {
-		if validatable, ok := value.Addr().Interface().(Validatable); ok {
+		if validatable, ok := reflect.TypeAssert[Validatable](value.Addr()); ok {
 			return validatable, true
 		}
 	}

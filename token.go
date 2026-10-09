@@ -40,78 +40,56 @@ func (c *CharFallbackCounter) CountMessage(msg ChatMessage) (int, error) {
 func countContentPartsWithTextCounter(parts []ContentPart, counter textTokenCounter, mediaPenalty int) (int, error) {
 	total := 0
 	for _, part := range parts {
-		switch x := part.(type) {
-		case TextPart:
-			n, err := countTextIfNonEmpty(counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *TextPart:
-			if x == nil {
-				continue
-			}
-			n, err := countTextIfNonEmpty(counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ReasoningPart:
-			n, err := countTextIfNonEmpty(counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ReasoningPart:
-			if x == nil {
-				continue
-			}
-			n, err := countTextIfNonEmpty(counter, x.Text)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ToolCallPart:
-			n, err := countTextIfNonEmpty(counter, toolCallArgsText(x))
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ToolCallPart:
-			if x == nil {
-				continue
-			}
-			n, err := countTextIfNonEmpty(counter, toolCallArgsText(*x))
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case ToolResultPart:
-			n, err := countContentPartsWithTextCounter(x.Content, counter, mediaPenalty)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case *ToolResultPart:
-			if x == nil {
-				continue
-			}
-			n, err := countContentPartsWithTextCounter(x.Content, counter, mediaPenalty)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		case MediaPart:
-			if mediaPenalty > 0 {
-				total += mediaPenalty
-			}
-		case *MediaPart:
-			if x != nil && mediaPenalty > 0 {
-				total += mediaPenalty
-			}
+		n, err := countContentPartWithTextCounter(part, counter, mediaPenalty)
+		if err != nil {
+			return 0, err
 		}
+		total += n
 	}
 	return total, nil
+}
+
+func countContentPartWithTextCounter(part ContentPart, counter textTokenCounter, mediaPenalty int) (int, error) {
+	switch x := part.(type) {
+	case TextPart:
+		return countTextIfNonEmpty(counter, x.Text)
+	case *TextPart:
+		if x == nil {
+			return 0, nil
+		}
+		return countTextIfNonEmpty(counter, x.Text)
+	case ReasoningPart:
+		return countTextIfNonEmpty(counter, x.Text)
+	case *ReasoningPart:
+		if x == nil {
+			return 0, nil
+		}
+		return countTextIfNonEmpty(counter, x.Text)
+	case ToolCallPart:
+		return countTextIfNonEmpty(counter, toolCallArgsText(x))
+	case *ToolCallPart:
+		if x == nil {
+			return 0, nil
+		}
+		return countTextIfNonEmpty(counter, toolCallArgsText(*x))
+	case ToolResultPart:
+		return countContentPartsWithTextCounter(x.Content, counter, mediaPenalty)
+	case *ToolResultPart:
+		if x == nil {
+			return 0, nil
+		}
+		return countContentPartsWithTextCounter(x.Content, counter, mediaPenalty)
+	case MediaPart:
+		if mediaPenalty > 0 {
+			return mediaPenalty, nil
+		}
+	case *MediaPart:
+		if x != nil && mediaPenalty > 0 {
+			return mediaPenalty, nil
+		}
+	}
+
+	return 0, nil
 }
 
 func countTextIfNonEmpty(counter textTokenCounter, text string) (int, error) {

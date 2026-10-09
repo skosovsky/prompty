@@ -164,7 +164,7 @@ func chatMessageFromValue(v reflect.Value) (ChatMessage, bool) {
 		}
 		v = v.Elem()
 	}
-	cm, ok := v.Interface().(ChatMessage)
+	cm, ok := reflect.TypeAssert[ChatMessage](v)
 	return cm, ok
 }
 
@@ -198,6 +198,31 @@ func bindValue(v reflect.Value) (any, error) {
 			return nil, nil //nolint:nilnil // nil interface value
 		}
 		return bindValue(v.Elem())
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32,
+		reflect.Float64,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Array,
+		reflect.Chan,
+		reflect.Func,
+		reflect.Map,
+		reflect.Pointer,
+		reflect.String,
+		reflect.UnsafePointer:
+		fallthrough
 	default:
 		return v.Interface(), nil
 	}

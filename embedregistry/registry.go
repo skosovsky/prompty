@@ -41,6 +41,12 @@ type Registry struct {
 
 // baseIDFromPath converts a manifest path (slash, no ext) to base ID: drops env suffix from basename.
 // Example: "internal/router.prod" -> "internal/router".
+const (
+	jsonExtension = ".json"
+	yamlExtension = ".yaml"
+	ymlExtension  = ".yml"
+)
+
 func baseIDFromPath(slashPath string) string {
 	base := filepath.Base(slashPath)
 	if idx := strings.Index(base, "."); idx > 0 {
@@ -70,7 +76,7 @@ func underPartialsDir(relPath, partialsPattern string) bool {
 // Cache keys are full id (agent, agent.prod); List returns base IDs only (agent).
 // Parser is required (use WithParser).
 func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
-	r := &Registry{
+	r := &Registry{ids: nil, env: "", partialsPattern: "", parser: nil, loader: nil, version: "",
 		fsys:  fsys,
 		cache: make(map[string]*prompty.ChatPromptTemplate),
 		root:  root,
@@ -96,53 +102,7 @@ func New(fsys fs.FS, root string, opts ...Option) (*Registry, error) {
 		AllowMissingConditionValues: true,
 	})
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() ||
-			(!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
-			return nil
-		}
-		relPath := path
-		if root != "" && strings.HasPrefix(path, root+"/") {
-			relPath = strings.TrimPrefix(path, root+"/")
-		} else if root != "" && path == root {
-			return nil
-		}
-		if underPartialsDir(relPath, r.partialsPattern) {
-			return nil
-		}
-		var tpl *prompty.ChatPromptTemplate
-		var opts []manifest.ParseOption
-		if r.partialsPattern != "" {
-			partialsPath := filepath.Join(r.root, r.partialsPattern)
-			opts = append(opts, manifest.WithPartialsFS(fsys, partialsPath))
-		}
-		if needsCompose(byID, relPath) {
-			opts = append(opts, composeOpt)
-		}
-		tpl, err = manifest.ParseFS(fsys, path, r.parser, opts...)
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		slashPath := filepath.ToSlash(relPath)
-		id := slashPath
-		for _, ext := range []string{".yaml", ".yml", ".json"} {
-			id = strings.TrimSuffix(id, ext)
-		}
-		tpl.Metadata.Environment = ""
-		if !needsCompose(byID, relPath) {
-			r.cache[id] = tpl
-		}
-		if !seenID[id] {
-			seenID[id] = true
-			baseID := baseIDFromPath(id)
-			if !seenBaseID[baseID] {
-				seenBaseID[baseID] = true
-				r.ids = append(r.ids, baseID)
-			}
-		}
-		return nil
+		return r.cacheEmbeddedManifest(path, d, err, byID, composeOpt, seenID, seenBaseID)
 	})
 	if err != nil {
 		return nil, err
@@ -209,7 +169,7 @@ func (r *Registry) readManifestBytes(ctx context.Context, id string) ([]byte, er
 	if err := prompty.ValidateID(id); err != nil {
 		return nil, err
 	}
-	exts := []string{".yaml", ".yml", ".json"}
+	exts := []string{yamlExtension, ymlExtension, jsonExtension}
 	for _, cid := range candidateIDs(id, r.env) {
 		for _, ext := range exts {
 			path := filepath.Join(r.root, filepath.FromSlash(cid+ext))
@@ -290,56 +250,14 @@ func indexEmbeddedManifests(
 ) (map[string]*manifest.RawManifest, error) {
 	byID := make(map[string]*manifest.RawManifest)
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() ||
-			(!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
-			return nil
-		}
-		relPath := path
-		if root != "" && strings.HasPrefix(path, root+"/") {
-			relPath = strings.TrimPrefix(path, root+"/")
-		} else if root != "" && path == root {
-			return nil
-		}
-		if underPartialsDir(relPath, partialsPattern) {
-			return nil
-		}
-		data, readErr := fs.ReadFile(fsys, path)
-		if readErr != nil {
-			return readErr
-		}
-		var raw manifest.RawManifest
-		if unmarshalErr := parser.Unmarshal(data, &raw); unmarshalErr != nil {
-			return fmt.Errorf("%s: %w", path, unmarshalErr)
-		}
-		cacheID := filepath.ToSlash(relPath)
-		for _, ext := range []string{".yaml", ".yml", ".json"} {
-			cacheID = strings.TrimSuffix(cacheID, ext)
-		}
-		if raw.ID == "" {
-			raw.ID = cacheID
-		}
-		if prev, ok := byID[cacheID]; ok && prev != nil {
-			return fmt.Errorf("duplicate manifest path id %q at %s", cacheID, path)
-		}
-		cloned := raw
-		byID[cacheID] = &cloned
-		if raw.ID != cacheID {
-			if _, ok := byID[raw.ID]; !ok {
-				alias := cloned
-				byID[raw.ID] = &alias
-			}
-		}
-		return nil
+		return indexEmbeddedManifest(fsys, root, parser, partialsPattern, byID, path, d, err)
 	})
 	return byID, err
 }
 
 func needsCompose(byID map[string]*manifest.RawManifest, relPath string) bool {
 	id := filepath.ToSlash(relPath)
-	for _, ext := range []string{".yaml", ".yml", ".json"} {
+	for _, ext := range []string{yamlExtension, ymlExtension, jsonExtension} {
 		id = strings.TrimSuffix(id, ext)
 	}
 	raw, ok := byID[id]
@@ -439,3 +357,115 @@ func (r *Registry) VerifyManifestDescriptor(ctx context.Context, desc prompty.Ma
 }
 
 var _ prompty.ManifestCheckpointRegistry = (*Registry)(nil)
+
+func (r *Registry) cacheEmbeddedManifest(
+	path string,
+	d fs.DirEntry,
+	err error,
+	byID map[string]*manifest.RawManifest,
+	composeOpt manifest.ParseOption,
+	seenID, seenBaseID map[string]bool,
+) error {
+	if err != nil {
+		return err
+	}
+	if d.IsDir() ||
+		(!strings.HasSuffix(path, yamlExtension) && !strings.HasSuffix(path, ymlExtension) && !strings.HasSuffix(path, jsonExtension)) {
+		return nil
+	}
+	relPath := path
+	if r.root != "" && strings.HasPrefix(path, r.root+"/") {
+		relPath = strings.TrimPrefix(path, r.root+"/")
+	} else if r.root != "" && path == r.root {
+		return nil
+	}
+	if underPartialsDir(relPath, r.partialsPattern) {
+		return nil
+	}
+	var tpl *prompty.ChatPromptTemplate
+	var opts []manifest.ParseOption
+	if r.partialsPattern != "" {
+		partialsPath := filepath.Join(r.root, r.partialsPattern)
+		opts = append(opts, manifest.WithPartialsFS(r.fsys, partialsPath))
+	}
+	if needsCompose(byID, relPath) {
+		opts = append(opts, composeOpt)
+	}
+	tpl, err = manifest.ParseFS(r.fsys, path, r.parser, opts...)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	slashPath := filepath.ToSlash(relPath)
+	id := slashPath
+	for _, ext := range []string{yamlExtension, ymlExtension, jsonExtension} {
+		id = strings.TrimSuffix(id, ext)
+	}
+	tpl.Metadata.Environment = ""
+	if !needsCompose(byID, relPath) {
+		r.cache[id] = tpl
+	}
+	if !seenID[id] {
+		seenID[id] = true
+		baseID := baseIDFromPath(id)
+		if !seenBaseID[baseID] {
+			seenBaseID[baseID] = true
+			r.ids = append(r.ids, baseID)
+		}
+	}
+	return nil
+}
+
+func indexEmbeddedManifest(
+	fsys fs.FS,
+	root string,
+	parser manifest.Unmarshaler,
+	partialsPattern string,
+	byID map[string]*manifest.RawManifest,
+	path string,
+	d fs.DirEntry,
+	err error,
+) error {
+	if err != nil {
+		return err
+	}
+	if d.IsDir() ||
+		(!strings.HasSuffix(path, yamlExtension) && !strings.HasSuffix(path, ymlExtension) && !strings.HasSuffix(path, jsonExtension)) {
+		return nil
+	}
+	relPath := path
+	if root != "" && strings.HasPrefix(path, root+"/") {
+		relPath = strings.TrimPrefix(path, root+"/")
+	} else if root != "" && path == root {
+		return nil
+	}
+	if underPartialsDir(relPath, partialsPattern) {
+		return nil
+	}
+	data, readErr := fs.ReadFile(fsys, path)
+	if readErr != nil {
+		return readErr
+	}
+	var raw manifest.RawManifest
+	if unmarshalErr := parser.Unmarshal(data, &raw); unmarshalErr != nil {
+		return fmt.Errorf("%s: %w", path, unmarshalErr)
+	}
+	cacheID := filepath.ToSlash(relPath)
+	for _, ext := range []string{yamlExtension, ymlExtension, jsonExtension} {
+		cacheID = strings.TrimSuffix(cacheID, ext)
+	}
+	if raw.ID == "" {
+		raw.ID = cacheID
+	}
+	if prev, ok := byID[cacheID]; ok && prev != nil {
+		return fmt.Errorf("duplicate manifest path id %q at %s", cacheID, path)
+	}
+	cloned := raw
+	byID[cacheID] = &cloned
+	if raw.ID != cacheID {
+		if _, ok := byID[raw.ID]; !ok {
+			alias := cloned
+			byID[raw.ID] = &alias
+		}
+	}
+	return nil
+}

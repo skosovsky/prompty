@@ -19,13 +19,11 @@ type RawContentPart struct {
 }
 
 // RawMessage is the raw representation of a single message.
-//
-//nolint:golines // struct fields share aligned json/yaml tag layout
 type RawMessage struct {
 	Role           string               `json:"role"`
-	LayerKind      prompty.LayerKind    `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"` //nolint:tagalign // golines-compatible struct tags
-	LayerID        string               `json:"layer_id,omitempty" yaml:"layer_id,omitempty"`     //nolint:tagalign // golines-compatible struct tags
-	LegacySourceID string               `json:"source_id,omitempty" yaml:"source_id,omitempty"`   //nolint:tagalign // legacy reject field
+	LayerKind      prompty.LayerKind    `json:"layer_kind,omitempty"   yaml:"layer_kind,omitempty"`
+	LayerID        string               `json:"layer_id,omitempty"     yaml:"layer_id,omitempty"`
+	LegacySourceID string               `json:"source_id,omitempty"    yaml:"source_id,omitempty"`
 	Content        []RawContentPart     `json:"content"`
 	Optional       bool                 `json:"optional"`
 	CachePolicy    *prompty.CachePolicy `json:"cache_policy,omitempty"`
@@ -36,8 +34,6 @@ type RawMessage struct {
 // Supports Unmarshaler (YAML, JSON, etc.).
 // InputSchema is the JSON Schema for input typing (prompty-gen, required/partial derivation).
 // Metadata is the full metadata block; BuildFromRaw extracts tags and puts the rest into Extras.
-//
-//nolint:golines,tagalign // manifest wire struct uses wide aligned field columns
 type RawManifest struct {
 	ID             string                    `json:"id"`
 	Version        string                    `json:"version"`
@@ -50,7 +46,7 @@ type RawManifest struct {
 	Tools          []prompty.ToolDefinition  `json:"tools"`
 	ResponseFormat *prompty.SchemaDefinition `json:"response_format"`
 	Messages       []RawMessage              `json:"messages"`
-	Imports        []RawImport               `json:"imports,omitempty" yaml:"imports,omitempty"`
+	Imports        []RawImport               `json:"imports,omitempty"        yaml:"imports,omitempty"`
 	Layers         []RawLayer                `json:"layers,omitempty"         yaml:"layers,omitempty"`
 
 	// Legacy v1 fields: strict-mode parser rejects manifests that still use them.

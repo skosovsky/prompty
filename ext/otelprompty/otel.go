@@ -100,14 +100,7 @@ func (t *tracingInvoker) ExecuteStream(
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 			}
-			if chunk != nil {
-				if chunk.Usage.TotalTokens > 0 {
-					totalTokens = chunk.Usage.TotalTokens
-				}
-				if chunk.FinishReason != "" {
-					finishReason = chunk.FinishReason
-				}
-			}
+			recordStreamUsage(chunk, &totalTokens, &finishReason)
 			if !yield(chunk, err) {
 				return
 			}
@@ -126,4 +119,15 @@ func execAttrs(exec *prompty.PromptExecution) []attribute.KeyValue {
 		attrs = append(attrs, attribute.String("prompty.model", exec.ModelOptions.Model))
 	}
 	return attrs
+}
+
+func recordStreamUsage(chunk *prompty.ResponseChunk, totalTokens *int, finishReason *string) {
+	if chunk != nil {
+		if chunk.Usage.TotalTokens > 0 {
+			*totalTokens = chunk.Usage.TotalTokens
+		}
+		if chunk.FinishReason != "" {
+			*finishReason = chunk.FinishReason
+		}
+	}
 }

@@ -408,7 +408,14 @@ func modelOptionsFromWire(wire *ModelOptionsWire, provider JSONDocument) *ModelO
 	if wire == nil && len(provider) == 0 {
 		return nil
 	}
-	out := &ModelOptions{ProviderSettings: CloneJSONDocument(provider)}
+	out := &ModelOptions{
+		Model:            "",
+		Temperature:      nil,
+		MaxTokens:        nil,
+		TopP:             nil,
+		Stop:             nil,
+		ProviderSettings: CloneJSONDocument(provider),
+	}
 	if wire == nil {
 		return out
 	}

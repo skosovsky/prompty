@@ -18,26 +18,16 @@ const legacyClientTypeName = "LLM" + "Client"
 
 func TestGenerateConstsPackage(t *testing.T) {
 	f, err := GenerateConstsPackage("prompts", []string{"support_agent", "greeter"})
-	if err != nil {
-		t.Fatalf("GenerateConstsPackage: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateConstsPackage: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type PromptID string") {
-		t.Error("expected type PromptID string")
-	}
-	if !strings.Contains(out, "Greeter") {
-		t.Error("expected Greeter const")
-	}
-	if !strings.Contains(out, "SupportAgent") {
-		t.Error("expected SupportAgent const")
-	}
-	if !strings.Contains(out, "func AllPromptIDs()") {
-		t.Error("expected AllPromptIDs func")
-	}
+	assertGeneratedContains(t, out, "type PromptID string", "expected type PromptID string")
+	assertGeneratedContains(t, out, "Greeter", "expected Greeter const")
+	assertGeneratedContains(t, out, "SupportAgent", "expected SupportAgent const")
+	assertGeneratedContains(t, out, "func AllPromptIDs()", "expected AllPromptIDs func")
 	// Sorted order: greeter before support_agent
 	if strings.Index(out, "Greeter") > strings.Index(out, "SupportAgent") {
 		t.Error("expected deterministic sorted order (Greeter before SupportAgent); got SupportAgent before Greeter")
@@ -49,29 +39,22 @@ func TestGenerateConstsPackage(t *testing.T) {
 func TestGenerateSharedTypes(t *testing.T) {
 	specs := []*PromptSpec{sharedTestSpec("support_agent"), sharedTestSpec("greeter")}
 	f, err := GenerateSharedTypes("prompts", specs)
-	if err != nil {
-		t.Fatalf("GenerateSharedTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateSharedTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type PromptID string") {
-		t.Error("expected type PromptID string")
-	}
-	if !strings.Contains(out, "var validate = validator.New()") {
-		t.Error("expected package-level validate singleton")
-	}
-	if !strings.Contains(out, "type PromptCatalog interface") {
-		t.Error("expected PromptCatalog interface")
-	}
-	if !strings.Contains(out, "Descriptor(ctx context.Context, id PromptID)") {
-		t.Error("expected Descriptor method in PromptCatalog")
-	}
-	if !strings.Contains(out, "func NewPromptCatalog(") {
-		t.Error("expected NewPromptCatalog")
-	}
+	assertGeneratedContains(t, out, "type PromptID string", "expected type PromptID string")
+	assertGeneratedContains(t, out, "var validate = validator.New()", "expected package-level validate singleton")
+	assertGeneratedContains(t, out, "type PromptCatalog interface", "expected PromptCatalog interface")
+	assertGeneratedContains(
+		t,
+		out,
+		"Descriptor(ctx context.Context, id PromptID)",
+		"expected Descriptor method in PromptCatalog",
+	)
+	assertGeneratedContains(t, out, "func NewPromptCatalog(", "expected NewPromptCatalog")
 	if strings.Contains(out, "RenderSupportAgent") || strings.Contains(out, "RenderGreeter") {
 		t.Error("render-first catalog methods must not be generated")
 	}
@@ -81,39 +64,24 @@ func TestGenerateSharedTypes(t *testing.T) {
 	if strings.Contains(out, "renderFromAny") {
 		t.Error("legacy renderFromAny must not be generated")
 	}
-	if !strings.Contains(out, "PromptCatalogRegistry") {
-		t.Error("expected NewPromptCatalog to accept PromptCatalogRegistry")
-	}
-	if !strings.Contains(out, "type PromptIndex struct") {
-		t.Error("expected generated PromptIndex")
-	}
-	if !strings.Contains(out, "func (i PromptIndex) Lookup(") {
-		t.Error("expected PromptIndex Lookup")
-	}
-	if !strings.Contains(out, "NewSupportAgentRecipe") {
-		t.Error("expected typed recipe constructor in catalog")
-	}
-	if !strings.Contains(out, "NewRecipeFromJSON") {
-		t.Error("expected prompt-index JSON recipe decoder")
-	}
-	if !strings.Contains(out, "DecodeRecipeCheckpoint") {
-		t.Error("expected prompt-index checkpoint decoder")
-	}
-	if !strings.Contains(out, "CheckpointJSON()") {
-		t.Error("expected generic recipe checkpoint JSON method")
-	}
-	if !strings.Contains(out, "ResponseFormat()") {
-		t.Error("expected generic recipe structured output contract method")
-	}
-	if !strings.Contains(out, "JSONSchema()") {
-		t.Error("expected generic recipe JSON schema contract method")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"PromptCatalogRegistry",
+		"expected NewPromptCatalog to accept PromptCatalogRegistry",
+	)
+	assertGeneratedContains(t, out, "type PromptIndex struct", "expected generated PromptIndex")
+	assertGeneratedContains(t, out, "func (i PromptIndex) Lookup(", "expected PromptIndex Lookup")
+	assertGeneratedContains(t, out, "NewSupportAgentRecipe", "expected typed recipe constructor in catalog")
+	assertGeneratedContains(t, out, "NewRecipeFromJSON", "expected prompt-index JSON recipe decoder")
+	assertGeneratedContains(t, out, "DecodeRecipeCheckpoint", "expected prompt-index checkpoint decoder")
+	assertGeneratedContains(t, out, "CheckpointJSON()", "expected generic recipe checkpoint JSON method")
+	assertGeneratedContains(t, out, "ResponseFormat()", "expected generic recipe structured output contract method")
+	assertGeneratedContains(t, out, "JSONSchema()", "expected generic recipe JSON schema contract method")
 	if strings.Contains(out, "ToolContract") {
 		t.Error("legacy name-only ToolContract must not be generated")
 	}
-	if !strings.Contains(out, "func AllPromptIDs()") {
-		t.Error("expected AllPromptIDs")
-	}
+	assertGeneratedContains(t, out, "func AllPromptIDs()", "expected AllPromptIDs")
 	if strings.Contains(out, legacyClientTypeName) {
 		t.Error("DoD: must not contain the legacy client type")
 	}
@@ -148,9 +116,7 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	}
 
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
@@ -161,63 +127,60 @@ func TestGenerateManifestTypes_SupportAgent(t *testing.T) {
 	if !strings.Contains(out, "const SupportAgent PromptID = \"support_agent\"") {
 		t.Error("expected SupportAgent const")
 	}
-	if !strings.Contains(out, "type SupportAgentInput struct") {
-		t.Error("expected SupportAgentInput struct")
-	}
-	if !strings.Contains(out, "type SupportAgentPrompt struct") {
-		t.Error("expected SupportAgentPrompt type")
-	}
+	assertGeneratedContains(t, out, "type SupportAgentInput struct", "expected SupportAgentInput struct")
+	assertGeneratedContains(t, out, "type SupportAgentPrompt struct", "expected SupportAgentPrompt type")
 	if strings.Contains(out, "func (p *SupportAgentPrompt) Render(") {
 		t.Error("render-first prompt method must not be generated")
 	}
-	if !strings.Contains(out, "func (p *SupportAgentPrompt) RequiredTools()") {
-		t.Error("expected RequiredTools method on SupportAgentPrompt")
-	}
-	if !strings.Contains(out, "type SupportAgentRecipe struct") {
-		t.Error("expected SupportAgentRecipe type")
-	}
-	if !strings.Contains(out, "func (p *SupportAgentPrompt) NewRecipe(") {
-		t.Error("expected NewRecipe method on SupportAgentPrompt")
-	}
-	if !strings.Contains(out, "func NewSupportAgentRecipeFromCheckpoint(") {
-		t.Error("expected generated checkpoint restore constructor")
-	}
-	if !strings.Contains(out, "func (r SupportAgentRecipe) PromptID()") {
-		t.Error("expected recipe PromptID method")
-	}
-	if !strings.Contains(out, "func (r SupportAgentRecipe) ResponseFormat()") {
-		t.Error("expected generated ResponseFormat method")
-	}
-	if !strings.Contains(out, "ErrStructuredOutputUnavailable") {
-		t.Error("expected unavailable structured output error for prompts without response_format")
-	}
-	if !strings.Contains(out, "PromptRecipeNoLate[SupportAgentInput]") {
-		t.Error("expected no-late prompt recipe wrapper")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"func (p *SupportAgentPrompt) RequiredTools()",
+		"expected RequiredTools method on SupportAgentPrompt",
+	)
+	assertGeneratedContains(t, out, "type SupportAgentRecipe struct", "expected SupportAgentRecipe type")
+	assertGeneratedContains(
+		t,
+		out,
+		"func (p *SupportAgentPrompt) NewRecipe(",
+		"expected NewRecipe method on SupportAgentPrompt",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"func NewSupportAgentRecipeFromCheckpoint(",
+		"expected generated checkpoint restore constructor",
+	)
+	assertGeneratedContains(t, out, "func (r SupportAgentRecipe) PromptID()", "expected recipe PromptID method")
+	assertGeneratedContains(
+		t,
+		out,
+		"func (r SupportAgentRecipe) ResponseFormat()",
+		"expected generated ResponseFormat method",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"ErrStructuredOutputUnavailable",
+		"expected unavailable structured output error for prompts without response_format",
+	)
+	assertGeneratedContains(t, out, "PromptRecipeNoLate[SupportAgentInput]", "expected no-late prompt recipe wrapper")
 	if strings.Contains(out, "SupportAgentComposeContext") {
 		t.Error("compose context must not be generated without compose conditions")
 	}
 	if strings.Contains(out, "NewRecipeWithComposeContext") {
 		t.Error("compose recipe constructor must not be generated without compose conditions")
 	}
-	if !strings.Contains(out, "func (p *SupportAgentPrompt) ID()") {
-		t.Error("expected ID method on SupportAgentPrompt")
-	}
-	if !strings.Contains(out, "validate.Struct") {
-		t.Error("expected input validation")
-	}
+	assertGeneratedContains(t, out, "func (p *SupportAgentPrompt) ID()", "expected ID method on SupportAgentPrompt")
+	assertGeneratedContains(t, out, "validate.Struct", "expected input validation")
 	if strings.Contains(out, "p.registry.Plan") {
 		t.Error("NewRecipe must not build a render plan")
 	}
-	if !strings.Contains(out, "PlanInputFrom") {
-		t.Error("expected PlanInputFrom call")
-	}
+	assertGeneratedContains(t, out, "PlanInputFrom", "expected PlanInputFrom call")
 	if !strings.Contains(out, `prompt:"`) {
 		t.Error("expected prompt tags in generated input struct")
 	}
-	if !strings.Contains(out, "string(SupportAgent)") {
-		t.Error("expected string(PromptID) for manifest descriptor lookup")
-	}
+	assertGeneratedContains(t, out, "string(SupportAgent)", "expected string(PromptID) for manifest descriptor lookup")
 	if strings.Contains(out, "build render plan") {
 		t.Error("render-plan build wrapper must not be generated")
 	}
@@ -256,9 +219,7 @@ func TestGenerateManifestTypes_ComposeConditionRequiresContextPayload(t *testing
 	}
 
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
@@ -269,24 +230,31 @@ func TestGenerateManifestTypes_ComposeConditionRequiresContextPayload(t *testing
 	if strings.Contains(out, "func (p *ComposeAgentPrompt) NewRecipe(") {
 		t.Error("contextless NewRecipe must not be generated for compose-required prompts")
 	}
-	if !strings.Contains(out, "func (p *ComposeAgentPrompt) NewRecipeWithComposeContext(") {
-		t.Error("expected compose-aware recipe constructor")
-	}
-	if !strings.Contains(out, "type ComposeAgentRecipePayload struct") {
-		t.Error("expected compose-aware JSON recipe payload")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"func (p *ComposeAgentPrompt) NewRecipeWithComposeContext(",
+		"expected compose-aware recipe constructor",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"type ComposeAgentRecipePayload struct",
+		"expected compose-aware JSON recipe payload",
+	)
 	if !strings.Contains(out, "Compose *ComposeAgentComposeContext `json:\"compose\"`") {
 		t.Error("expected required compose payload pointer")
 	}
 	if !strings.Contains(out, "RoutingEnabled *bool `json:\"routing_enabled\"`") {
 		t.Error("expected pointer compose condition field with presence semantics")
 	}
-	if !strings.Contains(out, "func NewComposeAgentComposeContext(routingEnabled bool)") {
-		t.Error("expected compose context constructor")
-	}
-	if !strings.Contains(out, "ValidateComposeContext() error") {
-		t.Error("expected compose context validator")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"func NewComposeAgentComposeContext(routingEnabled bool)",
+		"expected compose context constructor",
+	)
+	assertGeneratedContains(t, out, "ValidateComposeContext() error", "expected compose context validator")
 }
 
 func TestGenerateManifestTypes_ComposeConditionFieldCollision(t *testing.T) {
@@ -329,9 +297,7 @@ func TestGenerateManifestTypes_NoResponseFormat(t *testing.T) {
 	}
 
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
@@ -368,9 +334,7 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	}
 
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
@@ -378,15 +342,14 @@ func TestGenerateManifestTypes_WithResponseFormat(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "type GreeterOutput struct") {
-		t.Error("expected GreeterOutput when response_format present")
-	}
-	if !strings.Contains(out, "func (r GreeterRecipe) ResponseFormat()") {
-		t.Error("expected generated ResponseFormat method")
-	}
-	if !strings.Contains(out, "func (r GreeterRecipe) JSONSchema()") {
-		t.Error("expected generated JSONSchema method")
-	}
+	assertGeneratedContains(t, out, "type GreeterOutput struct", "expected GreeterOutput when response_format present")
+	assertGeneratedContains(
+		t,
+		out,
+		"func (r GreeterRecipe) ResponseFormat()",
+		"expected generated ResponseFormat method",
+	)
+	assertGeneratedContains(t, out, "func (r GreeterRecipe) JSONSchema()", "expected generated JSONSchema method")
 	if strings.Contains(out, "ErrStructuredOutputUnavailable") {
 		t.Error("response-format prompt must not return unavailable schema")
 	}
@@ -426,20 +389,24 @@ func TestGenerateManifestTypes_NestedObjectInOutput(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type RouterOutputEntities struct") {
-		t.Error("expected type RouterOutputEntities struct for nested object in Output")
-	}
-	if !strings.Contains(out, "Entities *RouterOutputEntities") {
-		t.Error("expected field Entities *RouterOutputEntities (parent-based naming)")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"type RouterOutputEntities struct",
+		"expected type RouterOutputEntities struct for nested object in Output",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"Entities *RouterOutputEntities",
+		"expected field Entities *RouterOutputEntities (parent-based naming)",
+	)
 }
 
 func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
@@ -460,20 +427,24 @@ func TestGenerateManifestTypes_NestedObjectInInput(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type RouterInputPayload struct") {
-		t.Error("expected type RouterInputPayload struct for nested object in Input")
-	}
-	if !strings.Contains(out, "Payload *RouterInputPayload") {
-		t.Error("expected field Payload *RouterInputPayload (parent-based naming)")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"type RouterInputPayload struct",
+		"expected type RouterInputPayload struct for nested object in Input",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"Payload *RouterInputPayload",
+		"expected field Payload *RouterInputPayload (parent-based naming)",
+	)
 	if strings.Contains(out, `vars["payload"]`) {
 		t.Error("must not generate legacy vars map assignments")
 	}
@@ -506,20 +477,24 @@ func TestGenerateManifestTypes_ArrayOfObjectInOutput(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type RouterOutputUsersItem struct") {
-		t.Error("expected type RouterOutputUsersItem struct for array-of-object in Output")
-	}
-	if !strings.Contains(out, "Users []RouterOutputUsersItem") {
-		t.Error("expected field Users []RouterOutputUsersItem (not ...OutputItemUsers)")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"type RouterOutputUsersItem struct",
+		"expected type RouterOutputUsersItem struct for array-of-object in Output",
+	)
+	assertGeneratedContains(
+		t,
+		out,
+		"Users []RouterOutputUsersItem",
+		"expected field Users []RouterOutputUsersItem (not ...OutputItemUsers)",
+	)
 }
 
 func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
@@ -529,9 +504,7 @@ func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	}
 
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
@@ -539,9 +512,7 @@ func TestGenerateManifestTypes_EmptyInputSchema(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "type NoVarsInput struct") {
-		t.Error("expected empty Input struct")
-	}
+	assertGeneratedContains(t, out, "type NoVarsInput struct", "expected empty Input struct")
 	if strings.Contains(out, "func (p *NoVarsPrompt) Render(") {
 		t.Error("render-first prompt method must not be generated")
 	}
@@ -560,9 +531,7 @@ func TestGenerateManifestTypes_RequiredTools(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -609,15 +578,11 @@ func TestGenerateManifestTypes_Dive(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "dive") {
-		t.Error("expected validate dive tag for array of objects")
-	}
+	assertGeneratedContains(t, out, "dive", "expected validate dive tag for array of objects")
 }
 
 func TestGenerateManifestTypes_AdditionalProperties(t *testing.T) {
@@ -636,15 +601,16 @@ func TestGenerateManifestTypes_AdditionalProperties(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "map[string]string") {
-		t.Error("expected map[string]string for additionalProperties with type string")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"map[string]string",
+		"expected map[string]string for additionalProperties with type string",
+	)
 }
 
 func TestGenerateManifestTypes_OpenObjectWithoutTypedAdditionalPropertiesFails(t *testing.T) {
@@ -708,15 +674,11 @@ func TestGenerateManifestTypes_Oneof(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "oneof=pending done") {
-		t.Error("expected oneof validate tag from enum")
-	}
+	assertGeneratedContains(t, out, "oneof=pending done", "expected oneof validate tag from enum")
 }
 
 // --- Regression tests ---
@@ -735,15 +697,11 @@ func TestGenerateManifestTypes_RequiredBoolWithFalse(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "*bool") {
-		t.Error("required bool must be *bool for presence semantics")
-	}
+	assertGeneratedContains(t, out, "*bool", "required bool must be *bool for presence semantics")
 	if !strings.Contains(out, "validate:\"required\"") && !strings.Contains(out, "validate:`required`") {
 		t.Error("required bool must have validate required tag")
 	}
@@ -770,9 +728,7 @@ func TestGenerateManifestTypes_MinItemsMaxItems(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
@@ -791,15 +747,16 @@ func TestGenerateManifestTypes_RootObjectWithoutProperties(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "type EmptyInputInput struct") {
-		t.Error("expected empty Input struct for root object without properties")
-	}
+	assertGeneratedContains(
+		t,
+		out,
+		"type EmptyInputInput struct",
+		"expected empty Input struct for root object without properties",
+	)
 	assertEmptyInputRecipeBindingContract(t, out)
 }
 
@@ -827,15 +784,11 @@ func TestGenerateManifestTypes_ArrayOfArray(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "[][]") {
-		t.Error("expected array-of-array nested type")
-	}
+	assertGeneratedContains(t, out, "[][]", "expected array-of-array nested type")
 }
 
 func TestGenerateManifestTypes_SpecialCharsInKeys(t *testing.T) {
@@ -851,9 +804,7 @@ func TestGenerateManifestTypes_SpecialCharsInKeys(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
@@ -876,15 +827,11 @@ func TestGenerateManifestTypes_IdWithDigitPrefix(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "X2faPrompt") {
-		t.Error("expected id starting with digit to get X prefix")
-	}
+	assertGeneratedContains(t, out, "X2faPrompt", "expected id starting with digit to get X prefix")
 }
 
 func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing.T) {
@@ -904,9 +851,7 @@ func TestGenerateManifestTypes_OptionalStringNoDefaultElseEmptyString(t *testing
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -935,9 +880,7 @@ func TestGenerateManifestTypes_OptionalArrayNoDefaultElseNil(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -966,18 +909,12 @@ func TestGenerateManifestTypes_Default(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	_ = f.Render(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "type GreeterInput struct") {
-		t.Error("expected generated input struct")
-	}
-	if !strings.Contains(out, "if input.Greeting == nil") {
-		t.Error("expected default guard for optional greeting")
-	}
+	assertGeneratedContains(t, out, "type GreeterInput struct", "expected generated input struct")
+	assertGeneratedContains(t, out, "if input.Greeting == nil", "expected default guard for optional greeting")
 	if !strings.Contains(out, `v := "Hello"`) {
 		t.Error("expected literal default assignment for greeting")
 	}
@@ -1054,9 +991,7 @@ func TestGenerateManifestTypes_FormatMessages(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -1087,20 +1022,14 @@ func TestGenerateManifestTypes_LateInput(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "type MainAgentInput struct") {
-		t.Error("expected MainAgentInput")
-	}
-	if !strings.Contains(out, "UserName") {
-		t.Error("expected UserName on MainAgentInput")
-	}
+	assertGeneratedContains(t, out, "type MainAgentInput struct", "expected MainAgentInput")
+	assertGeneratedContains(t, out, "UserName", "expected UserName on MainAgentInput")
 	idx := strings.Index(out, "type MainAgentInput struct")
 	lateIdx := strings.Index(out, "type MainAgentLateInput struct")
 	if lateIdx < 0 {
@@ -1109,18 +1038,17 @@ func TestGenerateManifestTypes_LateInput(t *testing.T) {
 	if idx >= 0 && strings.Contains(out[idx:lateIdx], "PatientDossier") {
 		t.Error("late field must not appear on MainAgentInput")
 	}
-	if !strings.Contains(out, "type MainAgentLateInput struct") {
-		t.Error("expected MainAgentLateInput")
-	}
+	assertGeneratedContains(t, out, "type MainAgentLateInput struct", "expected MainAgentLateInput")
 	if !strings.Contains(out, `prompt:"patient_dossier"`) {
 		t.Error("expected prompt tag on late field")
 	}
-	if !strings.Contains(out, "func (r MainAgentRecipe) BindLate(") {
-		t.Error("expected recipe-owned BindLate")
-	}
-	if !strings.Contains(out, "PromptRecipe[MainAgentInput, MainAgentLateInput]") {
-		t.Error("expected typed prompt recipe wrapper")
-	}
+	assertGeneratedContains(t, out, "func (r MainAgentRecipe) BindLate(", "expected recipe-owned BindLate")
+	assertGeneratedContains(
+		t,
+		out,
+		"PromptRecipe[MainAgentInput, MainAgentLateInput]",
+		"expected typed prompt recipe wrapper",
+	)
 	if strings.Contains(out, "func (p *MainAgentPrompt) WithLate(") {
 		t.Error("legacy WithLate(plan, late) must not be generated")
 	}
@@ -1145,9 +1073,7 @@ func TestGenerateManifestTypes_LateRequiredInput(t *testing.T) {
 		},
 	}
 	f, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	var buf strings.Builder
 	if err := f.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -1193,49 +1119,30 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 	}
 
 	shared, err := GenerateSharedTypes("prompts", []*PromptSpec{sharedTestSpec("support_agent")})
-	if err != nil {
-		t.Fatalf("GenerateSharedTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateSharedTypes: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, shared, filepath.Join(goldenDir, "shared_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "shared_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := shared.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(t, goldenDir, "shared_gen.go.golden", func() (string, error) { return renderGoldenSource(shared) })
 
 	manifestFile, err := GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, manifestFile, filepath.Join(goldenDir, "support_agent_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "support_agent_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := manifestFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"support_agent_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(manifestFile) },
+	)
 
 	consts, err := GenerateConstsPackage("prompts", []string{"support_agent"})
-	if err != nil {
-		t.Fatalf("GenerateConstsPackage: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateConstsPackage: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, consts, filepath.Join(goldenDir, "consts_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "consts_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := consts.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(t, goldenDir, "consts_gen.go.golden", func() (string, error) { return renderGoldenSource(consts) })
 
 	lateSpec := &PromptSpec{
 		ID: "late_binding_agent",
@@ -1254,51 +1161,42 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		},
 	}
 	lateFile, err := GenerateManifestTypes(lateSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes late_binding_agent: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes late_binding_agent: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, lateFile, filepath.Join(goldenDir, "late_binding_agent_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "late_binding_agent_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := lateFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"late_binding_agent_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(lateFile) },
+	)
 
 	noVarsSpec := &PromptSpec{ID: "no_vars"}
 	noVarsFile, err := GenerateManifestTypes(noVarsSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes no_vars: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes no_vars: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, noVarsFile, filepath.Join(goldenDir, "no_vars_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "no_vars_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := noVarsFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"no_vars_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(noVarsFile) },
+	)
 
 	lateRequiredSpec := loadTestPromptSpec(t, filepath.Join(testdataPromptsDir(t), "late_required_agent.yaml"), nil)
 	lateRequiredFile, err := GenerateManifestTypes(lateRequiredSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes late_required_agent: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes late_required_agent: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, lateRequiredFile, filepath.Join(goldenDir, "late_required_agent_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "late_required_agent_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := lateRequiredFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"late_required_agent_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(lateRequiredFile) },
+	)
 
 	composedMainSpec := loadTestPromptSpec(
 		t,
@@ -1306,19 +1204,16 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		composeTestLoader(t),
 	)
 	composedMainFile, err := GenerateManifestTypes(composedMainSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes composed_main: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes composed_main: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, composedMainFile, filepath.Join(goldenDir, "composed_main_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "composed_main_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := composedMainFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"composed_main_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(composedMainFile) },
+	)
 
 	composedChildSpec := loadTestPromptSpec(
 		t,
@@ -1326,19 +1221,16 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		composeTestLoader(t),
 	)
 	composedChildFile, err := GenerateManifestTypes(composedChildSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes composed_child: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes composed_child: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, composedChildFile, filepath.Join(goldenDir, "composed_child_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "composed_child_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := composedChildFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"composed_child_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(composedChildFile) },
+	)
 
 	composedConditionalSpec := loadTestPromptSpec(
 		t,
@@ -1346,19 +1238,16 @@ func TestGenerate_GoldenCompare(t *testing.T) {
 		composeTestLoader(t),
 	)
 	composedConditionalFile, err := GenerateManifestTypes(composedConditionalSpec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes composed_conditional_main: %v", err)
-	}
+	assertGenerationSucceeded(t, err, "GenerateManifestTypes composed_conditional_main: %v")
 	if goldenFlag() != "" {
 		writeGolden(t, composedConditionalFile, filepath.Join(goldenDir, "composed_conditional_main_gen.go.golden"))
 	}
-	compareGolden(t, goldenDir, "composed_conditional_main_gen.go.golden", func() (string, error) {
-		var b strings.Builder
-		if renderErr := composedConditionalFile.Render(&b); renderErr != nil {
-			return "", renderErr
-		}
-		return b.String(), nil
-	})
+	compareGolden(
+		t,
+		goldenDir,
+		"composed_conditional_main_gen.go.golden",
+		func() (string, error) { return renderGoldenSource(composedConditionalFile) },
+	)
 }
 
 func sharedTestSpec(id string) *PromptSpec {
@@ -1410,4 +1299,26 @@ func writeGolden(t *testing.T, f *jen.File, path string) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	t.Logf("wrote %s", path)
+}
+
+func assertGeneratedContains(t *testing.T, output, expected, message string) {
+	t.Helper()
+	if !strings.Contains(output, expected) {
+		t.Error(message)
+	}
+}
+
+func renderGoldenSource(file *jen.File) (string, error) {
+	var buffer strings.Builder
+	if err := file.Render(&buffer); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
+}
+
+func assertGenerationSucceeded(t *testing.T, err error, message string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf(message, err)
+	}
 }

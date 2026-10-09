@@ -184,7 +184,7 @@ func WithResponseFormatFromStruct[T any](p *RenderPlan) (*RenderPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("response format: %w", err)
 	}
-	return p.WithResponseFormatDefinition(&SchemaDefinition{Schema: doc})
+	return p.WithResponseFormatDefinition(&SchemaDefinition{Name: "", Description: "", Schema: doc})
 }
 
 // Execute materializes plan into PromptExecution using `.Input` and `.LateVars` template context.

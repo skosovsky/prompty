@@ -28,25 +28,8 @@ func applyOpenAIProviderSettings(params *openai.ChatCompletionNewParams, setting
 	if err := adapter.RejectUnknownProviderSettingKeys(settings, openAIProviderSettingKeys()); err != nil {
 		return false, err
 	}
-	if raw, ok := settings["presence_penalty"]; ok {
-		penalty, err := cast.ToFloat32(raw)
-		if err != nil {
-			return false, adapter.ProviderSettingError("presence_penalty", err)
-		}
-		if err := adapter.ValidateFloat32Range("presence_penalty", penalty, -2, 2); err != nil {
-			return false, err
-		}
-		params.PresencePenalty = openai.Float(float64(penalty))
-	}
-	if raw, ok := settings["frequency_penalty"]; ok {
-		penalty, err := cast.ToFloat32(raw)
-		if err != nil {
-			return false, adapter.ProviderSettingError("frequency_penalty", err)
-		}
-		if err := adapter.ValidateFloat32Range("frequency_penalty", penalty, -2, 2); err != nil {
-			return false, err
-		}
-		params.FrequencyPenalty = openai.Float(float64(penalty))
+	if err := applyOpenAIPenalties(params, settings); err != nil {
+		return false, err
 	}
 	if raw, ok := settings["seed"]; ok {
 		seed, err := cast.ToInt32(raw)
@@ -88,4 +71,29 @@ func applyOpenAIProviderSettings(params *openai.ChatCompletionNewParams, setting
 		return true, nil
 	}
 	return false, nil
+}
+
+func applyOpenAIPenalties(params *openai.ChatCompletionNewParams, settings map[string]any) error {
+	if raw, ok := settings["presence_penalty"]; ok {
+		penalty, err := cast.ToFloat32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("presence_penalty", err)
+		}
+		if err := adapter.ValidateFloat32Range("presence_penalty", penalty, -2, 2); err != nil {
+			return err
+		}
+		params.PresencePenalty = openai.Float(float64(penalty))
+	}
+	if raw, ok := settings["frequency_penalty"]; ok {
+		penalty, err := cast.ToFloat32(raw)
+		if err != nil {
+			return adapter.ProviderSettingError("frequency_penalty", err)
+		}
+		if err := adapter.ValidateFloat32Range("frequency_penalty", penalty, -2, 2); err != nil {
+			return err
+		}
+		params.FrequencyPenalty = openai.Float(float64(penalty))
+	}
+
+	return nil
 }

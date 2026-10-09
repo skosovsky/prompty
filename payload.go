@@ -24,13 +24,9 @@ func walkParseNodes(node parse.Node, visit func(parse.Node)) {
 	visit(node)
 	switch n := node.(type) {
 	case *parse.ListNode:
-		for _, c := range n.Nodes {
-			walkParseNodes(c, visit)
-		}
+		walkListNodes(n.Nodes, visit)
 	case *parse.ActionNode:
-		if n.Pipe != nil {
-			walkParseNodes(n.Pipe, visit)
-		}
+		walkParseNodes(n.Pipe, visit)
 	case *parse.PipeNode:
 		for _, c := range n.Cmds {
 			walkParseNodes(c, visit)
@@ -93,19 +89,31 @@ func extractRequiredVarsFromParsed(parsed []parsedMessage) []string {
 		if pm.optional {
 			continue
 		}
-		for _, part := range pm.parts {
-			for _, tmpl := range part.templates() {
-				if tmpl == nil {
-					continue
-				}
-				for _, name := range extractVarsFromTree(tmpl.Tree) {
-					if !seen[name] {
-						seen[name] = true
-						out = append(out, name)
-					}
-				}
+		for _, name := range requiredVarsFromMessage(pm) {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
 			}
 		}
 	}
 	return out
+}
+
+func requiredVarsFromMessage(pm parsedMessage) []string {
+	var out []string
+	for _, part := range pm.parts {
+		for _, tmpl := range part.templates() {
+			if tmpl == nil {
+				continue
+			}
+			out = append(out, extractVarsFromTree(tmpl.Tree)...)
+		}
+	}
+	return out
+}
+
+func walkListNodes(nodes []parse.Node, visit func(parse.Node)) {
+	for _, node := range nodes {
+		walkParseNodes(node, visit)
+	}
 }

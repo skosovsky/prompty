@@ -41,8 +41,14 @@ type Registry struct {
 }
 
 // New creates a Registry that reads manifests from dir. Parser is required (use WithParser).
+const (
+	jsonExtension = ".json"
+	yamlExtension = ".yaml"
+	ymlExtension  = ".yml"
+)
+
 func New(dir string, opts ...Option) (*Registry, error) {
-	r := &Registry{
+	r := &Registry{env: "", partialsPattern: "", parser: nil, mu: sync.RWMutex{},
 		dir:   dir,
 		cache: make(map[string]*prompty.ChatPromptTemplate),
 	}
@@ -85,7 +91,7 @@ func insertEnvBeforeExt(base, env string) string {
 // idToPaths returns manifest paths for id (io/fs slash-style id).
 // When env is set, only {id}.{env} variants are resolved (no base-id fallback).
 func idToPaths(dir, id, env string) []string {
-	exts := []string{".yaml", ".yml", ".json"}
+	exts := []string{yamlExtension, ymlExtension, jsonExtension}
 	var out []string
 	resolvedID := id
 	if env != "" {
@@ -305,7 +311,7 @@ func (r *Registry) templateForPlan(
 // then on basename drop everything after first dot as env suffix (router.prod -> router).
 func baseIDFromPath(path string) string {
 	slash := filepath.ToSlash(path)
-	for _, ext := range []string{".yaml", ".yml", ".json"} {
+	for _, ext := range []string{yamlExtension, ymlExtension, jsonExtension} {
 		slash = strings.TrimSuffix(slash, ext)
 	}
 	base := filepath.Base(slash)
@@ -350,7 +356,7 @@ func (r *Registry) List(ctx context.Context) ([]string, error) {
 		}
 		slashPath := filepath.ToSlash(path)
 		hasManifestExt := false
-		for _, ext := range []string{".yaml", ".yml", ".json"} {
+		for _, ext := range []string{yamlExtension, ymlExtension, jsonExtension} {
 			if strings.HasSuffix(slashPath, ext) {
 				hasManifestExt = true
 				break

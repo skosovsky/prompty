@@ -39,7 +39,7 @@ func New(fetcher Fetcher, opts ...Option) (*Registry, error) {
 	if fetcher == nil {
 		panic("remoteregistry: Fetcher must not be nil")
 	}
-	r := &Registry{fetcher: fetcher}
+	r := &Registry{env: "", parser: nil, composeMu: sync.RWMutex{}, composeByID: nil, fetcher: fetcher}
 	for _, opt := range opts {
 		opt(r)
 	}

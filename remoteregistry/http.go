@@ -60,7 +60,7 @@ func NewHTTPFetcher(baseURL string, opts ...HTTPOption) (*HTTPFetcher, error) {
 	if err != nil || parsed.Scheme == "" {
 		return nil, fmt.Errorf("remoteregistry: invalid base URL %q", baseURL)
 	}
-	h := &HTTPFetcher{
+	h := &HTTPFetcher{authToken: "",
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: defaultHTTPClientTimeout},
 	}

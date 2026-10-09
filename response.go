@@ -22,7 +22,18 @@ func NewResponse(parts []ContentPart) *Response {
 	if parts == nil {
 		parts = []ContentPart{}
 	}
-	return &Response{Content: parts}
+	return &Response{
+		Usage: Usage{
+			PromptTokens:              0,
+			CompletionTokens:          0,
+			TotalTokens:               0,
+			PromptTokensCached:        0,
+			PromptTokensCacheCreation: 0,
+			CompletionTokensReasoning: 0,
+		},
+		FinishReason: "",
+		Content:      parts,
+	}
 }
 
 // ResponseChunk is one chunk of the stream.

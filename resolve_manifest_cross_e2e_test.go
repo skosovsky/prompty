@@ -1,3 +1,5 @@
+//go:build e2e
+
 package prompty_test
 
 import (
@@ -54,7 +56,7 @@ func (f *staticManifestFetcher) Fetch(_ context.Context, id string) ([]byte, err
 	return nil, remoteregistry.ErrNotFound
 }
 
-func TestCrossRegistry_ResolveManifest_IdenticalDescriptor(t *testing.T) {
+func TestE2ECrossRegistry_ResolveManifest_IdenticalDescriptor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	manifestBytes := []byte(crossRegistryManifestYAML)
@@ -162,7 +164,7 @@ func newCrossComposeRegistries(t *testing.T) crossComposeRegistries {
 	return crossComposeRegistries{file: fileReg, embed: embedReg, remote: remoteReg}
 }
 
-func TestCrossRegistry_ConditionalCompose_ResolveManifestParity(t *testing.T) {
+func TestE2ECrossRegistry_ConditionalCompose_ResolveManifestParity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossComposeRegistries(t)
@@ -218,7 +220,7 @@ func TestCrossRegistry_ConditionalCompose_ResolveManifestParity(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_ComposeCheckpointDigestParity(t *testing.T) {
+func TestE2ECrossRegistry_ComposeCheckpointDigestParity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossComposeRegistries(t)
@@ -290,7 +292,7 @@ func (r *crossComposeTamperReader) ReadManifestBytes(
 	return r.base.ReadManifestBytes(ctx, id)
 }
 
-func TestCrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
+func TestE2ECrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	parser := yaml.New()
@@ -516,7 +518,7 @@ func crossFlatRegistryMatrix(t *testing.T) []crossComposeRegistry {
 	}
 }
 
-func TestCrossRegistry_FlatCheckpoint_Parity(t *testing.T) {
+func TestE2ECrossRegistry_FlatCheckpoint_Parity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossFlatRegistries(t)
@@ -603,7 +605,7 @@ func newCrossLateRegistries(t *testing.T) crossLateRegistries {
 	return crossLateRegistries{file: fileReg, embed: embedReg, remote: remoteReg}
 }
 
-func TestCrossRegistry_LateBinding_Parity(t *testing.T) {
+func TestE2ECrossRegistry_LateBinding_Parity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossLateRegistries(t)
@@ -644,7 +646,7 @@ func TestCrossRegistry_LateBinding_Parity(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
+func TestE2ECrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossComposeRegistries(t)
@@ -736,7 +738,7 @@ func newCrossChatHistoryRegistries(t *testing.T) struct {
 	}{file: fileReg, embed: embedReg, remote: remoteReg}
 }
 
-func TestCrossRegistry_ChatHistory_FormatMessages(t *testing.T) {
+func TestE2ECrossRegistry_ChatHistory_FormatMessages(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossChatHistoryRegistries(t)
@@ -776,7 +778,7 @@ func TestCrossRegistry_ChatHistory_FormatMessages(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_ChatHistory_PreservesProvenance(t *testing.T) {
+func TestE2ECrossRegistry_ChatHistory_PreservesProvenance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossChatHistoryRegistries(t)
@@ -821,7 +823,7 @@ func TestCrossRegistry_ChatHistory_PreservesProvenance(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_Checkpoint_MissingImportFails(t *testing.T) {
+func TestE2ECrossRegistry_Checkpoint_MissingImportFails(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	missingChildBytes := readFileregistryComposeFixture(t, "composed_main_missing_child.yaml")
@@ -862,7 +864,7 @@ func TestCrossRegistry_Checkpoint_MissingImportFails(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_LateBinding_RequiredWithoutLateInput(t *testing.T) {
+func TestE2ECrossRegistry_LateBinding_RequiredWithoutLateInput(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	lateRequiredBytes := readFileregistryComposeFixture(t, "late_required_agent.yaml")
@@ -913,7 +915,7 @@ func TestCrossRegistry_LateBinding_RequiredWithoutLateInput(t *testing.T) {
 	}
 }
 
-func TestCrossRegistry_LateBinding_OptionalLate(t *testing.T) {
+func TestE2ECrossRegistry_LateBinding_OptionalLate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	regs := newCrossChatHistoryRegistries(t)

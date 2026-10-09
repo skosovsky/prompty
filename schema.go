@@ -5,6 +5,7 @@ import (
 	"reflect"
 )
 
+//nolint:gochecknoglobals // Cached immutable reflection type.
 var schemaProviderType = reflect.TypeFor[SchemaProvider]()
 
 // SchemaProvider allows caller-owned types to provide a JSON Schema without reflection.
@@ -102,6 +103,6 @@ func instantiateSchemaProvider(t reflect.Type) (SchemaProvider, bool) {
 		return nil, false
 	}
 
-	provider, ok := value.Interface().(SchemaProvider)
+	provider, ok := reflect.TypeAssert[SchemaProvider](value)
 	return provider, ok
 }

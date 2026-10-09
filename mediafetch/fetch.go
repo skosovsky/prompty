@@ -27,9 +27,13 @@ var (
 )
 
 // AllowedImagePrefixes are Content-Type prefixes accepted for image media (e.g. "image/png"). Do not modify.
+//
+//nolint:gochecknoglobals // Public configurable allowlist retained for API compatibility.
 var AllowedImagePrefixes = []string{"image/"}
 
 // DefaultClient is the HTTP client used for fetching. Override in tests to use a custom client (e.g. TLS with InsecureSkipVerify).
+//
+//nolint:gochecknoglobals // Public configurable HTTP client retained for API compatibility.
 var DefaultClient = http.DefaultClient
 
 // DefaultFetcher implements URL-to-bytes fetching using standard HTTP (HTTPS only, size limit, image MIME check).

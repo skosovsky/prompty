@@ -44,7 +44,7 @@ func cloneModelOptions(opts *ModelOptions) *ModelOptions {
 	if opts == nil {
 		return nil
 	}
-	out := &ModelOptions{
+	out := &ModelOptions{Temperature: nil, MaxTokens: nil, TopP: nil,
 		Model:            opts.Model,
 		Stop:             cloneStringSlice(opts.Stop),
 		ProviderSettings: CloneJSONDocument(opts.ProviderSettings),
@@ -196,16 +196,12 @@ func cloneContentPart(part ContentPart) ContentPart {
 		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
 		return &cp
 	case MediaPart:
-		x.Data = bytes.Clone(x.Data)
-		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
-		return x
+		return cloneMediaPart(x)
 	case *MediaPart:
 		if x == nil {
 			return x
 		}
-		cp := *x
-		cp.Data = bytes.Clone(cp.Data)
-		cp.CachePolicy = cloneCachePolicy(cp.CachePolicy)
+		cp := cloneMediaPart(*x)
 		return &cp
 	case ReasoningPart:
 		x.CachePolicy = cloneCachePolicy(x.CachePolicy)
@@ -309,18 +305,46 @@ func cloneReflectValue(value reflect.Value) reflect.Value {
 		if value.Type().Elem().Kind() == reflect.Uint8 {
 			return reflect.ValueOf(bytes.Clone(value.Bytes())).Convert(value.Type())
 		}
-		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-		for i := range value.Len() {
-			out.Index(i).Set(cloneReflectValue(value.Index(i)))
-		}
-		return out
+		return cloneReflectSequence(value, reflect.MakeSlice(value.Type(), value.Len(), value.Len()))
 	case reflect.Array:
-		out := reflect.New(value.Type()).Elem()
-		for i := range value.Len() {
-			out.Index(i).Set(cloneReflectValue(value.Index(i)))
-		}
-		return out
+		return cloneReflectSequence(value, reflect.New(value.Type()).Elem())
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32,
+		reflect.Float64,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Chan,
+		reflect.Func,
+		reflect.String,
+		reflect.Struct,
+		reflect.UnsafePointer:
+		fallthrough
 	default:
 		return value
 	}
+}
+
+func cloneReflectSequence(value, out reflect.Value) reflect.Value {
+	for i := range value.Len() {
+		out.Index(i).Set(cloneReflectValue(value.Index(i)))
+	}
+	return out
+}
+
+func cloneMediaPart(part MediaPart) MediaPart {
+	part.Data = bytes.Clone(part.Data)
+	part.CachePolicy = cloneCachePolicy(part.CachePolicy)
+	return part
 }

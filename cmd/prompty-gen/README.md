@@ -199,7 +199,7 @@ exec, _ := recipe.ExecuteWithContract(ctx, reg, contract)
 resp, err := invoker.Execute(ctx, exec)
 ```
 
-## Интеграция в Makefile / Git Sync
+## Интеграция в Makefile / Git Sync проекта-потребителя
 
 ```makefile
 .PHONY: generate
@@ -211,7 +211,7 @@ gen-check: generate
 	git diff --exit-code  # fail CI если сгенерированный код не закоммичен
 ```
 
-В CI вызывайте `make gen-check` перед сборкой.
+В CI проекта-потребителя вызывайте `make gen-check` перед сборкой. В репозитории prompty проверки генерации и generated fixtures запускаются через `make test-e2e`.
 
 ## Интеграция в CI
 

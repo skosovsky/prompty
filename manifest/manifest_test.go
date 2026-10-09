@@ -16,6 +16,7 @@ import (
 //go:embed testdata/*.json testdata/*.yaml
 var testdataFS embed.FS
 
+//nolint:gochecknoglobals // Stateless parser shared by manifest fixtures.
 var jsonParser = NewJSONParser()
 
 func TestMain(m *testing.M) {

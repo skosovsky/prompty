@@ -70,51 +70,9 @@ func GenerateManifestTypes(spec *PromptSpec, pkgName string) (*jen.File, error) 
 
 	m := newSchemaMapper(rootName)
 	lateInputType := rootName + "LateInput"
-	var earlyInputSchema *prompty.SchemaDefinition
-	hasLateInput := false
-	hasInputSchema := spec.InputSchema != nil && len(spec.InputSchema.Schema) > 0
-	if hasInputSchema {
-		inputSchema, err := schemaAsMap(spec.InputSchema.Schema)
-		if err != nil {
-			return nil, fmt.Errorf("input schema: %w", err)
-		}
-		if validateErr := validateObjectSchemaForInput(inputSchema); validateErr != nil {
-			return nil, fmt.Errorf("input schema: %w", validateErr)
-		}
-		earlySchema, lateSchema, hasLate := splitEarlyLateInputSchema(inputSchema)
-		hasLateInput = hasLate
-		earlyInputSchema, err = schemaDefinitionFromMap(earlySchema)
-		if err != nil {
-			return nil, fmt.Errorf("input schema: %w", err)
-		}
-		earlyProps, _ := earlySchema["properties"].(map[string]any)
-		if len(earlyProps) > 0 {
-			stmts, genErr := m.GenerateTypes(earlySchema, "Input")
-			if genErr != nil {
-				return nil, fmt.Errorf("input schema: %w", genErr)
-			}
-			for _, stmt := range stmts {
-				f.Add(stmt)
-				f.Line()
-			}
-		} else {
-			f.Type().Id(inputType).Struct()
-			f.Line()
-		}
-		if hasLateInput {
-			lateMapper := newSchemaMapper(rootName)
-			lateStmts, genErr := lateMapper.GenerateTypes(lateSchema, "LateInput")
-			if genErr != nil {
-				return nil, fmt.Errorf("late input schema: %w", genErr)
-			}
-			for _, stmt := range lateStmts {
-				f.Add(stmt)
-				f.Line()
-			}
-		}
-	} else {
-		f.Type().Id(inputType).Struct()
-		f.Line()
+	earlyInputSchema, hasLateInput, inputTypesErr := addManifestInputTypes(f, m, spec, rootName, inputType)
+	if inputTypesErr != nil {
+		return nil, inputTypesErr
 	}
 
 	hasOutputSchema := isStructSchema(spec.ResponseFormat)
@@ -298,7 +256,7 @@ func addComposeContextType(
 	for _, cond := range conditions {
 		fields = append(fields, jen.Id(cond.FieldName).
 			Op("*").Add(composeConditionType(cond.Kind)).
-			Tag(map[string]string{"json": composeConditionJSONName(cond)}))
+			Tag(map[string]string{jsonTagKey: composeConditionJSONName(cond)}))
 	}
 	f.Type().Id(typeName).Struct(fields...)
 	f.Line()
@@ -401,8 +359,8 @@ func addComposeContextType(
 	f.Line()
 
 	f.Type().Id(rootName+"RecipePayload").Struct(
-		jen.Id("Input").Id(inputType).Tag(map[string]string{"json": "input"}),
-		jen.Id("Compose").Op("*").Id(typeName).Tag(map[string]string{"json": "compose"}),
+		jen.Id("Input").Id(inputType).Tag(map[string]string{jsonTagKey: "input"}),
+		jen.Id("Compose").Op("*").Id(typeName).Tag(map[string]string{jsonTagKey: "compose"}),
 	)
 }
 
@@ -923,72 +881,135 @@ func buildInputDefaultsBlock(schemaDef *prompty.SchemaDefinition) ([]jen.Code, e
 		if !hasDefault {
 			continue
 		}
-		fieldName := pascal(propName)
-		propType, _ := propSchema["type"].(string)
-		switch propType {
-		case jsonSchemaTypeString:
-			defStr, ok := defVal.(string)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected string default value",
-					propName,
-				)
-			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(defStr),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
-			)
-		case jsonSchemaTypeInteger:
-			defNum, ok := toFloat(defVal)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected numeric default value",
-					propName,
-				)
-			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(int64(defNum)),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
-			)
-		case jsonSchemaTypeNumber:
-			defNum, ok := toFloat(defVal)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected numeric default value",
-					propName,
-				)
-			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(defNum),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
-			)
-		case jsonSchemaTypeBoolean:
-			defBool, ok := defVal.(bool)
-			if !ok {
-				return nil, fmt.Errorf(
-					"input schema default for %q: expected boolean default value",
-					propName,
-				)
-			}
-			stmts = append(stmts,
-				jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
-					jen.Id("v").Op(":=").Lit(defBool),
-					jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
-				),
-			)
-		default:
+		defaults, err := inputDefaultStatements(propName, propSchema, defVal)
+		if err != nil {
+			return nil, err
+		}
+		stmts = append(stmts, defaults...)
+	}
+	return stmts, nil
+}
+
+func addManifestInputTypes(
+	f *jen.File,
+	m *schemaMapper,
+	spec *PromptSpec,
+	rootName, inputType string,
+) (*prompty.SchemaDefinition, bool, error) {
+	hasInputSchema := spec.InputSchema != nil && len(spec.InputSchema.Schema) > 0
+	if !hasInputSchema {
+		f.Type().Id(inputType).Struct()
+		f.Line()
+		return nil, false, nil
+	}
+	inputSchema, err := schemaAsMap(spec.InputSchema.Schema)
+	if err != nil {
+		return nil, false, fmt.Errorf("input schema: %w", err)
+	}
+	if validateErr := validateObjectSchemaForInput(inputSchema); validateErr != nil {
+		return nil, false, fmt.Errorf("input schema: %w", validateErr)
+	}
+	earlySchema, lateSchema, hasLate := splitEarlyLateInputSchema(inputSchema)
+	hasLateInput := hasLate
+	earlyInputSchema, err := schemaDefinitionFromMap(earlySchema)
+	if err != nil {
+		return nil, false, fmt.Errorf("input schema: %w", err)
+	}
+	earlyProps, _ := earlySchema["properties"].(map[string]any)
+	if len(earlyProps) > 0 {
+		stmts, genErr := m.GenerateTypes(earlySchema, "Input")
+		if genErr != nil {
+			return nil, false, fmt.Errorf("input schema: %w", genErr)
+		}
+		for _, stmt := range stmts {
+			f.Add(stmt)
+			f.Line()
+		}
+	} else {
+		f.Type().Id(inputType).Struct()
+		f.Line()
+	}
+	if hasLateInput {
+		lateMapper := newSchemaMapper(rootName)
+		lateStmts, genErr := lateMapper.GenerateTypes(lateSchema, "LateInput")
+		if genErr != nil {
+			return nil, false, fmt.Errorf("late input schema: %w", genErr)
+		}
+		for _, stmt := range lateStmts {
+			f.Add(stmt)
+			f.Line()
+		}
+	}
+	return earlyInputSchema, hasLateInput, nil
+}
+
+func inputDefaultStatements(propName string, propSchema map[string]any, defVal any) ([]jen.Code, error) {
+	var stmts []jen.Code
+	fieldName := pascal(propName)
+	propType, _ := propSchema["type"].(string)
+	switch propType {
+	case jsonSchemaTypeString:
+		defStr, ok := defVal.(string)
+		if !ok {
 			return nil, fmt.Errorf(
-				"input schema default for %q: unsupported type %q (supported: string, integer, number, boolean)",
+				"input schema default for %q: expected string default value",
 				propName,
-				propType,
 			)
 		}
+		stmts = append(stmts,
+			jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
+				jen.Id("v").Op(":=").Lit(defStr),
+				jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
+			),
+		)
+	case jsonSchemaTypeInteger:
+		defNum, ok := toFloat(defVal)
+		if !ok {
+			return nil, fmt.Errorf(
+				"input schema default for %q: expected numeric default value",
+				propName,
+			)
+		}
+		stmts = append(stmts,
+			jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
+				jen.Id("v").Op(":=").Lit(int64(defNum)),
+				jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
+			),
+		)
+	case jsonSchemaTypeNumber:
+		defNum, ok := toFloat(defVal)
+		if !ok {
+			return nil, fmt.Errorf(
+				"input schema default for %q: expected numeric default value",
+				propName,
+			)
+		}
+		stmts = append(stmts,
+			jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
+				jen.Id("v").Op(":=").Lit(defNum),
+				jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
+			),
+		)
+	case jsonSchemaTypeBoolean:
+		defBool, ok := defVal.(bool)
+		if !ok {
+			return nil, fmt.Errorf(
+				"input schema default for %q: expected boolean default value",
+				propName,
+			)
+		}
+		stmts = append(stmts,
+			jen.If(jen.Id("input").Dot(fieldName).Op("==").Nil()).Block(
+				jen.Id("v").Op(":=").Lit(defBool),
+				jen.Id("input").Dot(fieldName).Op("=").Op("&").Id("v"),
+			),
+		)
+	default:
+		return nil, fmt.Errorf(
+			"input schema default for %q: unsupported type %q (supported: string, integer, number, boolean)",
+			propName,
+			propType,
+		)
 	}
 	return stmts, nil
 }

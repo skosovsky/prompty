@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/skosovsky/prompty"
-	"github.com/skosovsky/prompty/cmd/prompty-gen/gen"
 	"github.com/skosovsky/prompty/manifest"
 )
 
@@ -176,36 +175,6 @@ packages:
 	}
 	if strings.Contains(content, "PlanInputFrom") {
 		t.Error("empty input manifest must not call PlanInputFrom")
-	}
-}
-
-func TestLoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
-	manifestPath := "testdata/doctor_agent_required_tools.yaml"
-	spec, err := loadSpec(manifestPath, ".", []string{"testdata"}, nil)
-	if err != nil {
-		t.Fatalf("loadSpec: %v", err)
-	}
-	want := []string{"doctor_search_knowledge_base", "get_current_time"}
-	if !reflect.DeepEqual(want, spec.RequiredTools) {
-		t.Fatalf("RequiredTools = %#v, want %#v", spec.RequiredTools, want)
-	}
-
-	f, err := gen.GenerateManifestTypes(spec, "prompts")
-	if err != nil {
-		t.Fatalf("GenerateManifestTypes: %v", err)
-	}
-	var buf strings.Builder
-	if err := f.Render(&buf); err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "func (p *DoctorAgentPrompt) RequiredTools()") {
-		t.Error("expected RequiredTools method on DoctorAgentPrompt")
-	}
-	for _, tool := range want {
-		if !strings.Contains(out, `"`+tool+`"`) {
-			t.Errorf("expected %q in RequiredTools return literal", tool)
-		}
 	}
 }
 

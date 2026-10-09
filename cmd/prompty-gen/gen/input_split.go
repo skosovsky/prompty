@@ -87,5 +87,5 @@ func schemaDefinitionFromMap(schema map[string]any) (*prompty.SchemaDefinition, 
 	if err != nil {
 		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: doc}, nil
+	return &prompty.SchemaDefinition{Name: "", Description: "", Schema: doc}, nil
 }

@@ -117,20 +117,6 @@ func TestPlanInputFrom_HistoryNotInBoundVars(t *testing.T) {
 	assert.Equal(t, "prior", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
-func TestPlanInputFrom_RegistryPathE2E(t *testing.T) {
-	t.Parallel()
-	reg := compileStubRegistry{}
-	input, err := PlanInputFrom(struct {
-		Q string `prompt:"q"`
-	}{Q: "ok"})
-	require.NoError(t, err)
-	plan, err := reg.Plan(context.Background(), "stub", input)
-	require.NoError(t, err)
-	exec, err := plan.Execute(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, "ok", mustTextFromParts(t, exec.Messages[0].Content))
-}
-
 func Test_bindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{

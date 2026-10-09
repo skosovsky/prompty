@@ -24,6 +24,7 @@ type rawContentPart struct {
 
 type rawContentSlice []rawContentPart
 
+//nolint:gochecknoglobals // Immutable set of accepted YAML wire keys.
 var rawContentPartAllowedFields = map[string]struct{}{
 	"type":         {},
 	"text":         {},
@@ -35,7 +36,7 @@ var rawContentPartAllowedFields = map[string]struct{}{
 
 func (r *rawContentSlice) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
-		*r = rawContentSlice{{Type: "text", Text: value.Value}}
+		*r = rawContentSlice{{MediaType: "", MIMEType: "", URL: "", CachePolicy: nil, Type: "text", Text: value.Value}}
 		return nil
 	}
 	if value.Kind == yaml.SequenceNode {
@@ -192,7 +193,7 @@ func rawToSchemaDefinition(raw map[string]any) *prompty.SchemaDefinition {
 	if err != nil {
 		return nil
 	}
-	return &prompty.SchemaDefinition{Schema: normDoc}
+	return &prompty.SchemaDefinition{Name: "", Description: "", Schema: normDoc}
 }
 
 // Unmarshal parses YAML into manifest.RawManifest.
@@ -289,7 +290,7 @@ func (p *Parser) Unmarshal(in []byte, out any) error {
 	raw.Messages = make([]manifest.RawMessage, len(fm.Messages))
 	for i := range fm.Messages {
 		m := &fm.Messages[i]
-		raw.Messages[i] = manifest.RawMessage{
+		raw.Messages[i] = manifest.RawMessage{LegacySourceID: "", Content: nil,
 			Role:        m.Role,
 			LayerKind:   m.LayerKind,
 			LayerID:     m.LayerID,

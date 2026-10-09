@@ -39,7 +39,7 @@ func WithClient(c *anthropic.Client) Option {
 
 // New returns an Adapter with a default model. Options can override the default model.
 func New(opts ...Option) *Adapter {
-	a := &Adapter{defaultModel: anthropic.ModelClaudeSonnet4_5_20250929}
+	a := &Adapter{client: nil, defaultModel: anthropic.ModelClaudeSonnet4_5_20250929}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -49,7 +49,7 @@ func New(opts ...Option) *Adapter {
 // RuntimeDescriptor exposes adapter runtime metadata.
 func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
 	return adapter.RuntimeDescriptor{
-		Name: "anthropic",
+		Name: "anthropic", Capabilities: nil,
 	}
 }
 
@@ -71,101 +71,19 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*anthropic.MessageNe
 		MaxTokens: defaultMaxTokens,
 		Model:     a.defaultModel,
 	}
-	if exec.ModelOptions != nil {
-		if exec.ModelOptions.Model != "" {
-			params.Model = anthropic.Model(exec.ModelOptions.Model)
-		}
-		if exec.ModelOptions.MaxTokens != nil {
-			params.MaxTokens = *exec.ModelOptions.MaxTokens
-		}
-		if exec.ModelOptions.Temperature != nil {
-			params.Temperature = anthropic.Float(*exec.ModelOptions.Temperature)
-		}
-		if exec.ModelOptions.TopP != nil {
-			params.TopP = anthropic.Float(*exec.ModelOptions.TopP)
-		}
-		if len(exec.ModelOptions.Stop) > 0 {
-			params.StopSequences = exec.ModelOptions.Stop
-		}
-		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
-		if settingsErr != nil {
-			return nil, settingsErr
-		}
-		if err := applyAnthropicProviderSettings(params, providerSettings); err != nil {
-			return nil, err
-		}
+	if err := applyModelOptions(params, exec.ModelOptions); err != nil {
+		return nil, err
 	}
-	var systemBlocks []anthropic.TextBlockParam
-	var messages []anthropic.MessageParam
-	for _, msg := range working.Messages {
-		switch msg.Role {
-		case prompty.RoleSystem, prompty.RoleDeveloper:
-			blocks, err := a.systemMessageBlocks(msg.Content, msg.CachePolicy)
-			if err != nil {
-				return nil, err
-			}
-			systemBlocks = append(systemBlocks, blocks...)
-		case prompty.RoleUser:
-			m, err := a.userMessage(msg.Content, msg.CachePolicy)
-			if err != nil {
-				return nil, err
-			}
-			messages = append(messages, m)
-		case prompty.RoleAssistant:
-			m, err := a.assistantMessage(msg.Content, msg.CachePolicy)
-			if err != nil {
-				return nil, err
-			}
-			messages = append(messages, m)
-		case prompty.RoleTool:
-			m, err := a.toolResultMessage(msg.Content, msg.CachePolicy)
-			if err != nil {
-				return nil, err
-			}
-			messages = append(messages, m)
-		default:
-			return nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
-		}
+	systemBlocks, messages, err := a.translateMessages(working.Messages)
+	if err != nil {
+		return nil, err
 	}
 	if len(systemBlocks) > 0 {
 		params.System = systemBlocks
 	}
 	params.Messages = messages
-	// ResponseFormat: add mandatory output_format tool with schema; force tool_choice.
-	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
-		schemaMap, schemaErr := prompty.SchemaMap(exec.ResponseFormat)
-		if schemaErr != nil {
-			return nil, fmt.Errorf("response_format schema: %w", schemaErr)
-		}
-		schema := schemaToToolInput(schemaMap)
-		desc := exec.ResponseFormat.Description
-		if desc == "" {
-			desc = "Output must strictly follow this JSON schema"
-		}
-		outputTool := anthropic.ToolUnionParamOfTool(schema, outputFormatToolName)
-		outputTool.OfTool.Description = anthropic.String(desc)
-		params.Tools = append(params.Tools, outputTool)
-		params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputFormatToolName)
-	}
-	if len(exec.Tools) > 0 {
-		if params.Tools == nil {
-			params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
-		}
-		for _, t := range exec.Tools {
-			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
-			if toolParamsErr != nil {
-				return nil, fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
-			}
-			schema := toolSchemaFromParameters(toolParams)
-			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
-			if t.Description != "" {
-				tool.OfTool.Description = anthropic.String(t.Description)
-			}
-			params.Tools = append(params.Tools, tool)
-		}
-	}
-	if exec.ForcedTool != "" && len(params.Tools) > 0 {
-		params.ToolChoice = anthropic.ToolChoiceParamOfTool(exec.ForcedTool)
+	if err := applyExecutionTools(params, exec); err != nil {
+		return nil, err
 	}
 	return params, nil
 }
@@ -213,40 +131,7 @@ func schemaToToolInput(schema map[string]any) anthropic.ToolInputSchemaParam {
 // toolSchemaFromParameters builds ToolInputSchemaParam from a JSON Schema map.
 // Passes through type, properties, required; other top-level keys go to ExtraFields.
 func toolSchemaFromParameters(params map[string]any) anthropic.ToolInputSchemaParam {
-	schema := anthropic.ToolInputSchemaParam{
-		Type: constant.Object("object"),
-	}
-	if params == nil {
-		return schema
-	}
-	if t, ok := params["type"].(string); ok && t != "" {
-		schema.Type = constant.Object(t)
-	}
-	if p, ok := params["properties"].(map[string]any); ok {
-		schema.Properties = p
-	}
-	if r, ok := params["required"].([]any); ok {
-		required := make([]string, 0, len(r))
-		for _, x := range r {
-			if s, ok := x.(string); ok {
-				required = append(required, s)
-			}
-		}
-		schema.Required = required
-	} else if r, ok := params["required"].([]string); ok {
-		schema.Required = r
-	}
-	known := map[string]bool{"type": true, "properties": true, "required": true}
-	extras := make(map[string]any)
-	for k, v := range params {
-		if !known[k] && v != nil {
-			extras[k] = v
-		}
-	}
-	if len(extras) > 0 {
-		schema.ExtraFields = extras
-	}
-	return schema
+	return schemaToToolInput(params)
 }
 
 func (a *Adapter) systemMessageBlocks(
@@ -286,44 +171,11 @@ func (a *Adapter) userMessage(
 ) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
-		switch x := p.(type) {
-		case prompty.TextPart:
-			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case *prompty.TextPart:
-			if x == nil {
-				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-			}
-			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case prompty.MediaPart:
-			cache := resolveCacheControl(messageCache, x.CachePolicy)
-			block, err := a.mediaBlock(x, cache)
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case *prompty.MediaPart:
-			if x == nil {
-				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-			}
-			cache := resolveCacheControl(messageCache, x.CachePolicy)
-			block, err := a.mediaBlock(*x, cache)
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		default:
-			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+		block, err := a.userMessageBlock(p, messageCache)
+		if err != nil {
+			return anthropic.MessageParam{}, err
 		}
+		blocks = append(blocks, block)
 	}
 	return anthropic.NewUserMessage(blocks...), nil
 }
@@ -334,58 +186,11 @@ func (a *Adapter) assistantMessage(
 ) (anthropic.MessageParam, error) {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
-		switch x := p.(type) {
-		case prompty.TextPart:
-			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case *prompty.TextPart:
-			if x == nil {
-				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-			}
-			block := anthropic.NewTextBlock(x.Text)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case prompty.ToolCallPart:
-			args, argsErr := prompty.ToolCallArgsForTranslate(x)
-			if argsErr != nil {
-				return anthropic.MessageParam{}, argsErr
-			}
-			if args != "" && !json.Valid([]byte(args)) {
-				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
-			}
-			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		case *prompty.ToolCallPart:
-			if x == nil {
-				return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
-			}
-			args, argsErr := prompty.ToolCallArgsForTranslate(*x)
-			if argsErr != nil {
-				return anthropic.MessageParam{}, argsErr
-			}
-			if args != "" && !json.Valid([]byte(args)) {
-				return anthropic.MessageParam{}, fmt.Errorf("%w: invalid tool call args JSON", adapter.ErrMalformedArgs)
-			}
-			block := anthropic.NewToolUseBlock(x.ID, json.RawMessage(args), x.Name)
-			block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
-			if err != nil {
-				return anthropic.MessageParam{}, err
-			}
-			blocks = append(blocks, block)
-		default:
-			return anthropic.MessageParam{}, adapter.ErrUnsupportedContentType
+		block, err := a.assistantMessageBlock(p, messageCache)
+		if err != nil {
+			return anthropic.MessageParam{}, err
 		}
+		blocks = append(blocks, block)
 	}
 	return anthropic.NewAssistantMessage(blocks...), nil
 }
@@ -591,11 +396,11 @@ func (a *Adapter) applyCacheControl(
 
 func toAnthropicCacheControl(cache *prompty.CachePolicy) (*anthropic.CacheControlEphemeralParam, error) {
 	if cache == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No cache directive is a successful absence of cache control.
 	}
 	cacheType := strings.ToLower(strings.TrimSpace(cache.Type))
 	if cacheType == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No cache directive is a successful absence of cache control.
 	}
 	if cacheType != "ephemeral" {
 		return nil, fmt.Errorf("anthropic adapter: unsupported cache_policy.type %q", cache.Type)
@@ -672,13 +477,13 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 		case "text":
 			text := block.Text
 			if text != "" {
-				out = append(out, prompty.TextPart{Text: text})
+				out = append(out, prompty.TextPart{CachePolicy: nil, Text: text})
 			}
 		case "tool_use":
 			args := string(block.Input)
 			// Structured output: output_format tool returns JSON as text for consumer to parse
 			if block.Name == outputFormatToolName {
-				out = append(out, prompty.TextPart{Text: args})
+				out = append(out, prompty.TextPart{CachePolicy: nil, Text: args})
 			} else {
 				if args == "" {
 					return nil, fmt.Errorf(
@@ -687,7 +492,10 @@ func (a *Adapter) ParseResponse(msg *anthropic.Message) (*prompty.Response, erro
 						block.Name,
 					)
 				}
-				out = append(out, prompty.ToolCallPart{ID: block.ID, Name: block.Name, Args: args})
+				out = append(
+					out,
+					prompty.ToolCallPart{ArgsChunk: "", CachePolicy: nil, ID: block.ID, Name: block.Name, Args: args},
+				)
 			}
 		default:
 			blockType := block.Type
@@ -724,7 +532,7 @@ var _ adapter.ProviderAdapter[*anthropic.MessageNewParams, *anthropic.Message] =
 
 func usageFromAnthropic(usage anthropic.Usage) prompty.Usage {
 	promptTokens := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
-	return prompty.Usage{
+	return prompty.Usage{CompletionTokensReasoning: 0,
 		PromptTokens:              int(promptTokens),
 		CompletionTokens:          int(usage.OutputTokens),
 		TotalTokens:               int(promptTokens + usage.OutputTokens),
@@ -762,4 +570,209 @@ func applyAnthropicProviderSettings(params *anthropic.MessageNewParams, settings
 		params.StopSequences = stops
 	}
 	return nil
+}
+
+func applyModelOptions(params *anthropic.MessageNewParams, options *prompty.ModelOptions) error {
+	if options == nil {
+		return nil
+	}
+	if options.Model != "" {
+		params.Model = anthropic.Model(options.Model)
+	}
+	if options.MaxTokens != nil {
+		params.MaxTokens = *options.MaxTokens
+	}
+	if options.Temperature != nil {
+		params.Temperature = anthropic.Float(*options.Temperature)
+	}
+	if options.TopP != nil {
+		params.TopP = anthropic.Float(*options.TopP)
+	}
+	if len(options.Stop) > 0 {
+		params.StopSequences = options.Stop
+	}
+	providerSettings, settingsErr := prompty.ProviderSettingsMap(options)
+	if settingsErr != nil {
+		return settingsErr
+	}
+	if err := applyAnthropicProviderSettings(params, providerSettings); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyExecutionTools(params *anthropic.MessageNewParams, exec *prompty.PromptExecution) error {
+	// ResponseFormat: add mandatory output_format tool with schema; force tool_choice.
+	if exec.ResponseFormat != nil && len(exec.ResponseFormat.Schema) > 0 {
+		schemaMap, schemaErr := prompty.SchemaMap(exec.ResponseFormat)
+		if schemaErr != nil {
+			return fmt.Errorf("response_format schema: %w", schemaErr)
+		}
+		schema := schemaToToolInput(schemaMap)
+		desc := exec.ResponseFormat.Description
+		if desc == "" {
+			desc = "Output must strictly follow this JSON schema"
+		}
+		outputTool := anthropic.ToolUnionParamOfTool(schema, outputFormatToolName)
+		outputTool.OfTool.Description = anthropic.String(desc)
+		params.Tools = append(params.Tools, outputTool)
+		params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputFormatToolName)
+	}
+	if len(exec.Tools) > 0 {
+		if params.Tools == nil {
+			params.Tools = make([]anthropic.ToolUnionParam, 0, len(exec.Tools))
+		}
+		for _, t := range exec.Tools {
+			toolParams, toolParamsErr := prompty.JSONDocumentAsMap(t.Parameters)
+			if toolParamsErr != nil {
+				return fmt.Errorf("tool %q parameters: %w", t.Name, toolParamsErr)
+			}
+			schema := toolSchemaFromParameters(toolParams)
+			tool := anthropic.ToolUnionParamOfTool(schema, t.Name)
+			if t.Description != "" {
+				tool.OfTool.Description = anthropic.String(t.Description)
+			}
+			params.Tools = append(params.Tools, tool)
+		}
+	}
+	if exec.ForcedTool != "" && len(params.Tools) > 0 {
+		params.ToolChoice = anthropic.ToolChoiceParamOfTool(exec.ForcedTool)
+	}
+
+	return nil
+}
+
+func (a *Adapter) userMessageBlock(
+	p prompty.ContentPart,
+	messageCache *prompty.CachePolicy,
+) (anthropic.ContentBlockParamUnion, error) {
+	switch x := p.(type) {
+	case prompty.TextPart:
+		block := anthropic.NewTextBlock(x.Text)
+		block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	case *prompty.TextPart:
+		if x == nil {
+			return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+		}
+		block := anthropic.NewTextBlock(x.Text)
+		block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	case prompty.MediaPart:
+		cache := resolveCacheControl(messageCache, x.CachePolicy)
+		block, err := a.mediaBlock(x, cache)
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	case *prompty.MediaPart:
+		if x == nil {
+			return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+		}
+		cache := resolveCacheControl(messageCache, x.CachePolicy)
+		block, err := a.mediaBlock(*x, cache)
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	default:
+		return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+	}
+}
+
+func (a *Adapter) assistantMessageBlock(
+	p prompty.ContentPart,
+	messageCache *prompty.CachePolicy,
+) (anthropic.ContentBlockParamUnion, error) {
+	switch x := p.(type) {
+	case prompty.TextPart:
+		block := anthropic.NewTextBlock(x.Text)
+		block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	case *prompty.TextPart:
+		if x == nil {
+			return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+		}
+		block := anthropic.NewTextBlock(x.Text)
+		block, err := a.applyCacheControl(block, resolveCacheControl(messageCache, x.CachePolicy))
+		if err != nil {
+			return anthropic.ContentBlockParamUnion{}, err
+		}
+		return block, nil
+	case prompty.ToolCallPart:
+		return a.toolCallBlock(x, messageCache)
+	case *prompty.ToolCallPart:
+		if x == nil {
+			return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+		}
+		return a.toolCallBlock(*x, messageCache)
+	default:
+		return anthropic.ContentBlockParamUnion{}, adapter.ErrUnsupportedContentType
+	}
+}
+
+func (a *Adapter) translateMessages(
+	input []prompty.ChatMessage,
+) ([]anthropic.TextBlockParam, []anthropic.MessageParam, error) {
+	var systemBlocks []anthropic.TextBlockParam
+	var messages []anthropic.MessageParam
+	for _, msg := range input {
+		switch msg.Role {
+		case prompty.RoleSystem, prompty.RoleDeveloper:
+			blocks, err := a.systemMessageBlocks(msg.Content, msg.CachePolicy)
+			if err != nil {
+				return nil, nil, err
+			}
+			systemBlocks = append(systemBlocks, blocks...)
+		case prompty.RoleUser:
+			m, err := a.userMessage(msg.Content, msg.CachePolicy)
+			if err != nil {
+				return nil, nil, err
+			}
+			messages = append(messages, m)
+		case prompty.RoleAssistant:
+			m, err := a.assistantMessage(msg.Content, msg.CachePolicy)
+			if err != nil {
+				return nil, nil, err
+			}
+			messages = append(messages, m)
+		case prompty.RoleTool:
+			m, err := a.toolResultMessage(msg.Content, msg.CachePolicy)
+			if err != nil {
+				return nil, nil, err
+			}
+			messages = append(messages, m)
+		default:
+			return nil, nil, fmt.Errorf("%w: %q", adapter.ErrUnsupportedRole, msg.Role)
+		}
+	}
+
+	return systemBlocks, messages, nil
+}
+
+func (a *Adapter) toolCallBlock(
+	call prompty.ToolCallPart,
+	messageCache *prompty.CachePolicy,
+) (anthropic.ContentBlockParamUnion, error) {
+	args, err := prompty.ToolCallArgsForTranslate(call)
+	if err != nil {
+		return anthropic.ContentBlockParamUnion{}, err
+	}
+	if args != "" && !json.Valid([]byte(args)) {
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf(
+			"%w: invalid tool call args JSON",
+			adapter.ErrMalformedArgs,
+		)
+	}
+	block := anthropic.NewToolUseBlock(call.ID, json.RawMessage(args), call.Name)
+	return a.applyCacheControl(block, resolveCacheControl(messageCache, call.CachePolicy))
 }

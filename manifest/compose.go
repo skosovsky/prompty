@@ -28,17 +28,15 @@ type RawImport struct {
 }
 
 // RawLayer is a declarative prompt layer or import reference.
-//
-//nolint:golines,tagalign // layer wire struct uses wide aligned field columns
 type RawLayer struct {
-	ID          string               `json:"id" yaml:"id"`
-	Role        string               `json:"role,omitempty" yaml:"role,omitempty"`
-	LayerKind   prompty.LayerKind    `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"`
-	ImportRef   string               `json:"import_ref,omitempty" yaml:"import_ref,omitempty"`
-	Content     []RawContentPart     `json:"content,omitempty" yaml:"content,omitempty"`
-	Optional    bool                 `json:"optional,omitempty" yaml:"optional,omitempty"`
+	ID          string               `json:"id"                     yaml:"id"`
+	Role        string               `json:"role,omitempty"         yaml:"role,omitempty"`
+	LayerKind   prompty.LayerKind    `json:"layer_kind,omitempty"   yaml:"layer_kind,omitempty"`
+	ImportRef   string               `json:"import_ref,omitempty"   yaml:"import_ref,omitempty"`
+	Content     []RawContentPart     `json:"content,omitempty"      yaml:"content,omitempty"`
+	Optional    bool                 `json:"optional,omitempty"     yaml:"optional,omitempty"`
 	CachePolicy *prompty.CachePolicy `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
-	Metadata    map[string]any       `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Metadata    map[string]any       `json:"metadata,omitempty"     yaml:"metadata,omitempty"`
 }
 
 // ManifestLoader resolves manifests by id for composition and schema merge.
@@ -52,6 +50,12 @@ type ManifestLoader interface {
 type MemoryLoader struct {
 	ByID map[string]*RawManifest
 }
+
+const (
+	schemaObjectType    = "object"
+	schemaTypeKey       = "type"
+	schemaPropertiesKey = "properties"
+)
 
 func (l *MemoryLoader) LoadByID(_ context.Context, id string) (*RawManifest, error) {
 	if l == nil || l.ByID == nil {
@@ -222,8 +226,8 @@ func MergeInputSchemas(local *prompty.SchemaDefinition, imports ...*RawManifest)
 		return nil, reqErr
 	}
 	schema := map[string]any{
-		"type":       "object",
-		"properties": merged,
+		schemaTypeKey:       schemaObjectType,
+		schemaPropertiesKey: merged,
 	}
 	if len(required) > 0 {
 		schema["required"] = required
@@ -232,7 +236,7 @@ func MergeInputSchemas(local *prompty.SchemaDefinition, imports ...*RawManifest)
 	if err != nil {
 		return nil, err
 	}
-	return &prompty.SchemaDefinition{Schema: doc}, nil
+	return &prompty.SchemaDefinition{Name: "", Description: "", Schema: doc}, nil
 }
 
 func inputProperties(schema *prompty.SchemaDefinition) (map[string]any, error) {
@@ -243,7 +247,7 @@ func inputProperties(schema *prompty.SchemaDefinition) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("merge inputs: decode schema properties: %w", err)
 	}
-	props, _ := doc["properties"].(map[string]any)
+	props, _ := doc[schemaPropertiesKey].(map[string]any)
 	if props == nil {
 		return map[string]any{}, nil
 	}
@@ -308,8 +312,8 @@ func samePropertyType(a, b any) bool {
 	if !aOK || !bOK {
 		return reflect.DeepEqual(a, b)
 	}
-	at, _ := am["type"].(string)
-	bt, _ := bm["type"].(string)
+	at, _ := am[schemaTypeKey].(string)
+	bt, _ := bm[schemaTypeKey].(string)
 	if at != bt {
 		return false
 	}
@@ -680,7 +684,7 @@ func flattenLayers(
 		if len(layer.Content) == 0 {
 			return nil, fmt.Errorf("compose: layer %q requires content", layer.ID)
 		}
-		out = append(out, RawMessage{
+		out = append(out, RawMessage{LegacySourceID: "",
 			Role:        layer.Role,
 			LayerID:     layer.ID,
 			LayerKind:   layer.LayerKind,

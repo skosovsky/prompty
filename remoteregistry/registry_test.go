@@ -408,19 +408,12 @@ func TestCachedRegistry_Plan_CancelsSharedFetchWhenAllWaitersCancel(t *testing.T
 	t.Parallel()
 	started := make(chan struct{})
 	canceled := make(chan struct{})
+	var startedOnce, canceledOnce sync.Once
 	m := &mockFetcher{
 		fetch: func(ctx context.Context, _ string) ([]byte, error) {
-			select {
-			case <-started:
-			default:
-				close(started)
-			}
+			startedOnce.Do(func() { close(started) })
 			<-ctx.Done()
-			select {
-			case <-canceled:
-			default:
-				close(canceled)
-			}
+			canceledOnce.Do(func() { close(canceled) })
 			return nil, ctx.Err()
 		},
 	}

@@ -90,45 +90,56 @@ func (p *Package) ResolveSources(configDir string) ([]string, error) {
 		isDirPath := trimmed != glob || isDir
 		if isDirPath || isDir {
 			walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, walkEntryErr error) error {
-				if walkEntryErr != nil {
-					return walkEntryErr
-				}
-				if d.IsDir() {
-					return nil
-				}
-				ext := strings.ToLower(filepath.Ext(path))
-				if ext != extYAML && ext != extYML && ext != extJSON {
-					return nil
-				}
-				if !seen[path] {
-					seen[path] = true
-					out = append(out, path)
-				}
-				return nil
+				return collectSourceEntry(path, d, walkEntryErr, seen, &out)
 			})
 			if walkErr != nil {
 				return nil, fmt.Errorf("walk %q: %w", base, walkErr)
 			}
 			continue
 		}
-		matches, err := filepath.Glob(base)
-		if err != nil {
-			return nil, fmt.Errorf("glob %q: %w", base, err)
-		}
-		for _, m := range matches {
-			info, err := os.Stat(m)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			ext := strings.ToLower(filepath.Ext(m))
-			if ext != extYAML && ext != extYML && ext != extJSON {
-				continue
-			}
-			if !seen[m] {
-				seen[m] = true
-				out = append(out, m)
-			}
+		if err := appendGlobSources(base, seen, &out); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+func collectSourceEntry(path string, d os.DirEntry, walkEntryErr error, seen map[string]bool, out *[]string) error {
+	if walkEntryErr != nil {
+		return walkEntryErr
+	}
+	if d.IsDir() {
+		return nil
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != extYAML && ext != extYML && ext != extJSON {
+		return nil
+	}
+	if !seen[path] {
+		seen[path] = true
+		*out = append(*out, path)
+	}
+	return nil
+}
+
+func appendGlobSources(base string, seen map[string]bool, out *[]string) error {
+	matches, err := filepath.Glob(base)
+	if err != nil {
+		return fmt.Errorf("glob %q: %w", base, err)
+	}
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(m))
+		if ext != extYAML && ext != extYML && ext != extJSON {
+			continue
+		}
+		if !seen[m] {
+			seen[m] = true
+			*out = append(*out, m)
+		}
+	}
+	return nil
 }

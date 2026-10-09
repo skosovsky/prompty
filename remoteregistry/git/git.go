@@ -49,6 +49,7 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 		repoURL: repoURL,
 		branch:  "main",
 		depth:   1,
+		dir:     "", authToken: "", cloneDir: "", localDir: "", mu: sync.Mutex{}, repo: nil,
 	}
 	for _, opt := range opts {
 		opt(g)
@@ -85,7 +86,7 @@ func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 
 // resolvePath finds the physical file for id (tries .yaml then .yml). Returns absolute path and path from repo root (forward slashes).
 // Caller must hold g.mu and have called ensureClone. Uses [os.Stat] only (no ReadFile).
-func (g *Fetcher) resolvePath(id string) (absPath, relPathFromRepoRoot string, err error) {
+func (g *Fetcher) resolvePath(id string) (string, string, error) {
 	baseDir := filepath.Clean(filepath.Join(g.localDir, g.dir))
 	for _, rel := range remoteregistry.CandidatePaths(id) {
 		path := filepath.Join(g.localDir, g.dir, rel)
@@ -100,7 +101,7 @@ func (g *Fetcher) resolvePath(id string) (absPath, relPathFromRepoRoot string, e
 			}
 			return "", "", statErr
 		}
-		relPathFromRepoRoot = filepath.ToSlash(filepath.Join(g.dir, relPath))
+		relPathFromRepoRoot := filepath.ToSlash(filepath.Join(g.dir, relPath))
 		return cleanPath, relPathFromRepoRoot, nil
 	}
 	return "", "", fmt.Errorf("%w: %q", remoteregistry.ErrNotFound, id)
@@ -209,46 +210,12 @@ func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, er
 
 func (g *Fetcher) ensureClone(ctx context.Context) error {
 	if g.repo != nil {
-		// Pull to refresh only for remote URLs (file:// has no remote to pull).
-		if !strings.HasPrefix(g.repoURL, "file://") {
-			wt, err := g.repo.Worktree()
-			if err != nil {
-				return fmt.Errorf("worktree: %w", err)
-			}
-			pullOpts := &git.PullOptions{}
-			if g.authToken != "" {
-				pullOpts.Auth = &http.BasicAuth{
-					Username: "x-access-token",
-					Password: g.authToken,
-				}
-			}
-			err = wt.PullContext(ctx, pullOpts)
-			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-				// Do not remove clone on transient errors; next Fetch will retry pull.
-				// Proceed to read from existing working tree (stale data).
-				slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", err)
-			}
-		}
-		return nil
+		return g.refreshClone(ctx)
 	}
 	var repo *git.Repository
 	var err error
 	if g.cloneDir != "" {
-		g.localDir = g.cloneDir
-		gitDir := filepath.Join(g.cloneDir, ".git")
-		if _, statErr := os.Stat(gitDir); statErr == nil {
-			repo, err = git.PlainOpen(g.cloneDir)
-		} else {
-			if mkErr := os.MkdirAll(g.cloneDir, 0o750); mkErr != nil {
-				return fmt.Errorf("mkdir clone dir: %w", mkErr)
-			}
-			cloneOpts := g.buildCloneOptions()
-			repo, err = git.PlainCloneContext(ctx, g.cloneDir, false, cloneOpts)
-			if err != nil {
-				g.localDir = ""
-				return fmt.Errorf("clone: %w", err)
-			}
-		}
+		repo, err = g.openPersistentClone(ctx)
 	} else {
 		dir, mkErr := os.MkdirTemp("", "prompty-git-*")
 		if mkErr != nil {
@@ -270,24 +237,7 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		return fmt.Errorf("clone/open: %w", err)
 	}
 	g.repo = repo
-	// Run pull once after open or clone so persistent cache is refreshed.
-	if !strings.HasPrefix(g.repoURL, "file://") {
-		wt, wtErr := g.repo.Worktree()
-		if wtErr != nil {
-			return fmt.Errorf("worktree: %w", wtErr)
-		}
-		pullOpts := &git.PullOptions{}
-		if g.authToken != "" {
-			pullOpts.Auth = &http.BasicAuth{
-				Username: "x-access-token",
-				Password: g.authToken,
-			}
-		}
-		if pullErr := wt.PullContext(ctx, pullOpts); pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
-			slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", pullErr)
-		}
-	}
-	return nil
+	return g.refreshClone(ctx)
 }
 
 func (g *Fetcher) buildCloneOptions() *git.CloneOptions {
@@ -302,7 +252,7 @@ func (g *Fetcher) buildCloneOptions() *git.CloneOptions {
 	}
 	if g.authToken != "" {
 		opts.Auth = &http.BasicAuth{
-			Username: "x-access-token",
+			Username: accessTokenUsername,
 			Password: g.authToken,
 		}
 	}
@@ -324,4 +274,43 @@ func (g *Fetcher) Close() error {
 		return nil
 	}
 	return os.RemoveAll(dir)
+}
+
+const accessTokenUsername = "x-access-token"
+
+func (g *Fetcher) refreshClone(ctx context.Context) error {
+	// Run pull once after open or clone so persistent cache is refreshed.
+	if !strings.HasPrefix(g.repoURL, "file://") {
+		wt, wtErr := g.repo.Worktree()
+		if wtErr != nil {
+			return fmt.Errorf("worktree: %w", wtErr)
+		}
+		pullOpts := &git.PullOptions{}
+		if g.authToken != "" {
+			pullOpts.Auth = &http.BasicAuth{
+				Username: accessTokenUsername,
+				Password: g.authToken,
+			}
+		}
+		if pullErr := wt.PullContext(ctx, pullOpts); pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
+			slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", pullErr)
+		}
+	}
+	return nil
+}
+
+func (g *Fetcher) openPersistentClone(ctx context.Context) (*git.Repository, error) {
+	g.localDir = g.cloneDir
+	if _, err := os.Stat(filepath.Join(g.cloneDir, ".git")); err == nil {
+		return git.PlainOpen(g.cloneDir)
+	}
+	if err := os.MkdirAll(g.cloneDir, 0o750); err != nil {
+		return nil, fmt.Errorf("mkdir clone dir: %w", err)
+	}
+	repo, err := git.PlainCloneContext(ctx, g.cloneDir, false, g.buildCloneOptions())
+	if err != nil {
+		g.localDir = ""
+		return nil, fmt.Errorf("clone: %w", err)
+	}
+	return repo, nil
 }

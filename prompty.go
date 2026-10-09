@@ -98,25 +98,21 @@ func (ToolResultPart) isContentPart() {}
 // ChatMessage is a single message with role and content parts (supports multimodal).
 // CachePolicy hints providers to cache this message (e.g. ephemeral prompt caching).
 // Provenance records manifest/layer origin; Metadata is for provider-specific extras only.
-//
-//nolint:golines // ChatMessage tag block kept readable alongside CachePolicy/Provenance
 type ChatMessage struct {
 	Role        Role
 	Content     []ContentPart
 	CachePolicy *CachePolicy       `json:"cache_policy,omitempty" yaml:"cache_policy,omitempty"`
 	Provenance  *MessageProvenance `json:"provenance,omitempty"   yaml:"provenance,omitempty"`
 	Metadata    JSONDocument       // Provider-specific message-scoped extras (JSON object)
-	LayerKind   LayerKind          `json:"layer_kind,omitempty" yaml:"layer_kind,omitempty"`
+	LayerKind   LayerKind          `json:"layer_kind,omitempty"   yaml:"layer_kind,omitempty"` //nolint:tagalign // golines aligns tag columns differently for this mixed-width DTO.
 }
 
 // ToolDefinition is the universal tool schema.
 // JSON tags are required for template functions (e.g. render_tools_as_json) that marshal tools.
-//
-//nolint:tagalign,golines // tag columns are kept close to existing public DTO style.
 type ToolDefinition struct {
-	Name         string       `json:"name"                 yaml:"name"`
-	Description  string       `json:"description"          yaml:"description"`
-	Parameters   JSONDocument `json:"parameters,omitempty" yaml:"parameters,omitempty"` // JSON Schema for parameters
+	Name         string       `json:"name"                   yaml:"name"`
+	Description  string       `json:"description"            yaml:"description"`
+	Parameters   JSONDocument `json:"parameters,omitempty"   yaml:"parameters,omitempty"` // JSON Schema for parameters
 	Capabilities []string     `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 }
 
@@ -165,8 +161,21 @@ type PromptExecution struct {
 // NewExecution creates a new prompt execution from a set of messages.
 func NewExecution(messages []ChatMessage) *PromptExecution {
 	return &PromptExecution{
-		Messages:      cloneMessages(messages),
-		RequiredTools: []string{},
+		Tools:        nil,
+		ForcedTool:   "",
+		ModelOptions: nil,
+		Metadata: PromptMetadata{
+			ID:           "",
+			Version:      "",
+			Description:  "",
+			Tags:         nil,
+			Capabilities: nil,
+			Environment:  "",
+			Extras:       nil,
+		},
+		ResponseFormat: nil,
+		Messages:       cloneMessages(messages),
+		RequiredTools:  []string{},
 	}
 }
 
@@ -241,7 +250,7 @@ func mergeSystemMessages(a, b ChatMessage) ChatMessage {
 	content := make([]ContentPart, 0, len(a.Content)+len(b.Content)+1)
 	content = append(content, cloneContentParts(a.Content)...)
 	if hasTextContent(a.Content) && hasTextContent(b.Content) {
-		content = append(content, TextPart{Text: "\n\n"})
+		content = append(content, TextPart{CachePolicy: nil, Text: "\n\n"})
 	}
 	content = append(content, cloneContentParts(b.Content)...)
 	return ChatMessage{
@@ -299,7 +308,7 @@ func (e *PromptExecution) ResolvedMedia(
 	fetcher Fetcher,
 ) (*PromptExecution, error) {
 	if e == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No content parts represent an empty successful response.
 	}
 	out := e.Clone()
 	for i, msg := range out.Messages {
@@ -334,6 +343,29 @@ func isNilFetcher(fetcher Fetcher) bool {
 	switch value.Kind() {
 	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func:
 		return value.IsNil()
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32,
+		reflect.Float64,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Array,
+		reflect.Chan,
+		reflect.String,
+		reflect.Struct,
+		reflect.UnsafePointer:
+		fallthrough
 	default:
 		return false
 	}
@@ -341,47 +373,47 @@ func isNilFetcher(fetcher Fetcher) bool {
 
 // NewSystemMessage creates a single system message with text content.
 func NewSystemMessage(text string) ChatMessage {
-	return ChatMessage{
+	return ChatMessage{CachePolicy: nil, Provenance: nil, Metadata: nil, LayerKind: "",
 		Role:    RoleSystem,
-		Content: []ContentPart{TextPart{Text: text}},
+		Content: []ContentPart{TextPart{CachePolicy: nil, Text: text}},
 	}
 }
 
 // NewUserMessage creates a single user message with text content.
 func NewUserMessage(text string) ChatMessage {
-	return ChatMessage{
+	return ChatMessage{CachePolicy: nil, Provenance: nil, Metadata: nil, LayerKind: "",
 		Role:    RoleUser,
-		Content: []ContentPart{TextPart{Text: text}},
+		Content: []ContentPart{TextPart{CachePolicy: nil, Text: text}},
 	}
 }
 
 // NewAssistantMessage creates a single assistant message with text content.
 func NewAssistantMessage(text string) ChatMessage {
-	return ChatMessage{
+	return ChatMessage{CachePolicy: nil, Provenance: nil, Metadata: nil, LayerKind: "",
 		Role:    RoleAssistant,
-		Content: []ContentPart{TextPart{Text: text}},
+		Content: []ContentPart{TextPart{CachePolicy: nil, Text: text}},
 	}
 }
 
 func newAssistantMessageWithContent(content []ContentPart) ChatMessage {
-	return ChatMessage{
+	return ChatMessage{CachePolicy: nil, Provenance: nil, Metadata: nil, LayerKind: "",
 		Role:    RoleAssistant,
 		Content: cloneContentParts(content),
 	}
 }
 
 func newToolMessageWithContent(content []ContentPart) ChatMessage {
-	return ChatMessage{
+	return ChatMessage{CachePolicy: nil, Provenance: nil, Metadata: nil, LayerKind: "",
 		Role:    RoleTool,
 		Content: cloneContentParts(content),
 	}
 }
 
 func newToolResultPart(toolCallID, name, text string, isError bool) ToolResultPart {
-	return ToolResultPart{
+	return ToolResultPart{CachePolicy: nil,
 		ToolCallID: toolCallID,
 		Name:       name,
-		Content:    []ContentPart{TextPart{Text: text}},
+		Content:    []ContentPart{TextPart{CachePolicy: nil, Text: text}},
 		IsError:    isError,
 	}
 }
@@ -398,7 +430,7 @@ type TemplatePart struct {
 
 // TextContent returns a single text TemplatePart slice for convenience.
 func TextContent(text string) []TemplatePart {
-	return []TemplatePart{{Type: partKindText, Text: text}}
+	return []TemplatePart{{MediaType: "", MIMEType: "", URL: "", CachePolicy: nil, Type: partKindText, Text: text}}
 }
 
 // MessageTemplate is the raw template for one message before rendering.

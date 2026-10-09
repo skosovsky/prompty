@@ -8,6 +8,7 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
+//nolint:gochecknoglobals // Immutable set of accepted wire keys.
 var allowedModelOptionKeys = map[string]struct{}{
 	"model":             {},
 	"temperature":       {},
@@ -21,7 +22,7 @@ var allowedModelOptionKeys = map[string]struct{}{
 // Vendor-specific settings are accepted only from model_options.provider_settings.
 func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // An absent model-options block has no value and no error.
 	}
 	for _, key := range sortedModelOptionKeys(raw) {
 		if _, ok := allowedModelOptionKeys[key]; !ok {
@@ -47,7 +48,7 @@ func DecodeModelOptions(raw map[string]any) (*prompty.ModelOptions, error) {
 		opts.TopP == nil &&
 		len(opts.Stop) == 0 &&
 		len(opts.ProviderSettings) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // An absent model-options block has no value and no error.
 	}
 	return &opts, nil
 }

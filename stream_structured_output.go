@@ -12,6 +12,7 @@ import (
 
 const streamBufferPreviewLimit = 1024
 
+//nolint:gochecknoglobals // Injectable stream limit for bounded-parser tests.
 var streamMaxObjectSizeBytes = 10 * 1024 * 1024
 
 type streamJSONMode int
@@ -53,25 +54,15 @@ func StreamStructuredOutput[T any](ctx context.Context, invoker Invoker, exec *P
 				yield(zero, errors.New("stream structured output: nil chunk"))
 				return
 			}
-			texts, textErr := strictTextPartsFromContent(chunk.Content)
-			if textErr != nil {
+			stopped, feedErr := parser.yieldChunk(chunk, yield)
+			if feedErr != nil {
 				cancel()
-				yield(zero, textErr)
+				yield(zero, feedErr)
 				return
 			}
-			for _, text := range texts {
-				items, parseErr := parser.feed(text)
-				if parseErr != nil {
-					cancel()
-					yield(zero, parseErr)
-					return
-				}
-				for _, item := range items {
-					if !yield(item, nil) {
-						cancel()
-						return
-					}
-				}
+			if stopped {
+				cancel()
+				return
 			}
 		}
 
@@ -139,45 +130,17 @@ func (p *structuredStreamParser[T]) feed(text string) ([]T, error) {
 		}
 
 		if !p.started {
-			if isJSONWhitespace(ch) {
-				continue
-			}
-			if ch == '`' {
-				return nil, p.errorf("markdown code fences are not supported (JSON-only)")
-			}
-			switch ch {
-			case '{':
-				p.started = true
-				p.mode = streamJSONModeObject
-				p.startCapture(ch)
-			case '[':
-				p.started = true
-				p.mode = streamJSONModeArray
-				p.appendPreviewByte(ch)
-			default:
-				return nil, p.errorf("unexpected prefix byte %q before JSON payload", ch)
+			if err := p.startJSONByte(ch); err != nil {
+				return nil, err
 			}
 			continue
 		}
 
-		switch p.mode {
-		case streamJSONModeObject:
-			item, completed, err := p.consumeObjectByte(ch)
-			if err != nil {
-				return nil, err
-			}
-			if completed {
-				out = append(out, item)
-			}
-		case streamJSONModeArray:
-			items, err := p.consumeArrayByte(ch)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, items...)
-		default:
-			return nil, p.errorf("unknown JSON stream mode")
+		items, err := p.consumeJSONByte(ch)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, items...)
 	}
 	return out, nil
 }
@@ -353,4 +316,69 @@ func (p *structuredStreamParser[T]) errorf(format string, args ...any) error {
 		}
 	}
 	return fmt.Errorf("stream structured output: "+format+"; partial buffer tail: %q", append(args, preview)...)
+}
+
+func (p *structuredStreamParser[T]) yieldChunk(chunk *ResponseChunk, yield func(T, error) bool) (bool, error) {
+	texts, err := strictTextPartsFromContent(chunk.Content)
+	if err != nil {
+		return false, err
+	}
+	for _, text := range texts {
+		items, err := p.feed(text)
+		if err != nil {
+			return false, err
+		}
+		for _, item := range items {
+			if !yield(item, nil) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (p *structuredStreamParser[T]) startJSONByte(ch byte) error {
+	if isJSONWhitespace(ch) {
+		return nil
+	}
+	if ch == '`' {
+		return p.errorf("markdown code fences are not supported (JSON-only)")
+	}
+	switch ch {
+	case '{':
+		p.started = true
+		p.mode = streamJSONModeObject
+		p.startCapture(ch)
+	case '[':
+		p.started = true
+		p.mode = streamJSONModeArray
+		p.appendPreviewByte(ch)
+	default:
+		return p.errorf("unexpected prefix byte %q before JSON payload", ch)
+	}
+	return nil
+}
+
+func (p *structuredStreamParser[T]) consumeJSONByte(ch byte) ([]T, error) {
+	switch p.mode {
+	case streamJSONModeObject:
+		item, completed, err := p.consumeObjectByte(ch)
+		if err != nil {
+			return nil, err
+		}
+		if completed {
+			return []T{item}, nil
+		}
+	case streamJSONModeArray:
+		items, err := p.consumeArrayByte(ch)
+		if err != nil {
+			return nil, err
+		}
+		return items, nil
+	case streamJSONModeUnknown:
+		fallthrough
+	default:
+		return nil, p.errorf("unknown JSON stream mode")
+	}
+	return nil, nil
 }

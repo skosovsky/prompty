@@ -529,7 +529,7 @@ func checkpointDecoderFunc(spec *PromptSpec) jen.Code {
 }
 
 func promptMetadataLiteral(spec *PromptSpec) jen.Code {
-	meta := prompty.PromptMetadata{}
+	var meta prompty.PromptMetadata
 	if spec != nil {
 		meta = spec.Metadata
 		if meta.ID == "" {

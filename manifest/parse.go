@@ -13,40 +13,41 @@ import (
 // metadataToPromptMetadata extracts known fields from raw metadata and builds PromptMetadata.
 // Known typed fields: tags -> Tags, environment -> Environment. Unknown keys go to Extras.
 func metadataToPromptMetadata(raw *RawManifest) prompty.PromptMetadata {
-	meta := prompty.PromptMetadata{
+	meta := prompty.PromptMetadata{Tags: nil, Capabilities: nil, Environment: "", Extras: nil,
 		ID:          raw.ID,
 		Version:     raw.Version,
 		Description: raw.Description,
 	}
-	if raw.Metadata != nil {
-		if tags, ok := raw.Metadata["tags"]; ok {
-			if ss, err := cast.ToStringSlice(tags); err == nil {
-				meta.Tags = ss
-			}
+	if raw.Metadata == nil {
+		return meta
+	}
+	if tags, ok := raw.Metadata["tags"]; ok {
+		if ss, err := cast.ToStringSlice(tags); err == nil {
+			meta.Tags = ss
 		}
-		if caps, ok := raw.Metadata["capabilities"]; ok {
-			if ss, err := cast.ToStringSlice(caps); err == nil {
-				meta.Capabilities = ss
-			}
+	}
+	if caps, ok := raw.Metadata["capabilities"]; ok {
+		if ss, err := cast.ToStringSlice(caps); err == nil {
+			meta.Capabilities = ss
 		}
-		if env, ok := raw.Metadata["environment"]; ok {
-			if s, ok := env.(string); ok {
-				meta.Environment = s
-			}
+	}
+	if env, ok := raw.Metadata["environment"]; ok {
+		if s, ok := env.(string); ok {
+			meta.Environment = s
 		}
-		extras := make(map[string]any)
-		for k, v := range raw.Metadata {
-			if k != "tags" && k != "capabilities" && k != "environment" && v != nil {
-				extras[k] = v
-			}
+	}
+	extras := make(map[string]any)
+	for k, v := range raw.Metadata {
+		if k != "tags" && k != "capabilities" && k != "environment" && v != nil {
+			extras[k] = v
 		}
-		if len(extras) > 0 {
-			extrasDoc, extrasErr := prompty.MapToJSONDocument(extras)
-			if extrasErr != nil {
-				return meta
-			}
-			meta.Extras = extrasDoc
+	}
+	if len(extras) > 0 {
+		extrasDoc, extrasErr := prompty.MapToJSONDocument(extras)
+		if extrasErr != nil {
+			return meta
 		}
+		meta.Extras = extrasDoc
 	}
 	return meta
 }
@@ -112,8 +113,6 @@ func Parse(data []byte, u Unmarshaler, opts ...ParseOption) (*prompty.ChatPrompt
 }
 
 // BuildFromRaw builds ChatPromptTemplate from RawManifest (used by parsers and tests).
-//
-//nolint:cyclop,gocyclo // template option assembly from normalized manifest
 func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate, error) {
 	if raw.LegacyModelConfig != nil || raw.LegacyInputSchema != nil {
 		return nil, fmt.Errorf(
@@ -147,90 +146,19 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	if len(raw.Messages) == 0 {
 		return nil, fmt.Errorf("%w: missing messages", prompty.ErrInvalidManifest)
 	}
-	messages := make([]prompty.MessageTemplate, len(raw.Messages))
-	for i := range raw.Messages {
-		rm := &raw.Messages[i]
-		if rm.LegacySourceID != "" {
-			return nil, fmt.Errorf(
-				"%w: use layer_id instead of source_id",
-				prompty.ErrLegacyManifestVersion,
-			)
-		}
-		layerKind := rm.LayerKind
-		if layerKind == "" {
-			layerKind = raw.LayerKind
-		}
-		content := make([]prompty.TemplatePart, len(rm.Content))
-		for j, p := range rm.Content {
-			content[j] = prompty.TemplatePart{
-				Type:        p.Type,
-				Text:        p.Text,
-				MediaType:   p.MediaType,
-				MIMEType:    p.MIMEType,
-				URL:         p.URL,
-				CachePolicy: copyCachePolicy(p.CachePolicy),
-			}
-		}
-		messages[i] = prompty.MessageTemplate{
-			Role:        prompty.Role(rm.Role),
-			LayerKind:   layerKind,
-			LayerID:     rm.LayerID,
-			Content:     content,
-			Optional:    rm.Optional,
-			CachePolicy: copyCachePolicy(rm.CachePolicy),
-			Metadata:    messageMetadataFromRaw(rm.Metadata),
-		}
+	messages, err := messagesFromRaw(raw)
+	if err != nil {
+		return nil, err
 	}
 	opts := []prompty.ChatTemplateOption{
 		prompty.WithMetadata(metadataToPromptMetadata(raw)),
 	}
-	if raw.InputSchema != nil {
-		opts = append(opts, prompty.WithInputSchema(raw.InputSchema))
-		if schemaMap, schemaErr := prompty.JSONDocumentAsMap(raw.InputSchema.Schema); schemaErr == nil &&
-			schemaMap != nil {
-			props, _ := schemaMap["properties"].(map[string]any)
-			if req, ok := schemaMap["required"]; ok {
-				if ss, err := cast.ToStringSlice(req); err == nil && len(ss) > 0 {
-					opts = append(opts, prompty.WithRequiredVars(FilterEarlyRequired(ss, props)))
-				}
-			}
-			if props != nil {
-				partial := make(map[string]any)
-				for k, v := range props {
-					if m, ok := v.(map[string]any); ok && m["default"] != nil {
-						partial[k] = m["default"]
-					}
-				}
-				if len(partial) > 0 {
-					doc, docErr := prompty.MapToJSONDocument(partial)
-					if docErr != nil {
-						return nil, docErr
-					}
-					partialOpt, partialErr := prompty.WithPartialVariablesJSON(doc)
-					if partialErr != nil {
-						return nil, partialErr
-					}
-					opts = append(opts, partialOpt)
-				}
-			}
-		}
+	schemaOpts, err := inputSchemaOptions(raw.InputSchema)
+	if err != nil {
+		return nil, err
 	}
-	if len(raw.Tools) > 0 {
-		opts = append(opts, prompty.WithTools(raw.Tools))
-	}
-	opts = append(opts, prompty.WithRequiredTools(normalizeRequiredTools(raw.RequiredTools)))
-	if raw.ModelOptions != nil {
-		opts = append(opts, prompty.WithModelOptions(raw.ModelOptions))
-	}
-	if raw.ResponseFormat != nil {
-		opts = append(opts, prompty.WithResponseFormat(raw.ResponseFormat))
-	}
-	if po != nil && po.partialsGlob != "" {
-		opts = append(opts, prompty.WithPartialsGlob(po.partialsGlob))
-	}
-	if po != nil && po.partialsFS != nil {
-		opts = append(opts, prompty.WithPartialsFS(po.partialsFS, po.partialsFSPattern))
-	}
+	opts = append(opts, schemaOpts...)
+	opts = appendManifestRuntimeOptions(opts, raw, po)
 	return prompty.NewChatPromptTemplate(messages, opts...)
 }
 
@@ -277,4 +205,103 @@ func normalizeRequiredTools(tools []string) []string {
 		return []string{}
 	}
 	return tools
+}
+
+func messagesFromRaw(raw *RawManifest) ([]prompty.MessageTemplate, error) {
+	messages := make([]prompty.MessageTemplate, len(raw.Messages))
+	for i := range raw.Messages {
+		rm := &raw.Messages[i]
+		if rm.LegacySourceID != "" {
+			return nil, fmt.Errorf(
+				"%w: use layer_id instead of source_id",
+				prompty.ErrLegacyManifestVersion,
+			)
+		}
+		layerKind := rm.LayerKind
+		if layerKind == "" {
+			layerKind = raw.LayerKind
+		}
+		content := make([]prompty.TemplatePart, len(rm.Content))
+		for j, p := range rm.Content {
+			content[j] = prompty.TemplatePart{
+				Type:        p.Type,
+				Text:        p.Text,
+				MediaType:   p.MediaType,
+				MIMEType:    p.MIMEType,
+				URL:         p.URL,
+				CachePolicy: copyCachePolicy(p.CachePolicy),
+			}
+		}
+		messages[i] = prompty.MessageTemplate{
+			Role:        prompty.Role(rm.Role),
+			LayerKind:   layerKind,
+			LayerID:     rm.LayerID,
+			Content:     content,
+			Optional:    rm.Optional,
+			CachePolicy: copyCachePolicy(rm.CachePolicy),
+			Metadata:    messageMetadataFromRaw(rm.Metadata),
+		}
+	}
+
+	return messages, nil
+}
+
+func inputSchemaOptions(schema *prompty.SchemaDefinition) ([]prompty.ChatTemplateOption, error) {
+	if schema == nil {
+		return nil, nil
+	}
+	opts := []prompty.ChatTemplateOption{prompty.WithInputSchema(schema)}
+	schemaMap, err := prompty.JSONDocumentAsMap(schema.Schema)
+	if err != nil || schemaMap == nil {
+		return opts, nil //nolint:nilerr // Preserve best-effort derivation: the schema is still supplied unchanged.
+	}
+	props, _ := schemaMap[schemaPropertiesKey].(map[string]any)
+	if required, ok := schemaMap["required"]; ok {
+		if names, castErr := cast.ToStringSlice(required); castErr == nil && len(names) > 0 {
+			opts = append(opts, prompty.WithRequiredVars(FilterEarlyRequired(names, props)))
+		}
+	}
+	partial := make(map[string]any)
+	for key, value := range props {
+		if property, ok := value.(map[string]any); ok && property["default"] != nil {
+			partial[key] = property["default"]
+		}
+	}
+	if len(partial) == 0 {
+		return opts, nil
+	}
+	doc, err := prompty.MapToJSONDocument(partial)
+	if err != nil {
+		return nil, err
+	}
+	option, err := prompty.WithPartialVariablesJSON(doc)
+	if err != nil {
+		return nil, err
+	}
+	return append(opts, option), nil
+}
+
+func appendManifestRuntimeOptions(
+	opts []prompty.ChatTemplateOption,
+	raw *RawManifest,
+	po *parseOpts,
+) []prompty.ChatTemplateOption {
+	if len(raw.Tools) > 0 {
+		opts = append(opts, prompty.WithTools(raw.Tools))
+	}
+	opts = append(opts, prompty.WithRequiredTools(normalizeRequiredTools(raw.RequiredTools)))
+	if raw.ModelOptions != nil {
+		opts = append(opts, prompty.WithModelOptions(raw.ModelOptions))
+	}
+	if raw.ResponseFormat != nil {
+		opts = append(opts, prompty.WithResponseFormat(raw.ResponseFormat))
+	}
+	if po != nil && po.partialsGlob != "" {
+		opts = append(opts, prompty.WithPartialsGlob(po.partialsGlob))
+	}
+	if po != nil && po.partialsFS != nil {
+		opts = append(opts, prompty.WithPartialsFS(po.partialsFS, po.partialsFSPattern))
+	}
+
+	return opts
 }

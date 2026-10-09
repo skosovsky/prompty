@@ -1,3 +1,5 @@
+//go:build e2e
+
 package prompty_test
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/skosovsky/prompty/parser/yaml"
 )
 
-func TestExamples_Task33Compose_PlanExecute(t *testing.T) {
+func TestE2EExamples_Task33Compose_PlanExecute(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("examples", "task33_compose")
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
@@ -36,7 +38,7 @@ func TestExamples_Task33Compose_PlanExecute(t *testing.T) {
 	assert.Equal(t, "hello", exec.Messages[2].Content[0].(prompty.TextPart).Text)
 }
 
-func TestExamples_Task33Compose_Provenance(t *testing.T) {
+func TestE2EExamples_Task33Compose_Provenance(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("examples", "task33_compose")
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))
@@ -60,7 +62,7 @@ func TestExamples_Task33Compose_Provenance(t *testing.T) {
 	assert.Equal(t, "user_turn", exec.Messages[2].Provenance.LayerID)
 }
 
-func TestExamples_Task33Compose_Checkpoint(t *testing.T) {
+func TestE2EExamples_Task33Compose_Checkpoint(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("examples", "task33_compose")
 	reg, err := fileregistry.New(dir, fileregistry.WithParser(yaml.New()))

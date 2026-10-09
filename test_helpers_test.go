@@ -16,7 +16,7 @@ type scriptedInvoker struct {
 
 func (s *scriptedInvoker) Execute(ctx context.Context, exec *PromptExecution) (*Response, error) {
 	if s.generate == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // Test invoker models an empty successful provider response.
 	}
 	return s.generate(ctx, exec)
 }
@@ -63,22 +63,6 @@ func (s stubToolInvoker) InvokeTool(name, argsJSON string) (json.RawMessage, err
 		return s.invoke(name, argsJSON)
 	}
 	return json.RawMessage(`""`), nil
-}
-
-type compileStubRegistry struct{}
-
-func (compileStubRegistry) Plan(_ context.Context, _ string, input RegistryPlanInput) (*RenderPlan, error) {
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("{{ .Input.q }}")},
-	}, WithMetadata(PromptMetadata{ID: "stub"}))
-	if err != nil {
-		return nil, err
-	}
-	return NewRenderPlanFromPlanInput(tpl, input)
-}
-
-func (compileStubRegistry) ReadManifestBytes(context.Context, string) ([]byte, error) {
-	return nil, ErrManifestBytesUnavailable
 }
 
 func mustTextFromParts(t *testing.T, parts []ContentPart) string {

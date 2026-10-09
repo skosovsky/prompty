@@ -389,3 +389,21 @@ go test -bench=BenchmarkRenderPlanExecute -benchmem ./...
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Repository verification and releases
+
+Use `make modules` to inspect the automatically discovered modules. All verification
+commands use `GOWORK=off`; development manifests link internal modules with local
+`replace` directives.
+
+```sh
+make lint
+make test
+make test-integration
+make test-e2e
+```
+
+See [verification](docs/verification.md) for test profiles and prerequisites, and
+[release runbook](docs/release/runbook.md) for isolated release candidates,
+atomic source/tag publication and inspect/resume/finish recovery.
+`make test-live`, benchmarks and fuzz campaigns are separate from CI/release gates.

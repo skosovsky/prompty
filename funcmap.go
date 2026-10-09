@@ -16,7 +16,7 @@ import (
 // defaultFuncMap returns the [template.FuncMap] used for ChatPromptTemplate rendering.
 func defaultFuncMap(tc TokenCounter) template.FuncMap {
 	if tc == nil {
-		tc = &CharFallbackCounter{}
+		tc = &CharFallbackCounter{CharsPerToken: 0}
 	}
 	return template.FuncMap{
 		"truncate_chars":       truncateChars,
@@ -87,6 +87,8 @@ func escapeXML(text string) string {
 }
 
 // randRead is used by randomHex so tests can inject a failing reader to verify error path.
+//
+//nolint:gochecknoglobals // Injectable crypto entropy source for deterministic failure tests.
 var randRead = rand.Read
 
 // randomHex returns a cryptographically random hex string of length*2 characters (length bytes).
@@ -171,7 +173,12 @@ func renderToolsAsXML(tools any) (string, error) {
 			}
 			params = string(b)
 		}
-		tx := xmlTool{Name: t.Name, Description: t.Description, Parameters: params}
+		tx := xmlTool{
+			XMLName:     xml.Name{Space: "", Local: ""},
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  params,
+		}
 		out, err := xml.MarshalIndent(tx, "  ", "  ")
 		if err != nil {
 			return "", err

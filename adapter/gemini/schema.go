@@ -10,62 +10,38 @@ import (
 // Handles type, properties, items, required. Recursive for nested objects and arrays.
 func mapToGenaiSchema(m map[string]any) (*genai.Schema, error) {
 	if m == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // An absent JSON schema maps to no provider schema.
 	}
 	s := &genai.Schema{}
 	if t, ok := m["type"].(string); ok && t != "" {
 		s.Type = jsonSchemaTypeToGenai(t)
 	}
-	if p, ok := m["properties"].(map[string]any); ok {
-		s.Properties = make(map[string]*genai.Schema)
-		for k, v := range p {
-			sub, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-			conv, err := mapToGenaiSchema(sub)
-			if err != nil {
-				return nil, fmt.Errorf("property %q: %w", k, err)
-			}
-			if conv != nil {
-				s.Properties[k] = conv
-			}
+	if properties, ok := m["properties"].(map[string]any); ok {
+		converted, err := genaiSchemaProperties(properties)
+		if err != nil {
+			return nil, err
 		}
+		s.Properties = converted
 	}
 	if r, ok := m["required"].([]any); ok {
-		required := make([]string, 0, len(r))
-		for _, x := range r {
-			if str, ok := x.(string); ok {
-				required = append(required, str)
-			}
-		}
-		s.Required = required
+		s.Required = schemaStringValues(r)
 	} else if r, ok := m["required"].([]string); ok {
 		s.Required = r
 	}
-	if items, ok := m["items"]; ok {
-		sub, ok := items.(map[string]any)
-		if ok {
-			conv, err := mapToGenaiSchema(sub)
-			if err != nil {
-				return nil, fmt.Errorf("items: %w", err)
-			}
-			if conv != nil {
-				s.Items = conv
-			}
+	if items, ok := m["items"].(map[string]any); ok {
+		converted, err := mapToGenaiSchema(items)
+		if err != nil {
+			return nil, fmt.Errorf("items: %w", err)
+		}
+		if converted != nil {
+			s.Items = converted
 		}
 	}
 	if desc, ok := m["description"].(string); ok {
 		s.Description = desc
 	}
 	if enum, ok := m["enum"].([]any); ok {
-		strs := make([]string, 0, len(enum))
-		for _, e := range enum {
-			if s, ok := e.(string); ok {
-				strs = append(strs, s)
-			}
-		}
-		s.Enum = strs
+		s.Enum = schemaStringValues(enum)
 	}
 	return s, nil
 }
@@ -87,4 +63,32 @@ func jsonSchemaTypeToGenai(t string) genai.Type {
 	default:
 		return genai.TypeUnspecified
 	}
+}
+
+func genaiSchemaProperties(properties map[string]any) (map[string]*genai.Schema, error) {
+	out := make(map[string]*genai.Schema)
+	for key, value := range properties {
+		schema, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		converted, err := mapToGenaiSchema(schema)
+		if err != nil {
+			return nil, fmt.Errorf("property %q: %w", key, err)
+		}
+		if converted != nil {
+			out[key] = converted
+		}
+	}
+	return out, nil
+}
+
+func schemaStringValues(values []any) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }

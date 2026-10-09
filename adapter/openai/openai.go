@@ -40,7 +40,7 @@ func WithClient(c *openai.Client) Option {
 
 // New returns an Adapter with default model set to gpt-4o. Options can override the default model.
 func New(opts ...Option) *Adapter {
-	a := &Adapter{defaultModel: openai.ChatModelGPT4o}
+	a := &Adapter{client: nil, defaultModel: openai.ChatModelGPT4o}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -50,7 +50,7 @@ func New(opts ...Option) *Adapter {
 // RuntimeDescriptor exposes adapter runtime metadata.
 func (*Adapter) RuntimeDescriptor() adapter.RuntimeDescriptor {
 	return adapter.RuntimeDescriptor{
-		Name: "openai",
+		Name: "openai", Capabilities: nil,
 	}
 }
 
@@ -67,38 +67,7 @@ func normalizeStrictSchemaNode(schema any) any {
 	}
 
 	if properties, ok := m["properties"].(map[string]any); ok {
-		required := requiredNames(m["required"])
-		missing := make([]string, 0)
-		for name, rawProp := range properties {
-			propMap, ok := rawProp.(map[string]any)
-			if ok {
-				normalized := normalizeStrictSchemaNode(propMap)
-				propMap, ok = normalized.(map[string]any)
-				if !ok {
-					continue
-				}
-				if !required[name] {
-					makeStrictPropertyNullable(propMap)
-					missing = append(missing, name)
-				}
-				properties[name] = propMap
-				continue
-			}
-			if !required[name] {
-				missing = append(missing, name)
-			}
-		}
-		if schemaTypeIncludes(m["type"], "object") || len(properties) > 0 {
-			if _, has := m["additionalProperties"]; !has {
-				m["additionalProperties"] = false
-			}
-			if len(missing) > 0 {
-				sort.Strings(missing)
-				requiredList := requiredNamesInOrder(m["required"])
-				requiredList = append(requiredList, missing...)
-				m["required"] = requiredList
-			}
-		}
+		normalizeStrictProperties(m, properties)
 	}
 	if items, ok := m["items"].(map[string]any); ok {
 		m["items"] = normalizeStrictSchemaNode(items)
@@ -218,36 +187,8 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*openai.ChatCompleti
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(working.Messages)),
 		Model:    a.defaultModel,
 	}
-	if exec.ModelOptions != nil {
-		if exec.ModelOptions.Model != "" {
-			params.Model = shared.ChatModel(exec.ModelOptions.Model) //nolint:unconvert // ChatModel is a distinct type
-		}
-		reasoningModel := isOpenAIReasoningModel(params.Model)
-		if exec.ModelOptions.TopP != nil {
-			params.TopP = openai.Float(*exec.ModelOptions.TopP)
-		}
-		if len(exec.ModelOptions.Stop) > 0 {
-			params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: exec.ModelOptions.Stop}
-		}
-
-		providerSettings, settingsErr := prompty.ProviderSettingsMap(exec.ModelOptions)
-		if settingsErr != nil {
-			return nil, settingsErr
-		}
-		reasoningEffortSet, err := applyOpenAIProviderSettings(params, providerSettings)
-		if err != nil {
-			return nil, err
-		}
-		if exec.ModelOptions.MaxTokens != nil {
-			if reasoningEffortSet || reasoningModel {
-				params.MaxCompletionTokens = openai.Int(*exec.ModelOptions.MaxTokens)
-			} else {
-				params.MaxTokens = openai.Int(*exec.ModelOptions.MaxTokens)
-			}
-		}
-		if exec.ModelOptions.Temperature != nil && !reasoningEffortSet && !reasoningModel {
-			params.Temperature = openai.Float(*exec.ModelOptions.Temperature)
-		}
+	if err := applyModelOptions(params, exec.ModelOptions); err != nil {
+		return nil, err
 	}
 	for _, msg := range working.Messages {
 		unions, err := a.messageToUnions(msg)
@@ -517,7 +458,7 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 	msg := completion.Choices[0].Message
 	var out []prompty.ContentPart
 	if msg.Content != "" {
-		out = append(out, prompty.TextPart{Text: msg.Content})
+		out = append(out, prompty.TextPart{CachePolicy: nil, Text: msg.Content})
 	}
 	for _, tc := range msg.ToolCalls {
 		if tc.Type != "function" {
@@ -540,7 +481,7 @@ func (a *Adapter) ParseResponse(completion *openai.ChatCompletion) (*prompty.Res
 				tc.Function.Name,
 			)
 		}
-		out = append(out, prompty.ToolCallPart{
+		out = append(out, prompty.ToolCallPart{ArgsChunk: "", CachePolicy: nil,
 			ID:   tc.ID,
 			Name: tc.Function.Name,
 			Args: tc.Function.Arguments,
@@ -571,30 +512,7 @@ func (a *Adapter) ExecuteStream(
 		defer func() { _ = stream.Close() }()
 
 		for stream.Next() {
-			chunk := stream.Current()
-			var content []prompty.ContentPart
-			if len(chunk.Choices) > 0 {
-				delta := chunk.Choices[0].Delta
-				if delta.Content != "" {
-					content = append(content, prompty.TextPart{Text: delta.Content})
-				}
-				for _, tc := range delta.ToolCalls {
-					part := prompty.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, ArgsChunk: tc.Function.Arguments}
-					content = append(content, part)
-				}
-			}
-			usage := usageFromOpenAI(chunk.Usage)
-			isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
-			finishReason := ""
-			if isFinished && chunk.Choices[0].FinishReason != "" {
-				finishReason = chunk.Choices[0].FinishReason
-			}
-			resChunk := &prompty.ResponseChunk{
-				Content:      content,
-				Usage:        usage,
-				IsFinished:   isFinished,
-				FinishReason: finishReason,
-			}
+			resChunk := responseChunkFromOpenAI(stream.Current())
 			if !yield(resChunk, nil) {
 				// Consumer requested stop; do not call yield again.
 				return
@@ -613,7 +531,7 @@ var (
 )
 
 func usageFromOpenAI(usage openai.CompletionUsage) prompty.Usage {
-	return prompty.Usage{
+	return prompty.Usage{PromptTokensCacheCreation: 0,
 		PromptTokens:              int(usage.PromptTokens),
 		CompletionTokens:          int(usage.CompletionTokens),
 		TotalTokens:               int(usage.TotalTokens),
@@ -644,4 +562,108 @@ func parseReasoningEffort(v string) (shared.ReasoningEffort, bool) {
 func isOpenAIReasoningModel(model shared.ChatModel) bool {
 	m := strings.ToLower(model)
 	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3")
+}
+
+func applyModelOptions(params *openai.ChatCompletionNewParams, options *prompty.ModelOptions) error {
+	if options == nil {
+		return nil
+	}
+	if options.Model != "" {
+		params.Model = shared.ChatModel(options.Model) //nolint:unconvert // ChatModel is a distinct type
+	}
+	reasoningModel := isOpenAIReasoningModel(params.Model)
+	if options.TopP != nil {
+		params.TopP = openai.Float(*options.TopP)
+	}
+	if len(options.Stop) > 0 {
+		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: options.Stop}
+	}
+
+	providerSettings, settingsErr := prompty.ProviderSettingsMap(options)
+	if settingsErr != nil {
+		return settingsErr
+	}
+	reasoningEffortSet, err := applyOpenAIProviderSettings(params, providerSettings)
+	if err != nil {
+		return err
+	}
+	if options.MaxTokens != nil {
+		if reasoningEffortSet || reasoningModel {
+			params.MaxCompletionTokens = openai.Int(*options.MaxTokens)
+		} else {
+			params.MaxTokens = openai.Int(*options.MaxTokens)
+		}
+	}
+	if options.Temperature != nil && !reasoningEffortSet && !reasoningModel {
+		params.Temperature = openai.Float(*options.Temperature)
+	}
+	return nil
+}
+
+func normalizeStrictProperties(m, properties map[string]any) {
+	required := requiredNames(m["required"])
+	missing := make([]string, 0)
+	for name, rawProp := range properties {
+		propMap, ok := rawProp.(map[string]any)
+		if ok {
+			normalized := normalizeStrictSchemaNode(propMap)
+			propMap, ok = normalized.(map[string]any)
+			if !ok {
+				continue
+			}
+			if !required[name] {
+				makeStrictPropertyNullable(propMap)
+				missing = append(missing, name)
+			}
+			properties[name] = propMap
+			continue
+		}
+		if !required[name] {
+			missing = append(missing, name)
+		}
+	}
+	if schemaTypeIncludes(m["type"], "object") || len(properties) > 0 {
+		if _, has := m["additionalProperties"]; !has {
+			m["additionalProperties"] = false
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			requiredList := requiredNamesInOrder(m["required"])
+			requiredList = append(requiredList, missing...)
+			m["required"] = requiredList
+		}
+	}
+}
+
+func responseChunkFromOpenAI(chunk openai.ChatCompletionChunk) *prompty.ResponseChunk {
+	var content []prompty.ContentPart
+	if len(chunk.Choices) > 0 {
+		delta := chunk.Choices[0].Delta
+		if delta.Content != "" {
+			content = append(content, prompty.TextPart{CachePolicy: nil, Text: delta.Content})
+		}
+		for _, tc := range delta.ToolCalls {
+			part := prompty.ToolCallPart{
+				CachePolicy: nil,
+				Args:        "",
+				ID:          tc.ID,
+				Name:        tc.Function.Name,
+				ArgsChunk:   tc.Function.Arguments,
+			}
+			content = append(content, part)
+		}
+	}
+	usage := usageFromOpenAI(chunk.Usage)
+	isFinished := len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != ""
+	finishReason := ""
+	if isFinished && chunk.Choices[0].FinishReason != "" {
+		finishReason = chunk.Choices[0].FinishReason
+	}
+	resChunk := &prompty.ResponseChunk{
+		Content:      content,
+		Usage:        usage,
+		IsFinished:   isFinished,
+		FinishReason: finishReason,
+	}
+	return resChunk
 }
