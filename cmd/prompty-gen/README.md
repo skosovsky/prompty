@@ -278,3 +278,39 @@ restore every affected package's preflight bytes and reports rollback errors.
 This does not promise a filesystem transaction across multiple files or crash
 recovery after process termination. Run one generator per output directory and
 keep consumer files unchanged during generation.
+
+## Custom source bundle
+
+В `types` режиме один optional input `packages[].source_bundle` задаёт тот же
+source bundle, который runtime передаёт в `manifest.CaptureSources`:
+
+```yaml
+packages:
+  - name: core_prompts
+    path: ./internal/core_prompts
+    queries: [".prompts_cache/prompts/*.yaml"]
+    source_bundle:
+      root: ./.prompts_cache
+      partials: templates/*.tmpl
+      resolution:
+        partials: templates/*.tmpl
+        partial_resolution: root.v1
+```
+
+Относительный `root` вычисляется от директории config. Glob `partials` использует
+`fs.Glob`; ключи partials — slash paths относительно root (`templates/base.tmpl`).
+Absolute paths, parent traversal и symlinks за пределы root запрещены.
+Ошибки glob/read останавливают генерацию пакета до записи generated files;
+ноль совпадений означает пустой набор, как в runtime. `resolution` копируется
+без добавления пустых полей: пример соответствует
+`manifest.SourceResolutionConfig("", "templates/*.tmpl", "root.v1", "", "")`.
+Без `source_bundle` сохраняются прежние nil partials/config и descriptors.
+В `consts` режиме `source_bundle` отклоняется, поскольку descriptors не генерируются.
+
+Manifest inventory, partial bytes и resolution захватываются один раз на пакет.
+Все descriptors используют существующий `CaptureSources` и его digest verification.
+Источник должен быть **immutable checkout** на протяжении захвата: несколько чтений
+live filesystem сами по себе не атомарны. Git/Postgres revision и locking обеспечивает
+приложение. Генератор не принимает готовые digest и не отключает проверку целостности.
+Потребитель может использовать generated descriptor напрямую, без нормализации
+source descriptors и без удаления unreachable Go AST.

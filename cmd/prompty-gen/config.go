@@ -7,7 +7,9 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -30,11 +32,38 @@ type Config struct {
 // Package defines one output package with its manifest sources and options.
 // Strict break: max_retries/enable_validation removed; unknown fields fail via KnownFields.
 type Package struct {
-	Name        string   `yaml:"name"`    // e.g. "prompts"
-	Path        string   `yaml:"path"`    // output directory for generated code
-	Queries     []string `yaml:"queries"` // paths or globs for manifest files
-	PackageName string   `yaml:"package"` // Go package name (default: name)
-	Mode        string   `yaml:"mode"`    // "consts" | "types" (default: "types")
+	Name         string              `yaml:"name"`    // e.g. "prompts"
+	Path         string              `yaml:"path"`    // output directory for generated code
+	Queries      []string            `yaml:"queries"` // paths or globs for manifest files
+	PackageName  string              `yaml:"package"` // Go package name (default: name)
+	SourceBundle *SourceBundleConfig `yaml:"source_bundle"`
+	Mode         string              `yaml:"mode"` // "consts" | "types" (default: "types")
+}
+
+// SourceBundleConfig supplies the runtime source binding for a types package.
+// Root is relative to the config directory; partial names are relative to Root.
+type SourceBundleConfig struct {
+	Root       string            `yaml:"root"`
+	Partials   string            `yaml:"partials"`
+	Resolution map[string]string `yaml:"resolution"`
+}
+
+func (s *SourceBundleConfig) validate() error {
+	if strings.TrimSpace(s.Root) == "" {
+		return errors.New("source_bundle root is required")
+	}
+	if s.Partials != "" {
+		if slices.Contains(strings.Split(s.Partials, "/"), "..") {
+			return errors.New("source_bundle partials must not traverse parents")
+		}
+		if strings.HasPrefix(s.Partials, "/") || strings.Contains(s.Partials, `\`) {
+			return errors.New("source_bundle partials must be root-relative slash paths")
+		}
+		if _, err := path.Match(s.Partials, ""); err != nil {
+			return fmt.Errorf("source_bundle partials: %w", err)
+		}
+	}
+	return nil
 }
 
 // IsConsts returns true when mode is "consts".
@@ -96,6 +125,14 @@ func LoadConfig(path string) (*Config, error) {
 			p.Mode = modeTypes
 		}
 		m := strings.ToLower(p.Mode)
+		if p.SourceBundle != nil {
+			if m != modeTypes {
+				return nil, fmt.Errorf("package %q: source_bundle requires types mode", p.Name)
+			}
+			if err := p.SourceBundle.validate(); err != nil {
+				return nil, fmt.Errorf("package %q: %w", p.Name, err)
+			}
+		}
 		if m != modeConsts && m != modeTypes {
 			return nil, fmt.Errorf("package %q: invalid mode %q (use consts or types)", p.Name, p.Mode)
 		}

@@ -1,0 +1,5 @@
+id: child
+inputs: {}
+messages:
+  - role: system
+    content: "Consumer fixture."

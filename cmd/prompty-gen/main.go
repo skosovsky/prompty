@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,13 +126,21 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 
 // runTypes generates shared _shared_gen.go plus per-manifest _gen.go (hybrid types mode).
 type capturedManifestIndex struct {
-	loader manifest.ManifestLoader
-	byID   map[string][]byte
-	byPath map[string][]byte
+	loader     manifest.ManifestLoader
+	byID       map[string][]byte
+	byPath     map[string][]byte
+	partials   map[string][]byte
+	resolution map[string]string
 }
 
 func indexManifests(files []string, configDir string, queries []string) (*capturedManifestIndex, error) {
-	index := &capturedManifestIndex{loader: nil, byID: make(map[string][]byte), byPath: make(map[string][]byte)}
+	index := &capturedManifestIndex{
+		loader:     nil,
+		byID:       make(map[string][]byte),
+		byPath:     make(map[string][]byte),
+		partials:   nil,
+		resolution: nil,
+	}
 	owners := make(map[string]string)
 	read := func(name string) (*manifest.RawManifest, error) {
 		data, ok := index.byPath[name]
@@ -173,6 +183,47 @@ func indexManifests(files []string, configDir string, queries []string) (*captur
 	return index, nil
 }
 
+// capturePackageSources seals the configured bundle before any generated file is written.
+func capturePackageSources(files []string, configDir string, pkg *Package) (*capturedManifestIndex, error) {
+	index, err := indexManifests(files, configDir, pkg.Queries)
+	if err != nil {
+		return nil, err
+	}
+	bundle := pkg.SourceBundle
+	if bundle == nil {
+		return index, nil
+	}
+	if validationErr := bundle.validate(); validationErr != nil {
+		return nil, validationErr
+	}
+	rootPath := bundle.Root
+	if !filepath.IsAbs(rootPath) {
+		rootPath = filepath.Join(configDir, rootPath)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("source_bundle root: %w", err)
+	}
+	defer root.Close()
+	index.partials = make(map[string][]byte)
+	index.resolution = maps.Clone(bundle.Resolution)
+	if bundle.Partials == "" {
+		return index, nil
+	}
+	names, err := fs.Glob(root.FS(), bundle.Partials)
+	if err != nil {
+		return nil, fmt.Errorf("source_bundle glob: %w", err)
+	}
+	for _, name := range names {
+		data, err := root.ReadFile(name)
+		if err != nil {
+			return nil, fmt.Errorf("source_bundle partial %q: %w", name, err)
+		}
+		index.partials[name] = data
+	}
+	return index, nil
+}
+
 func (i *capturedManifestIndex) LoadByID(ctx context.Context, id string) (*manifest.RawManifest, error) {
 	return i.loader.LoadByID(ctx, id)
 }
@@ -187,7 +238,7 @@ func (i *capturedManifestIndex) ReadManifestBytes(ctx context.Context, id string
 	return append([]byte(nil), data...), nil
 }
 func (i *capturedManifestIndex) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
-	return manifest.CaptureSources(ctx, id, i, yaml.New(), nil, nil)
+	return manifest.CaptureSources(ctx, id, i, yaml.New(), i.partials, i.resolution)
 }
 
 //nolint:gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
@@ -203,7 +254,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		}
 		owners[name] = source
 	}
-	loader, err := indexManifests(files, configDir, pkg.Queries)
+	loader, err := capturePackageSources(files, configDir, pkg)
 	if err != nil {
 		return err
 	}
@@ -273,7 +324,7 @@ func runList(configPath string) error {
 		if err != nil {
 			return fmt.Errorf("package %q: %w", pkg.Name, err)
 		}
-		loader, loaderErr := indexManifests(files, configDir, pkg.Queries)
+		loader, loaderErr := capturePackageSources(files, configDir, &pkg)
 		if loaderErr != nil {
 			fmt.Fprintf(os.Stderr, "  package %s: %v\n", pkg.Name, loaderErr)
 			continue

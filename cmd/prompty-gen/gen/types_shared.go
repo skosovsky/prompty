@@ -344,7 +344,6 @@ func addPromptEntryAndIndex(f *jen.File, specs []*PromptSpec) {
 		jen.Switch(jen.Id("id")).Block(append(checkpointCases,
 			jen.Default().Block(jen.Return(jen.Nil(), jen.False(), jen.Nil())),
 		)...),
-		jen.Return(jen.Nil(), jen.False(), jen.Nil()),
 	)
 	f.Line()
 }

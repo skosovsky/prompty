@@ -1,0 +1,10 @@
+id: main
+inputs: {}
+imports:
+  - id: child
+layers:
+  - id: child
+    import_ref: child
+  - id: user
+    role: user
+    content: '{{ template "templates/base.tmpl" . }}'

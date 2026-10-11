@@ -695,7 +695,6 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 	default:
 		return nil, false, nil
 	}
-	return nil, false, nil
 }
 
 func (c *promptCatalog) Index() PromptIndex {

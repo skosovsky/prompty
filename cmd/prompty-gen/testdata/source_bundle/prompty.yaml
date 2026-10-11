@@ -1,0 +1,11 @@
+version: "1"
+packages:
+  - name: consumer
+    path: .
+    queries: ["prompts/*.yaml"]
+    source_bundle:
+      root: .
+      partials: templates/*.tmpl
+      resolution:
+        partials: templates/*.tmpl
+        partial_resolution: root.v1
