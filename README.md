@@ -120,10 +120,14 @@ Use `prompty.SimpleChat(...)`, templates or your own `PromptExecution` builder w
 The repository contains a complete reproducible [config](cmd/prompty-gen/testdata/prompty.yaml), [manifests and inputs](cmd/prompty-gen/testdata/prompts), and [typed consumer](cmd/prompty-gen/testdata/gen_out/prompt_index_test.go):
 
 ```bash
-go run ./cmd/prompty-gen -config cmd/prompty-gen/testdata/prompty.yaml generate
-go test -race ./cmd/prompty-gen/testdata/gen_out
-make gen-check
+(cd cmd/prompty-gen && GOWORK=off go run . -config testdata/prompty.yaml generate)
+(cd cmd/prompty-gen && GOWORK=off go test -race ./testdata/gen_out)
+make test-e2e
 ```
+
+The codegen e2e check regenerates fixtures in a temporary directory, compares
+their contents and file set with the checked-in output, then tests the generated
+consumer. A mismatch fails the check without modifying the working tree.
 
 Use generated recipe/checkpoint APIs when source snapshots and serialized typed input fit your application. The [generator guide](cmd/prompty-gen/README.md) explains caller-owned registry/config paths and restore policy. Model calls remain explicit.
 

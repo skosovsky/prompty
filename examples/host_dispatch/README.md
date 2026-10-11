@@ -49,28 +49,30 @@ until the joining cleanup finishes.
 Use the same semantic tests with real dependencies in two modes:
 
 ```sh
-python3 scripts/host_dispatch_checks.py local \
+scripts/host_dispatch_checks.sh local \
   --source toolsy=../toolsy --source contexty=../contexty --source routery=../routery \
-  --run --report /tmp/host-local.json
-python3 scripts/host_dispatch_checks.py published --run --report /tmp/host-published.json
+  --run --report /tmp/host-local.log
+scripts/host_dispatch_checks.sh published --run --report /tmp/host-published.log
 ```
 
-The local mode creates a temporary workspace with explicit source paths. The
+The local mode creates a temporary workspace with explicit source paths using
+Go's workspace commands and the toolchain required by go.mod. The
 published mode copies the consumer into a temporary directory, disables the
 workspace and all replacements, resolves a published root/adapter pair (latest
 by default, or `--ref`), and retains the pinned external consumer set in go.mod.
-CI source checkouts are pinned to the commits behind the declared external
-consumer releases. Their default branches currently precede those contracts;
-checking default branches instead fails explicitly. Source mode also accepts
+The separate `host-dispatch.yml` CI workflow runs both modes. Source checkouts
+are pinned to the commits behind the declared external consumer releases.
+Source mode also accepts
 current local working trees and records their HEAD and uncommitted changes;
 passing those trees does not prove that remote default branches pass.
 
 Both modes run `-race -count=1`, lint and optionally the demo, and record actual
-module refs and commands. Neither mode edits your go.mod/workspace files.
+module refs and commands in a text log (`--report`). Neither mode edits your
+go.mod/workspace files. Published mode rejects replacements anywhere in the
+resolved dependency graph. Tag-triggered CI checks that exact release; other
+runs check the latest published release.
 
-A published root without `AdmitToolCalls` fails compilation explicitly. Before
-its first publication, the release transaction can validate the prepared module
-archives offline; that gate does not constitute published-mode evidence. Run the
+A published root without `AdmitToolCalls` fails compilation explicitly. Run the
 published mode after publication before closing the issue.
 
 Offline fixtures establish contracts, not live model support, signatures,

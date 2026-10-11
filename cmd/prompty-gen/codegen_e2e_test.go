@@ -3,7 +3,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -42,6 +44,24 @@ func TestE2ELoadSpec_RequiredTools_FromYAML_E2ECodegen(t *testing.T) {
 }
 
 func TestE2EGeneratedPackage(t *testing.T) {
+	// Arrange.
+	fixture := t.TempDir()
+	if err := os.CopyFS(fixture, os.DirFS("testdata")); err != nil {
+		t.Fatal(err)
+	}
+	want := snapshotOutput(t, "testdata/gen_out")
+
+	// Act.
+	if err := runGenerate(filepath.Join(fixture, "prompty.yaml")); err != nil {
+		t.Fatalf("regenerate fixtures: %v", err)
+	}
+	got := snapshotOutput(t, filepath.Join(fixture, "gen_out"))
+
+	// Assert.
+	if !reflect.DeepEqual(want, got) {
+		t.Fatal("generated fixtures differ; regenerate with: go run . -config testdata/prompty.yaml generate")
+	}
+
 	// Arrange.
 	cmd := exec.CommandContext(t.Context(), "go", "test", "-race", "-count=1", "./testdata/gen_out")
 

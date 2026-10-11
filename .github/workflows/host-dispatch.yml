@@ -1,0 +1,67 @@
+name: Host dispatch
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  host-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [local, published]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: prompty
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: prompty/go.mod
+          cache-dependency-path: 'prompty/**/go.sum'
+      - name: Install pinned linter
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+      - uses: actions/checkout@v7.0.1
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/toolsy
+          ref: 6ed0a8a6a4e664c25f32397fa63dd6f0a46cba09
+          path: toolsy
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/contexty
+          ref: 3ce901169b09b7136b126d9baa98e1875b33fa82
+          path: contexty
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        if: matrix.mode == 'local'
+        with:
+          repository: skosovsky/routery
+          ref: fe61308e030e163195ccdb4d548109a5a4ebdde1
+          path: routery
+          persist-credentials: false
+      - name: Check local sources
+        if: matrix.mode == 'local'
+        working-directory: prompty
+        run: >-
+          scripts/host_dispatch_checks.sh local
+          --source toolsy=../toolsy --source contexty=../contexty --source routery=../routery
+          --run --report host-dispatch-local.log
+      - name: Check published dependencies
+        if: matrix.mode == 'published'
+        working-directory: prompty
+        env:
+          RELEASE_REF: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+        run: scripts/host_dispatch_checks.sh published --ref "$RELEASE_REF" --run --report host-dispatch-published.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-dispatch-${{ matrix.mode }}
+          path: prompty/host-dispatch-*.log
