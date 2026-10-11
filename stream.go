@@ -1,0 +1,782 @@
+package prompty
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"iter"
+	"slices"
+	"sync"
+)
+
+// StreamMode is chosen explicitly; native never falls back to a buffered call.
+type StreamMode string
+
+const (
+	StreamNative   StreamMode = "native"
+	StreamBuffered StreamMode = "buffered"
+)
+
+// StreamEventKind distinguishes content/control markers from lifecycle completion.
+type StreamEventKind string
+
+const (
+	StreamStart    StreamEventKind = "start"
+	StreamDelta    StreamEventKind = "delta"
+	StreamUsage    StreamEventKind = "usage"
+	StreamFinish   StreamEventKind = "finish"
+	StreamTerminal StreamEventKind = "terminal"
+)
+
+// StreamState is the observed lifecycle of a single consumption.
+type StreamState string
+
+const (
+	StreamCreated   StreamState = "created"
+	StreamRunning   StreamState = "streaming"
+	StreamCompleted StreamState = "completed"
+	StreamFailed    StreamState = "failed"
+	StreamCanceled  StreamState = "canceled"
+)
+
+var (
+	ErrStreamConsumed = errors.New("prompty: stream is single-use")
+	ErrStreamProtocol = errors.New("prompty: invalid or incomplete stream protocol")
+	ErrStreamMode     = errors.New("prompty: explicit native or buffered stream mode required")
+)
+
+// StreamStopReason records the observed cause of local stream interruption.
+type StreamStopReason string
+
+const (
+	StreamStopConsumer StreamStopReason = "consumer_stop"
+	StreamStopClosed   StreamStopReason = "closed"
+	StreamStopCanceled StreamStopReason = "canceled"
+)
+
+// StreamStatus remains readable after early termination. Result is a cloned snapshot.
+type StreamStatus struct {
+	StopReason StreamStopReason
+	Identity   StreamIdentity
+	State      StreamState
+	Mode       StreamMode
+	Result     *Response
+	Err        error
+}
+
+// StreamFinalizer validates a cloned assembled result after source EOF and trailing
+// usage, before terminal success. It must honor cancellation and must not retry.
+type StreamFinalizer func(context.Context, *Response) error
+
+// StreamCaptureObserver records final/failed snapshots without changing content.
+// It runs outside the status mutex and must honor invocation cancellation.
+type StreamCaptureObserver func(context.Context, StreamStatus, error) (*CaptureReport, error)
+
+// StreamFrameObserver observes an isolated accepted frame with canonical identity.
+// An observation failure retains and yields the frame before failing the stream.
+// It must honor cancellation; it runs without the status mutex.
+type StreamFrameObserver func(context.Context, *ResponseChunk) error
+
+// StreamLifecycleObserver starts lazy observation and returns a context with
+// added values and a closeout callback. It must retain the same Done channel.
+// Closeout sees an isolated final/canceled status without the status mutex held.
+type StreamLifecycleObserver func(context.Context) (context.Context, func(StreamStatus))
+
+// WithStreamFrameObserver binds optional canonical frame observation before consumption.
+func WithStreamFrameObserver(observer StreamFrameObserver) StreamOption {
+	return func(stream *Stream) { stream.frameObserver = observer }
+}
+
+// WithStreamCaptureObserver installs optional observation before terminal delivery.
+func WithStreamCaptureObserver(observer StreamCaptureObserver) StreamOption {
+	return func(stream *Stream) { stream.captureObserver = observer }
+}
+
+// StreamOption configures a handle before consumption.
+type StreamOption func(*Stream)
+
+// WithStreamFinalizer installs a final validation port. It never runs after partial
+// transport/protocol failure or consumer cancellation, and does not mutate the result.
+func WithStreamFinalizer(finalizer StreamFinalizer) StreamOption {
+	return func(stream *Stream) { stream.finalizer = finalizer }
+}
+
+// Stream owns a lazy, single-use source and its cancellation context. It creates
+// no producer goroutine. Sources must honor context cancellation and release
+// transport resources when yield returns false.
+type Stream struct {
+	mu                 sync.Mutex
+	ctx                context.Context
+	cancel             context.CancelFunc
+	source             func(context.Context) iter.Seq2[*ResponseChunk, error]
+	status             StreamStatus
+	used               bool
+	finalizer          StreamFinalizer
+	chunkValidator     func(*ResponseChunk) error
+	captureObserver    StreamCaptureObserver
+	frameObserver      StreamFrameObserver
+	partBindings       map[string]streamPartBinding
+	toolParts          map[string]string
+	finalizedParts     map[string]bool
+	lifecycleObservers []StreamLifecycleObserver
+	sourceCtx          context.Context
+	sourceCancel       context.CancelFunc
+}
+
+// NewStream constructs a lazy lifecycle handle. Creating a handle does not dispatch.
+// The source emits data/control events and a finish marker, not a terminal event.
+func NewStream(
+	ctx context.Context,
+	mode StreamMode,
+	source func(context.Context) iter.Seq2[*ResponseChunk, error],
+	options ...StreamOption,
+) *Stream {
+	child, cancel := context.WithCancel(ctx)
+	sourceCtx, sourceCancel := context.WithCancel(child)
+	stream := &Stream{
+		ctx:    child,
+		cancel: cancel,
+		source: source,
+		mu:     sync.Mutex{},
+		used:   false,
+		status: StreamStatus{
+			StopReason: "",
+			Identity:   StreamIdentity{MessageID: rand.Text(), PartIDs: nil},
+			State:      StreamCreated,
+			Mode:       mode,
+			Result: &Response{
+				Model:                   "",
+				Content:                 nil,
+				ProviderState:           nil,
+				Annotations:             nil,
+				MessageAnnotations:      nil,
+				ContinuationUnavailable: false,
+				Usage: Usage{
+					PromptTokens:              0,
+					CompletionTokens:          0,
+					TotalTokens:               0,
+					PromptTokensCached:        0,
+					PromptTokensCacheCreation: 0,
+					CompletionTokensReasoning: 0,
+					Known:                     nil,
+					Mode:                      "",
+				},
+				FinishReason: "",
+				Outcome:      "",
+				Diagnostics: ExecutionDiagnostics{
+					Profile:    ProfileIdentity{Provider: "", Endpoint: "", Model: "", ModelFamily: ""},
+					Snapshot:   "",
+					Provenance: "",
+					Override:   false,
+					Checks:     nil,
+					Schemas:    nil,
+					Capture:    nil,
+					Cache:      nil,
+				},
+			},
+			Err: nil,
+		},
+		finalizer:          nil,
+		chunkValidator:     nil,
+		captureObserver:    nil,
+		sourceCtx:          sourceCtx,
+		sourceCancel:       sourceCancel,
+		frameObserver:      nil,
+		partBindings:       make(map[string]streamPartBinding),
+		finalizedParts:     make(map[string]bool),
+		toolParts:          make(map[string]string),
+		lifecycleObservers: nil,
+	}
+	for _, option := range options {
+		option(stream)
+	}
+	return stream
+}
+
+// ObserveLifecycle attaches middleware to this handle without replaying or
+// reassembling its events. Attachment is permitted only before consumption.
+func (s *Stream) ObserveLifecycle(observer StreamLifecycleObserver) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.used {
+		return ErrStreamConsumed
+	}
+	if s.status.State != StreamCreated {
+		return s.status.Err
+	}
+	if observer == nil {
+		return fmt.Errorf("%w: nil lifecycle observer", ErrStreamProtocol)
+	}
+	s.lifecycleObservers = append(s.lifecycleObservers, observer)
+	return nil
+}
+
+// ErrorStream reports a pre-dispatch failure when consumed.
+func ErrorStream(ctx context.Context, mode StreamMode, err error) *Stream {
+	return NewStream(ctx, mode, func(context.Context) iter.Seq2[*ResponseChunk, error] {
+		return func(yield func(*ResponseChunk, error) bool) { yield(nil, err) }
+	})
+}
+
+// Status returns an isolated partial/final result. Terminal state is immutable.
+func (s *Stream) Status() StreamStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := s.status
+	result.Result = cloneResponse(result.Result)
+	result.Identity = cloneStreamIdentity(result.Identity)
+	return result
+}
+
+// Close requests cancellation without waiting. A created handle becomes canceled
+// immediately; a running iterator publishes final status after unwind/closeout.
+// It is safe to call concurrently and repeatedly, including from a callback.
+func (s *Stream) Close() error {
+	s.mu.Lock()
+	if s.status.State == StreamCreated || s.status.State == StreamRunning {
+		s.status.StopReason = StreamStopClosed
+	}
+	if s.status.State == StreamCreated {
+		s.status.State, s.status.Err = StreamCanceled, context.Canceled
+	}
+	s.mu.Unlock()
+	s.cancel()
+	return nil
+}
+
+// Events starts dispatch on first consumption and yields exactly one terminal event
+// unless the consumer stops. In that case Status retains the canceled outcome.
+func (s *Stream) Events() iter.Seq2[*ResponseChunk, error] {
+	return func(yield func(*ResponseChunk, error) bool) {
+		if err := s.begin(); err != nil {
+			yield(nil, err)
+			return
+		}
+		defer s.cancel()
+		closeout, observerErr := s.startLifecycleObservation()
+		defer closeout()
+		if observerErr != nil {
+			observerErr = s.observeCapture(observerErr)
+			s.deliverTerminal(yield, StreamFailed, observerErr)
+			return
+		}
+		stopped, err := s.consume(yield)
+		if stopped {
+			s.markConsumerStopped()
+			err = s.observeCapture(errors.Join(context.Canceled, err))
+			s.complete(StreamCanceled, err)
+			return
+		}
+		err = errors.Join(err, s.ctx.Err())
+		if err == nil && s.finalizer != nil {
+			err = s.finalizer(s.ctx, s.Status().Result)
+			if contextErr := s.ctx.Err(); contextErr != nil {
+				err = errors.Join(err, contextErr)
+			}
+		}
+		err = s.observeCapture(err)
+		err = errors.Join(err, s.ctx.Err())
+		state := StreamCompleted
+		if err != nil {
+			state = failureState(err)
+		}
+		s.deliverTerminal(yield, state, err)
+	}
+}
+
+func (s *Stream) markConsumerStopped() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.StopReason == "" {
+		s.status.StopReason = StreamStopConsumer
+		if s.ctx.Err() != nil {
+			s.status.StopReason = StreamStopCanceled
+		}
+	}
+}
+
+func (s *Stream) startLifecycleObservation() (func(), error) {
+	callbacks := make([]func(StreamStatus), 0, len(s.lifecycleObservers))
+	closeout := func() {
+		for _, callback := range slices.Backward(callbacks) {
+			callback(s.Status())
+		}
+	}
+	for _, observer := range slices.Backward(s.lifecycleObservers) {
+		finish, err := s.startLifecycleObserver(observer)
+		if finish != nil {
+			callbacks = append(callbacks, finish)
+		}
+		if err != nil {
+			return closeout, err
+		}
+	}
+	if len(callbacks) != 0 {
+		s.sourceCancel()
+		s.sourceCtx, s.sourceCancel = context.WithCancel(s.ctx)
+	}
+	return closeout, nil
+}
+
+func (s *Stream) startLifecycleObserver(observer StreamLifecycleObserver) (func(StreamStatus), error) {
+	ctx, finish := observer(s.ctx)
+	if ctx == nil || finish == nil || ctx.Done() != s.ctx.Done() {
+		return finish, fmt.Errorf("%w: invalid lifecycle observer binding", ErrStreamProtocol)
+	}
+	s.ctx = ctx
+	return finish, nil
+}
+
+func (s *Stream) observeCapture(sourceErr error) error {
+	if sourceErr != nil {
+		s.revokeFailedContinuation()
+	}
+	if s.captureObserver == nil {
+		return sourceErr
+	}
+	report, captureErr := s.captureObserver(s.ctx, s.Status(), sourceErr)
+	if report != nil {
+		copyReport := CloneCaptureReport(*report)
+		if reportErr := copyReport.Validate(); reportErr != nil {
+			return errors.Join(sourceErr, captureErr, reportErr)
+		}
+		s.mu.Lock()
+		if s.status.State == StreamRunning {
+			s.status.Result.Diagnostics.Capture = &copyReport
+		}
+		s.mu.Unlock()
+	}
+	return errors.Join(sourceErr, captureErr)
+}
+
+func (s *Stream) consume(yield func(*ResponseChunk, error) bool) (bool, error) {
+	if err := s.ctx.Err(); err != nil {
+		return false, err
+	}
+	if s.status.Mode != StreamNative && s.status.Mode != StreamBuffered {
+		return false, ErrStreamMode
+	}
+	if s.source == nil {
+		return false, ErrStreamProtocol
+	}
+	finished := false
+	var finishOutcome Outcome
+	var finishReason string
+	for chunk, sourceErr := range s.source(s.sourceCtx) {
+		if sourceErr != nil {
+			s.sourceCancel()
+			return false, sourceErr
+		}
+		if contextErr := s.ctx.Err(); contextErr != nil {
+			return false, contextErr
+		}
+		var protocolErr error
+		finished, protocolErr = checkStreamEvent(chunk, finished, finishOutcome, finishReason)
+		if protocolErr != nil {
+			s.sourceCancel() // release producer while keeping final observation context live
+			return false, protocolErr
+		}
+		if chunk.Kind == StreamFinish {
+			finishOutcome, finishReason = chunk.Outcome, chunk.FinishReason
+		}
+		stopped, err := s.acceptFrame(chunk, yield)
+		if stopped {
+			return true, err
+		}
+		if err != nil {
+			s.sourceCancel()
+			return false, err
+		}
+	}
+	if err := s.ctx.Err(); err != nil {
+		return false, err
+	}
+	if !finished {
+		return false, fmt.Errorf("%w: missing finish marker", ErrStreamProtocol)
+	}
+	return false, s.materialize()
+}
+
+func (s *Stream) acceptFrame(chunk *ResponseChunk, yield func(*ResponseChunk, error) bool) (bool, error) {
+	chunk = cloneResponseChunk(chunk)
+	if err := s.accumulate(chunk); err != nil {
+		return false, err
+	}
+	var observationErr error
+	if s.frameObserver != nil {
+		observationErr = s.frameObserver(s.ctx, cloneResponseChunk(chunk))
+	}
+	if err := s.validateChunk(chunk); err != nil {
+		return false, errors.Join(err, observationErr)
+	}
+	if !yield(cloneResponseChunk(chunk), nil) {
+		s.sourceCancel()
+		return true, observationErr
+	}
+	return false, observationErr
+}
+
+func (s *Stream) validateChunk(chunk *ResponseChunk) error {
+	if s.chunkValidator == nil {
+		return nil
+	}
+	return s.chunkValidator(cloneResponseChunk(chunk))
+}
+
+// Attach validation while the handle is still lazy. It is part of the same
+// lifecycle, not a consumer break or a replacement for the prepared finalizer.
+func (s *Stream) attachValidation(chunk func(*ResponseChunk) error, final StreamFinalizer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.used {
+		return ErrStreamConsumed
+	}
+	if s.status.State != StreamCreated {
+		return s.status.Err
+	}
+	previous := s.finalizer
+	s.chunkValidator = chunk
+	s.finalizer = func(ctx context.Context, response *Response) error {
+		if err := final(ctx, response); err != nil {
+			return err
+		}
+		if previous != nil {
+			return previous(ctx, response)
+		}
+		return nil
+	}
+	return nil
+}
+
+func checkStreamEvent(chunk *ResponseChunk, finished bool, outcome Outcome, reason string) (bool, error) {
+	if chunk == nil || chunk.Result != nil || chunk.Outcome != "" && !validOutcome(chunk.Outcome) {
+		return finished, ErrStreamProtocol
+	}
+	metadataOnly := len(chunk.Content) == 0 && len(chunk.ProviderState) == 0 &&
+		len(chunk.StateUpdates) == 0 && len(chunk.Finalizations) == 0 && len(chunk.Annotations) == 0
+	switch chunk.Kind {
+	case StreamStart:
+		if finished || !metadataOnly {
+			return finished, ErrStreamProtocol
+		}
+	case StreamDelta:
+		if finished {
+			return finished, ErrStreamProtocol
+		}
+	case StreamUsage:
+		if !metadataOnly || finished && (chunk.Outcome != "" && chunk.Outcome != outcome ||
+			chunk.FinishReason != "" && chunk.FinishReason != reason) {
+			return finished, ErrStreamProtocol
+		}
+	case StreamFinish:
+		if finished || chunk.Outcome == "" {
+			return finished, ErrStreamProtocol
+		}
+		return true, nil
+	case StreamTerminal:
+		fallthrough
+	default:
+		return finished, ErrStreamProtocol
+	}
+	return finished, nil
+}
+
+func updateObservedResponseMetadata(result *Response, chunk *ResponseChunk) {
+	if chunk.Model != "" {
+		result.Model = chunk.Model
+	}
+	if chunk.Outcome != "" {
+		result.Outcome = chunk.Outcome
+	}
+	if chunk.Kind == StreamFinish || chunk.FinishReason != "" {
+		result.FinishReason = chunk.FinishReason
+	}
+	if chunk.Diagnostics.Snapshot != "" {
+		result.Diagnostics = CloneExecutionDiagnostics(chunk.Diagnostics)
+	}
+}
+
+func validOutcome(outcome Outcome) bool {
+	return slices.Contains(
+		[]Outcome{OutcomeCompleted, OutcomeToolCalls, OutcomeRefusal, OutcomeIncomplete, OutcomePaused},
+		outcome,
+	)
+}
+
+func (s *Stream) begin() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.used {
+		return ErrStreamConsumed
+	}
+	s.used = true
+	if s.status.State != StreamCreated {
+		return s.status.Err
+	}
+	s.status.State = StreamRunning
+	return nil
+}
+
+func (s *Stream) accumulate(chunk *ResponseChunk) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State != StreamRunning {
+		return s.status.Err
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	result, identity := s.accumulationCandidate(len(chunk.Finalizations) != 0)
+	if err := s.rejectFinalizedContent(chunk.Identity.PartIDs); err != nil {
+		return err
+	}
+	bindings, err := checkStreamIdentity(chunk, s.status.Identity.MessageID, s.partBindings, s.toolParts)
+	if err != nil {
+		return err
+	}
+	if err = ValidatePartAssociations(chunk.Content, chunk.ProviderState, chunk.Annotations); err != nil {
+		return err
+	}
+	if err = ValidateMessageAnnotations(chunk.MessageAnnotations); err != nil {
+		return err
+	}
+	states, err := s.updatedPartStates(chunk)
+	if err != nil {
+		return err
+	}
+	usage, err := mergeUsage(result.Usage, chunk.Usage)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrStreamProtocol, err)
+	}
+	offset := len(result.Content)
+	annotations := clonePartAnnotations(chunk.Annotations)
+	for i := range annotations {
+		annotations[i].PartIndex += offset
+	}
+	result.ProviderState = states
+	result.Annotations = append(result.Annotations, annotations...)
+	result.MessageAnnotations = append(result.MessageAnnotations, cloneMessageAnnotations(chunk.MessageAnnotations)...)
+	result.ContinuationUnavailable = result.ContinuationUnavailable || chunk.ContinuationUnavailable
+	result.Content = append(result.Content, cloneContentParts(chunk.Content)...)
+	chunk.Identity.MessageID = s.status.Identity.MessageID
+	identity.PartIDs = append(identity.PartIDs, chunk.Identity.PartIDs...)
+	result.Usage = usage
+	updateObservedResponseMetadata(result, chunk)
+	if err := finalizeStreamParts(result, &identity, chunk.Finalizations, s.finalizedParts); err != nil {
+		return err
+	}
+	s.status.Result, s.status.Identity = result, identity
+	for _, finalization := range chunk.Finalizations {
+		s.finalizedParts[finalization.PartID] = true
+	}
+	for id, binding := range bindings {
+		s.partBindings[id] = binding
+		if binding.toolID != "" {
+			s.toolParts[binding.toolID] = id
+		}
+	}
+	return nil
+}
+
+// Called under mu. Only finalizations need a detached candidate for atomic
+// validation; ordinary deltas retain the existing incremental allocation path.
+func (s *Stream) accumulationCandidate(finalizing bool) (*Response, StreamIdentity) {
+	if finalizing {
+		return cloneResponse(s.status.Result), cloneStreamIdentity(s.status.Identity)
+	}
+	return s.status.Result, s.status.Identity
+}
+
+func (s *Stream) rejectFinalizedContent(ids []string) error {
+	for _, id := range ids {
+		if s.finalizedParts[id] {
+			return fmt.Errorf("%w: content after logical part finalization", ErrStreamProtocol)
+		}
+	}
+	return nil
+}
+
+func (s *Stream) materialize() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State != StreamRunning {
+		return s.status.Err
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	result := s.status.Result
+	parts, association, err := assembleToolCallPartsWithReferences(result.Content, s.status.Identity.PartIDs)
+	if err != nil {
+		return err
+	}
+	states := clonePartStates(result.ProviderState)
+	for i := range states {
+		oldIndex := states[i].PartIndex
+		newIndex := association[oldIndex]
+		if !sameStateBoundContent(result.Content[oldIndex], parts[newIndex]) {
+			return fmt.Errorf("%w: assembly would alter state-bound content", ErrProviderState)
+		}
+		states[i].PartIndex = newIndex
+	}
+	annotations := clonePartAnnotations(result.Annotations)
+	for i := range annotations {
+		annotations[i].PartIndex = association[annotations[i].PartIndex]
+	}
+	if err = ValidatePartAssociations(parts, states, annotations); err != nil {
+		return err
+	}
+	result.Content, result.ProviderState, result.Annotations = parts, states, annotations
+	s.status.Identity.PartIDs = materializedPartIDs(s.status.Identity.PartIDs, association, len(parts))
+	return nil
+}
+
+// Failed or canceled accumulated exchanges retain evidence, but are not admitted
+// as continuation history. This also covers failures before a provider callback.
+func (s *Stream) revokeFailedContinuation() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State == StreamRunning && streamHasContinuationEvidence(s.status.Result) {
+		s.status.Result.ContinuationUnavailable = true
+	}
+}
+
+func streamHasContinuationEvidence(result *Response) bool {
+	return len(result.Content) != 0 || len(result.ProviderState) != 0 ||
+		HasScopedMessageAnnotations(result.MessageAnnotations)
+}
+
+func (s *Stream) complete(state StreamState, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State != StreamCreated && s.status.State != StreamRunning {
+		return
+	}
+	if state != StreamCompleted && streamHasContinuationEvidence(s.status.Result) {
+		s.status.Result.ContinuationUnavailable = true
+	}
+	if state == StreamCanceled && s.status.StopReason == "" {
+		s.status.StopReason = StreamStopCanceled
+	}
+	s.status.State, s.status.Err = state, err
+}
+
+func (s *Stream) deliverTerminal(yield func(*ResponseChunk, error) bool, state StreamState, err error) {
+	s.complete(state, err)
+	status := s.Status()
+	yield(
+		&ResponseChunk{
+			Content:                 nil,
+			ProviderState:           nil,
+			StateUpdates:            nil,
+			Finalizations:           nil,
+			Annotations:             nil,
+			MessageAnnotations:      nil,
+			ContinuationUnavailable: false,
+			Diagnostics: ExecutionDiagnostics{
+				Profile:    ProfileIdentity{Provider: "", Endpoint: "", Model: "", ModelFamily: ""},
+				Snapshot:   "",
+				Provenance: "",
+				Override:   false,
+				Checks:     nil,
+				Schemas:    nil,
+				Capture:    nil,
+				Cache:      nil,
+			},
+			Identity:     status.Identity,
+			Model:        status.Result.Model,
+			Kind:         StreamTerminal,
+			Result:       status.Result,
+			Outcome:      status.Result.Outcome,
+			Usage:        status.Result.Usage,
+			FinishReason: status.Result.FinishReason,
+		},
+		status.Err,
+	)
+}
+
+func failureState(err error) StreamState {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return StreamCanceled
+	}
+	return StreamFailed
+}
+
+// CloneResponse returns an isolated response including opaque state and diagnostics.
+func CloneResponse(resp *Response) *Response { return cloneResponse(resp) }
+
+func cloneResponse(resp *Response) *Response {
+	if resp == nil {
+		return nil
+	}
+	out := *resp
+	out.Content = cloneContentParts(resp.Content)
+	out.ProviderState = clonePartStates(resp.ProviderState)
+	out.Annotations = clonePartAnnotations(resp.Annotations)
+	out.MessageAnnotations = cloneMessageAnnotations(resp.MessageAnnotations)
+	out.Usage.Known = slices.Clone(resp.Usage.Known)
+	out.Diagnostics = CloneExecutionDiagnostics(resp.Diagnostics)
+	return &out
+}
+
+func cloneResponseChunk(chunk *ResponseChunk) *ResponseChunk {
+	out := *chunk
+	out.Identity = cloneStreamIdentity(chunk.Identity)
+	out.Content = cloneContentParts(chunk.Content)
+	out.ProviderState = clonePartStates(chunk.ProviderState)
+	out.StateUpdates = clonePartStates(chunk.StateUpdates)
+	out.Finalizations = cloneStreamFinalizations(chunk.Finalizations)
+	out.Annotations = clonePartAnnotations(chunk.Annotations)
+	out.MessageAnnotations = cloneMessageAnnotations(chunk.MessageAnnotations)
+	out.Usage.Known = slices.Clone(chunk.Usage.Known)
+	out.Diagnostics = CloneExecutionDiagnostics(chunk.Diagnostics)
+	out.Result = cloneResponse(chunk.Result)
+	return &out
+}
+
+func mergeUsage(acc, update Usage) (Usage, error) {
+	if err := update.Validate(); err != nil {
+		return acc, err
+	}
+	acc.Known = slices.Clone(acc.Known)
+	for _, field := range update.Known {
+		target, value := usageCounter(&acc, field), usageCounter(&update, field)
+		if target == nil || value == nil {
+			continue
+		}
+		if update.Mode == UsageDelta {
+			const maxInt = int(^uint(0) >> 1)
+			if *value > maxInt-*target {
+				return Usage{}, fmt.Errorf("%w: counter accumulation overflow", ErrUsage)
+			}
+			*target += *value
+		} else {
+			*target = *value
+		}
+		if !slices.Contains(acc.Known, field) {
+			acc.Known = append(acc.Known, field)
+		}
+	}
+	acc.Mode = UsageCumulative
+	return acc, nil
+}
+
+func usageCounter(usage *Usage, field UsageCounter) *int {
+	switch field {
+	case UsagePrompt:
+		return &usage.PromptTokens
+	case UsageCompletion:
+		return &usage.CompletionTokens
+	case UsageTotal:
+		return &usage.TotalTokens
+	case UsageCacheRead:
+		return &usage.PromptTokensCached
+	case UsageCacheWrite:
+		return &usage.PromptTokensCacheCreation
+	case UsageReasoning:
+		return &usage.CompletionTokensReasoning
+	default:
+		return nil
+	}
+}

@@ -16,7 +16,8 @@ type TokenCounter interface {
 }
 
 // CharFallbackCounter estimates tokens as runes/CharsPerToken.
-// Zero value uses 4 chars per token (English average).
+// Zero value uses a heuristic of 4 runes per token, plus fixed media penalties.
+// It is not a tokenizer or full provider request/context-window guarantee.
 type CharFallbackCounter struct {
 	CharsPerToken int
 }

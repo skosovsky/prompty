@@ -57,7 +57,7 @@ func TestPromptExecutionWire_RoundTrip(t *testing.T) {
 		},
 	}
 
-	wire, err := MarshalExecution(exec)
+	wire, err := MarshalExecution(exec, WirePolicy{State: StatePreserve})
 	require.NoError(t, err)
 	data, err := json.Marshal(wire)
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestPromptExecutionWire_MarshalsPointerContentParts(t *testing.T) {
 		}},
 	}
 
-	wire, err := MarshalExecution(exec)
+	wire, err := MarshalExecution(exec, WirePolicy{State: StatePreserve})
 	require.NoError(t, err)
 	restored, err := UnmarshalExecution(wire)
 
@@ -106,6 +106,7 @@ func TestPromptExecutionWire_MarshalsPointerContentParts(t *testing.T) {
 func TestPromptExecutionWire_RejectsInvalidContentUnion(t *testing.T) {
 	t.Parallel()
 	wire := PromptExecutionWire{
+		Format: ExecutionWireFormat,
 		Messages: []MessageWire{{
 			Role:    RoleUser,
 			Content: []ContentPartWire{{Type: "unknown"}},
@@ -115,5 +116,6 @@ func TestPromptExecutionWire_RejectsInvalidContentUnion(t *testing.T) {
 	_, err := UnmarshalExecution(wire)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported content part wire type")
+	require.ErrorIs(t, err, ErrSchemaMismatch)
+	assert.Contains(t, err.Error(), "/messages/0/content/0/type")
 }

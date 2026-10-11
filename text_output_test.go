@@ -148,6 +148,7 @@ func TestExecuteAsText_PreflightRejectsRequiredTools(t *testing.T) {
 	t.Parallel()
 	exec := NewExecution([]ChatMessage{NewUserMessage("hi")})
 	exec.RequiredTools = []string{"lookup"}
+	exec.Tools = []ToolDefinition{{Name: "lookup"}}
 	_, err := ExecuteAsText(context.Background(), &scriptedInvoker{}, exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrNonTextResponse)
@@ -157,6 +158,7 @@ func TestExecuteAsText_PreflightRejectsForcedTool(t *testing.T) {
 	t.Parallel()
 	exec := NewExecution([]ChatMessage{NewUserMessage("hi")})
 	exec.ForcedTool = "lookup"
+	exec.Tools = []ToolDefinition{{Name: "lookup"}}
 	_, err := ExecuteAsText(context.Background(), &scriptedInvoker{}, exec)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrNonTextResponse)

@@ -84,11 +84,11 @@ func TestRegistry_Plan_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tpl)
 	assert.Equal(t, "support_agent", tpl.Metadata.ID)
-	assert.Equal(t, 3, m.called)
+	assert.Equal(t, 1, m.called)
 	tpl2, err := templateFromPlan(ctx, reg, "support_agent")
 	require.NoError(t, err)
 	assert.Equal(t, "support_agent", tpl2.Metadata.ID)
-	assert.Equal(t, 4, m.called, "cache hit still re-probes compose on each Plan")
+	assert.Equal(t, 1, m.called, "cache hit reuses captured sources")
 }
 
 func TestRegistry_Plan_EnvSpecific(t *testing.T) {
@@ -202,14 +202,14 @@ func TestRegistry_Plan_TTLExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl.Messages[0].Content[0].Text)
-	assert.Equal(t, 3, called, "compose probe + plan fetch + post-plan compose probe")
+	assert.Equal(t, 1, called, "one captured source fetch")
 
 	time.Sleep(60 * time.Millisecond)
 	tpl2, err := templateFromPlan(ctx, reg, "ttl_test")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 6, called, "second load repeats compose probe + plan fetch + post-plan compose probe")
+	assert.Equal(t, 2, called, "second load repeats one captured source fetch")
 }
 
 func TestRegistry_Plan_InfiniteTTL(t *testing.T) {
@@ -230,14 +230,14 @@ func TestRegistry_Plan_InfiniteTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl.Messages[0].Content[0].Text)
-	assert.Equal(t, 3, called)
+	assert.Equal(t, 1, called)
 
 	time.Sleep(20 * time.Millisecond)
 	tpl2, err := templateFromPlan(ctx, reg, "infinite")
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "cached", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 4, called, "TTL<=0: cache hit still re-probes compose")
+	assert.Equal(t, 1, called, "TTL<=0 retains captured generation")
 }
 
 func TestRegistry_Plan_NegativeTTLNeverExpires(t *testing.T) {
@@ -263,7 +263,7 @@ func TestRegistry_Plan_NegativeTTLNeverExpires(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tpl2.Messages[0].Content, 1)
 	assert.Equal(t, "v1", tpl2.Messages[0].Content[0].Text)
-	assert.Equal(t, 4, called, "TTL<0: cache hit still re-probes compose")
+	assert.Equal(t, 1, called, "TTL<0 retains captured generation")
 }
 
 func TestRegistry_Plan_CacheSafety(t *testing.T) {
@@ -357,51 +357,66 @@ func TestCachedRegistry_Plan_ConcurrentDedupe(t *testing.T) {
 	for range workers {
 		require.NoError(t, <-errs)
 	}
-	assert.GreaterOrEqual(t, m.called, 2, "at least one shared plan fetch after compose probes")
+	assert.Equal(t, 1, m.called, "one shared capture")
 	assert.LessOrEqual(t, m.called, workers+5, "inflight dedupe limits plan fetches")
+}
+
+// Done is evaluated after the caller has joined the shared flight. The signal
+// lets the test cancel another waiter only after both are admitted.
+type admittedWaiterContext struct {
+	context.Context
+
+	once     sync.Once
+	admitted chan struct{}
+}
+
+func (c *admittedWaiterContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.admitted) })
+	return c.Context.Done()
 }
 
 func TestCachedRegistry_Plan_CallerCancellationIsolation(t *testing.T) {
 	t.Parallel()
+	// Arrange: release the fetch only after both waiters join and the first cancels.
 	manifestJSON := `{"id":"ctx_isolation","version":"1","messages":[{"role":"system","content":[{"type":"text","text":"x"}]}]}`
-	started := make(chan struct{})
-	m := &mockFetcher{
-		fetch: func(ctx context.Context, _ string) ([]byte, error) {
-			select {
-			case <-started:
-			default:
-				close(started)
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(40 * time.Millisecond):
-				return []byte(manifestJSON), nil
-			}
-		},
-	}
+	started, release := make(chan struct{}), make(chan struct{})
+	var startOnce sync.Once
+	m := &mockFetcher{fetch: func(ctx context.Context, _ string) ([]byte, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return []byte(manifestJSON), nil
+		}
+	}}
 	base, err := New(m, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	reg := WithCache(base, time.Minute)
-
-	firstCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	firstCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	firstErr := make(chan error, 1)
-	go func() {
-		_, getErr := templateFromPlan(firstCtx, reg, "ctx_isolation")
-		firstErr <- getErr
-	}()
-
+	go func() { _, getErr := templateFromPlan(firstCtx, reg, "ctx_isolation"); firstErr <- getErr }()
 	<-started
-	tpl, err := templateFromPlan(context.Background(), reg, "ctx_isolation")
-	require.NoError(t, err)
-	require.NotNil(t, tpl)
-	assert.Equal(t, "ctx_isolation", tpl.Metadata.ID)
-
-	err = <-firstErr
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.GreaterOrEqual(t, m.called, 2, "compose probes plus one shared plan fetch")
+	secondCtx := &admittedWaiterContext{Context: t.Context(), admitted: make(chan struct{})}
+	secondErr := make(chan error, 1)
+	go func() {
+		tpl, getErr := templateFromPlan(secondCtx, reg, "ctx_isolation")
+		if getErr == nil && (tpl == nil || tpl.Metadata.ID != "ctx_isolation") {
+			getErr = errors.New("unexpected template")
+		}
+		secondErr <- getErr
+	}()
+	<-secondCtx.admitted
+	// Act.
+	cancel()
+	firstResult := <-firstErr
+	close(release)
+	secondResult := <-secondErr
+	// Assert.
+	require.ErrorIs(t, firstResult, context.Canceled)
+	require.NoError(t, secondResult)
+	assert.Equal(t, 1, m.called, "one shared capture")
 }
 
 func TestCachedRegistry_Plan_CancelsSharedFetchWhenAllWaitersCancel(t *testing.T) {
@@ -498,11 +513,11 @@ func TestRegistry_Evict(t *testing.T) {
 	ctx := context.Background()
 	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
-	assert.Equal(t, 3, m.called)
+	assert.Equal(t, 1, m.called)
 	reg.Evict("evict_me")
 	_, err = templateFromPlan(ctx, reg, "evict_me")
 	require.NoError(t, err)
-	assert.Equal(t, 6, m.called, "after Evict, next Plan should fetch again")
+	assert.Equal(t, 2, m.called, "after Evict, next Plan should fetch again")
 }
 
 func TestRegistry_EvictAll(t *testing.T) {
@@ -518,7 +533,7 @@ func TestRegistry_EvictAll(t *testing.T) {
 	reg.EvictAll()
 	_, err = templateFromPlan(ctx, reg, "all")
 	require.NoError(t, err)
-	assert.Equal(t, 6, m.called)
+	assert.Equal(t, 2, m.called)
 }
 
 func TestRegistry_List_ReturnsNilWhenNoLister(t *testing.T) {
@@ -589,7 +604,7 @@ func TestCachedRegistry_ResolveManifest_RequiresManifestResolver(t *testing.T) {
 	reg := WithCache(base, time.Minute)
 	_, err := reg.ResolveManifest(context.Background(), "agent")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ManifestResolver")
+	assert.ErrorIs(t, err, prompty.ErrRegistryCapabilityUnavailable)
 }
 
 func TestCachedRegistry_DescribePrompt_RequiresPromptDescriber(t *testing.T) {
@@ -598,5 +613,5 @@ func TestCachedRegistry_DescribePrompt_RequiresPromptDescriber(t *testing.T) {
 	reg := WithCache(base, time.Minute)
 	_, err := reg.DescribePrompt(context.Background(), "agent")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "PromptDescriber")
+	assert.ErrorIs(t, err, prompty.ErrRegistryCapabilityUnavailable)
 }

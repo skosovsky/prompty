@@ -15,13 +15,20 @@ func clonePromptExecution(exec *PromptExecution) *PromptExecution {
 		return nil
 	}
 	return &PromptExecution{
+		toolScope:      cloneToolScopePtr(exec.toolScope),
+		RequestCache:   cloneCachePolicy(exec.RequestCache),
+		CacheResource:  cloneCacheResource(exec.CacheResource),
 		Messages:       cloneMessages(exec.Messages),
 		Tools:          cloneToolDefinitions(exec.Tools),
+		HostedTools:    CloneHostedToolRequests(exec.HostedTools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
 		ForcedTool:     exec.ForcedTool,
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
+		Validator:      exec.Validator,
+		Capture:        CloneCaptureBinding(exec.Capture),
+		Requirements:   cloneRequirements(exec.Requirements),
 	}
 }
 
@@ -30,13 +37,20 @@ func cloneExecutionWithMessages(exec *PromptExecution, messages []ChatMessage) *
 		return nil
 	}
 	return &PromptExecution{
+		toolScope:      cloneToolScopePtr(exec.toolScope),
+		RequestCache:   cloneCachePolicy(exec.RequestCache),
+		CacheResource:  cloneCacheResource(exec.CacheResource),
 		Messages:       messages,
 		Tools:          cloneToolDefinitions(exec.Tools),
+		HostedTools:    CloneHostedToolRequests(exec.HostedTools),
 		RequiredTools:  cloneStringSlice(exec.RequiredTools),
 		ForcedTool:     exec.ForcedTool,
 		ModelOptions:   cloneModelOptions(exec.ModelOptions),
 		Metadata:       clonePromptMetadata(exec.Metadata),
 		ResponseFormat: cloneSchemaDefinition(exec.ResponseFormat),
+		Validator:      exec.Validator,
+		Capture:        CloneCaptureBinding(exec.Capture),
+		Requirements:   cloneRequirements(exec.Requirements),
 	}
 }
 
@@ -83,6 +97,7 @@ func cloneSchemaDefinition(schema *SchemaDefinition) *SchemaDefinition {
 	return &SchemaDefinition{
 		Name:        schema.Name,
 		Description: schema.Description,
+		Dialect:     schema.Dialect,
 		Schema:      CloneJSONDocument(schema.Schema),
 	}
 }
@@ -92,6 +107,7 @@ func cloneCachePolicy(cache *CachePolicy) *CachePolicy {
 		return nil
 	}
 	out := *cache
+	out.Controls = CloneJSONDocument(cache.Controls)
 	return &out
 }
 
@@ -112,6 +128,7 @@ func cloneToolDefinitions(tools []ToolDefinition) []ToolDefinition {
 		out[i] = ToolDefinition{
 			Name:         tool.Name,
 			Description:  tool.Description,
+			Dialect:      tool.Dialect,
 			Parameters:   CloneJSONDocument(tool.Parameters),
 			Capabilities: cloneStringSlice(tool.Capabilities),
 		}
@@ -157,12 +174,16 @@ func cloneMessages(messages []ChatMessage) []ChatMessage {
 	out := make([]ChatMessage, len(messages))
 	for i, msg := range messages {
 		out[i] = ChatMessage{
-			Role:        msg.Role,
-			Content:     cloneContentParts(msg.Content),
-			CachePolicy: cloneCachePolicy(msg.CachePolicy),
-			Provenance:  cloneMessageProvenance(msg.Provenance),
-			Metadata:    CloneJSONDocument(msg.Metadata),
-			LayerKind:   msg.LayerKind,
+			Role:                    msg.Role,
+			Content:                 cloneContentParts(msg.Content),
+			ProviderState:           clonePartStates(msg.ProviderState),
+			Annotations:             clonePartAnnotations(msg.Annotations),
+			MessageAnnotations:      cloneMessageAnnotations(msg.MessageAnnotations),
+			ContinuationUnavailable: msg.ContinuationUnavailable,
+			CachePolicy:             cloneCachePolicy(msg.CachePolicy),
+			Provenance:              cloneMessageProvenance(msg.Provenance),
+			Metadata:                CloneJSONDocument(msg.Metadata),
+			LayerKind:               msg.LayerKind,
 		}
 	}
 	return out

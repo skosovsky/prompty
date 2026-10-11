@@ -1,6 +1,7 @@
 package cast
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -67,6 +68,14 @@ func TestToInt64(t *testing.T) {
 		{"float32", float32(10), 10, true},
 		{"float64 fractional", float64(9.5), 0, false},
 		{"float32 fractional", float32(10.25), 0, false},
+		{"float64 rounded upper bound", float64(math.MaxInt64), 0, false},
+		{"float32 rounded upper bound", float32(math.MaxInt64), 0, false},
+		{"exact JSON above float precision", json.Number("9007199254740993"), 9007199254740993, true},
+		{"exact JSON max int64", json.Number("9223372036854775807"), math.MaxInt64, true},
+		{"JSON out of int64 range", json.Number("9223372036854775808"), 0, false},
+		{"JSON decimal integer", json.Number("1024.0"), 1024, true},
+		{"JSON exponent integer", json.Number("1.024e3"), 1024, true},
+		{"JSON fractional", json.Number("1024.5"), 0, false},
 		{"string", "1", 0, false},
 		{"bool", false, 0, false},
 		{"nil", nil, 0, false},

@@ -1,288 +1,160 @@
 package truncate
 
 import (
-	"reflect"
+	"context"
+	"errors"
+	"slices"
 
 	"github.com/skosovsky/prompty"
 )
 
-type truncateConfig struct {
-	maxTokens int
-	counter   prompty.TokenCounter
-}
-
-// Strategy trims message history to fit token budget.
-type Strategy interface {
-	Truncate(
-		messages []prompty.ChatMessage,
-		maxTokens int,
-		counter prompty.TokenCounter,
-	) ([]prompty.ChatMessage, error)
-}
-
-// DropOldestStrategy removes the oldest removable turns until history fits budget.
-type DropOldestStrategy struct{}
-
-// DropOldest is a convenience function using DropOldestStrategy.
-func DropOldest(
-	messages []prompty.ChatMessage,
-	maxTokens int,
-	counter prompty.TokenCounter,
-) ([]prompty.ChatMessage, error) {
-	return DropOldestStrategy{}.Truncate(messages, maxTokens, counter)
-}
-
-// Truncate trims messages to fit maxTokens while preserving protected system/tool invariants.
-func (DropOldestStrategy) Truncate(
-	messages []prompty.ChatMessage,
-	maxTokens int,
-	counter prompty.TokenCounter,
-) ([]prompty.ChatMessage, error) {
-	return truncateMessages(messages, &truncateConfig{
-		maxTokens: maxTokens,
-		counter:   counter,
-	})
-}
-
-// TruncateWithStrategy applies strategy; nil strategy defaults to DropOldestStrategy.
-//
-//nolint:revive // stutter kept for explicit public API naming in ext/truncate.
-func TruncateWithStrategy(
-	messages []prompty.ChatMessage,
-	maxTokens int,
-	counter prompty.TokenCounter,
-	strategy Strategy,
-) ([]prompty.ChatMessage, error) {
-	if maxTokens <= 0 || counter == nil {
-		return cloneMessages(messages), nil
+// Apply removes whole dependency groups without editing signed content. Every
+// estimate is recomputed from the retained execution; no additive assumption.
+func Apply(ctx context.Context, execution *prompty.PromptExecution, options Options) (*Result, error) {
+	if execution == nil {
+		return nil, ErrInvalidInput
 	}
-	strategy = normalizeStrategy(strategy)
-	out, err := strategy.Truncate(messages, maxTokens, counter)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !ownsResult(strategy) {
-		out = cloneMessages(out)
-	}
-	return out, nil
-}
-
-func normalizeStrategy(strategy Strategy) Strategy {
-	if isNilStrategy(strategy) {
-		return DropOldestStrategy{}
-	}
-	return strategy
-}
-
-func isNilStrategy(strategy Strategy) bool {
-	if strategy == nil {
-		return true
-	}
-	value := reflect.ValueOf(strategy)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	case reflect.Invalid,
-		reflect.Bool,
-		reflect.Int,
-		reflect.Int8,
-		reflect.Int16,
-		reflect.Int32,
-		reflect.Int64,
-		reflect.Uint,
-		reflect.Uint8,
-		reflect.Uint16,
-		reflect.Uint32,
-		reflect.Uint64,
-		reflect.Uintptr,
-		reflect.Float32,
-		reflect.Float64,
-		reflect.Complex64,
-		reflect.Complex128,
-		reflect.Array,
-		reflect.String,
-		reflect.Struct,
-		reflect.UnsafePointer:
-		fallthrough
-	default:
-		return false
-	}
-}
-
-func ownsResult(strategy Strategy) bool {
-	switch strategy.(type) {
-	case DropOldestStrategy, *DropOldestStrategy:
-		return true
-	default:
-		return false
-	}
-}
-
-func truncateMessages(
-	messages []prompty.ChatMessage,
-	cfg *truncateConfig,
-) ([]prompty.ChatMessage, error) {
-	if cfg == nil || cfg.maxTokens <= 0 || cfg.counter == nil {
-		return cloneMessages(messages), nil
-	}
-
-	total, err := countMessagesTokens(messages, cfg)
-	if err != nil {
+	working := execution.Clone()
+	if err := validateExecution(working); err != nil {
 		return nil, err
 	}
-	if total <= cfg.maxTokens {
-		return cloneMessages(messages), nil
+	result := &Result{
+		Execution: working,
+		Report: Report{
+			Limit:     options.Limit,
+			Before:    Estimate{Tokens: 0, Known: false, Scope: ""},
+			After:     Estimate{Tokens: 0, Known: false, Scope: ""},
+			Removed:   nil,
+			Protected: nil,
+			State:     "",
+			Reason:    "",
+		},
 	}
-
-	blocks, err := removableBlocks(messages, cfg)
+	if options.Disabled {
+		result.Report.State, result.Report.Reason = BudgetDisabled, "disabled"
+		return result, nil
+	}
+	if options.Limit <= 0 || nilPort(options.Estimator) {
+		result.Report.Reason = "invalid_budget"
+		return result, ErrInvalidBudget
+	}
+	groups, protected, err := removalGroups(working.Messages, options.Protection)
+	result.Report.Protected = protected
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	if len(blocks) == 0 {
-		return cloneMessages(messages), nil
+	before, err := estimate(ctx, options.Estimator, working)
+	result.Report.Before, result.Report.After = before, before
+	if err != nil {
+		result.Report.Reason = "estimate_unavailable"
+		return result, err
 	}
+	if before.Tokens <= options.Limit {
+		result.Report.State, result.Report.Reason = BudgetSatisfied, "within_budget"
+		return result, nil
+	}
+	order, err := removalOrder(ctx, options.Strategy, groups)
+	if err != nil {
+		return result, err
+	}
+	return reduceGroups(ctx, result, groups, order, options)
+}
 
-	removed := make([]bool, len(messages))
-	removedAny := false
-	for _, block := range blocks {
-		if total <= cfg.maxTokens {
-			break
+func reduceGroups(ctx context.Context, result *Result, groups []Group, order []int, options Options) (*Result, error) {
+	working := result.Execution
+	before := result.Report.Before
+	removed := make([]bool, len(working.Messages))
+	for _, groupID := range order {
+		for _, index := range groups[groupID].Messages {
+			removed[index] = true
 		}
-		for i := block.start; i < block.end; i++ {
-			removed[i] = true
+		messages := retainedMessages(working.Messages, removed)
+		candidate := working.WithMessages(messages)
+		if validationErr := validateExecution(candidate); validationErr != nil {
+			return result, validationErr
 		}
-		total -= block.tokens
-		removedAny = true
+		after, estimateErr := estimate(ctx, options.Estimator, candidate)
+		if estimateErr != nil {
+			result.Report.Reason = "estimate_unavailable"
+			return result, estimateErr
+		}
+		if after.Scope != before.Scope {
+			result.Report.Reason = "coverage_changed"
+			return result, ErrInvalidEstimate
+		}
+		result.Execution, result.Report.After = candidate, after
+		result.Report.Removed = removedIndices(removed)
+		if after.Tokens <= options.Limit {
+			result.Report.State, result.Report.Reason = BudgetSatisfied, "removed_history"
+			return result, nil
+		}
 	}
-
-	if !removedAny {
-		return cloneMessages(messages), nil
+	result.Report.State, result.Report.Reason = BudgetUnsatisfied, "retained_execution_exceeds_budget"
+	if len(order) < len(groups) {
+		result.Report.Reason = "strategy_exhausted"
 	}
+	return result, &BudgetError{Report: CloneReport(result.Report)}
+}
 
-	trimmed := make([]prompty.ChatMessage, 0, len(messages))
+func validateExecution(execution *prompty.PromptExecution) error {
+	// Reuse the canonical projection contract; runtime ports are not persisted.
+	if _, err := prompty.MarshalExecution(execution, prompty.WirePolicy{State: prompty.StatePreserve}); err != nil {
+		return errors.Join(ErrInvalidInput, err)
+	}
+	for _, message := range execution.Messages {
+		switch message.Role {
+		case prompty.RoleSystem, prompty.RoleDeveloper, prompty.RoleUser, prompty.RoleAssistant, prompty.RoleTool:
+		default:
+			return ErrInvalidInput
+		}
+	}
+	return nil
+}
+
+func removalOrder(ctx context.Context, strategy Strategy, groups []Group) ([]int, error) {
+	order := make([]int, len(groups))
+	for i := range order {
+		order[i] = i
+	}
+	if nilPort(strategy) {
+		return order, nil
+	}
+	copyGroups := make([]Group, len(groups))
+	for i, group := range groups {
+		copyGroups[i] = Group{ID: group.ID, Messages: slices.Clone(group.Messages)}
+	}
+	selected, err := strategy.Order(ctx, copyGroups)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int]bool, len(selected))
+	for _, id := range selected {
+		if id < 0 || id >= len(groups) || seen[id] {
+			return nil, ErrInvalidStrategy
+		}
+		seen[id] = true
+	}
+	return slices.Clone(selected), ctx.Err()
+}
+
+func retainedMessages(messages []prompty.ChatMessage, removed []bool) []prompty.ChatMessage {
+	retained := make([]prompty.ChatMessage, 0, len(messages))
 	for i, message := range messages {
-		if removed[i] {
-			continue
+		if !removed[i] {
+			retained = append(retained, message)
 		}
-		trimmed = append(trimmed, message)
 	}
-	return cloneMessages(trimmed), nil
+	return retained
 }
-
-type removableBlock struct {
-	start  int
-	end    int
-	tokens int
-}
-
-func removableBlocks(
-	messages []prompty.ChatMessage,
-	cfg *truncateConfig,
-) ([]removableBlock, error) {
-	protected := protectedMessages(messages)
-	var blocks []removableBlock
-
-	for start := 0; start < len(messages); {
-		if protected[start] {
-			start++
-			continue
-		}
-		segmentEnd := start
-		for segmentEnd < len(messages) && !protected[segmentEnd] {
-			segmentEnd++
-		}
-		segmentBlocks, err := removableBlocksInSegment(messages, start, segmentEnd, cfg)
-		if err != nil {
-			return nil, err
-		}
-		blocks = append(blocks, segmentBlocks...)
-		start = segmentEnd
-	}
-	return blocks, nil
-}
-
-func protectedMessages(messages []prompty.ChatMessage) []bool {
-	protected := make([]bool, len(messages))
-	prefixEnd := protectedPrefixEnd(messages)
-	for i := range prefixEnd {
-		protected[i] = true
-	}
-	for i := prefixEnd; i < len(messages); i++ {
-		if messages[i].Role == prompty.RoleSystem || messages[i].Role == prompty.RoleDeveloper {
-			protected[i] = true
+func removedIndices(removed []bool) []int {
+	var indices []int
+	for i, value := range removed {
+		if value {
+			indices = append(indices, i)
 		}
 	}
-	return protected
-}
-
-func protectedPrefixEnd(messages []prompty.ChatMessage) int {
-	end := 0
-	for end < len(messages) && (messages[end].Role == prompty.RoleSystem || messages[end].Role == prompty.RoleDeveloper) {
-		end++
-	}
-	return end
-}
-
-func removableBlocksInSegment(
-	messages []prompty.ChatMessage,
-	start, end int,
-	cfg *truncateConfig,
-) ([]removableBlock, error) {
-	if start >= end {
-		return nil, nil
-	}
-
-	var starts []int
-	if messages[start].Role != prompty.RoleUser {
-		starts = append(starts, start)
-	}
-	for i := start; i < end; i++ {
-		if messages[i].Role == prompty.RoleUser {
-			starts = append(starts, i)
-		}
-	}
-
-	blocks := make([]removableBlock, 0, len(starts))
-	for i, blockStart := range starts {
-		blockEnd := end
-		if i+1 < len(starts) {
-			blockEnd = starts[i+1]
-		}
-		blockTokens, err := countMessagesTokens(messages[blockStart:blockEnd], cfg)
-		if err != nil {
-			return nil, err
-		}
-		blocks = append(blocks, removableBlock{
-			start:  blockStart,
-			end:    blockEnd,
-			tokens: blockTokens,
-		})
-	}
-	return blocks, nil
-}
-
-func countMessagesTokens(messages []prompty.ChatMessage, cfg *truncateConfig) (int, error) {
-	total := 0
-	for i := range messages {
-		n, err := countMessageTokens(&messages[i], cfg)
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	return total, nil
-}
-
-func countMessageTokens(message *prompty.ChatMessage, cfg *truncateConfig) (int, error) {
-	if cfg == nil || message == nil {
-		return 0, nil
-	}
-	return cfg.counter.CountMessage(*message)
-}
-
-func cloneMessages(messages []prompty.ChatMessage) []prompty.ChatMessage {
-	if messages == nil {
-		return nil
-	}
-	return prompty.NewExecution(messages).Messages
+	return indices
 }

@@ -11,7 +11,7 @@ import (
 func Test_bindTemplateVars_NilOptionalBool(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("flag={{ .Input.flag }}")},
+		{Role: RoleUser, Content: TextContent("flag={{if eq .Input.flag nil}}null{{else}}{{.Input.flag}}{{end}}")},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -24,8 +24,8 @@ func Test_bindTemplateVars_NilOptionalBool(t *testing.T) {
 	vars, _, bindErr := bindTemplateVars(&Payload{})
 	require.NoError(t, bindErr)
 	require.Contains(t, vars, "flag")
-	assert.Equal(t, false, vars["flag"])
-	assert.Equal(t, "flag=false", mustTextFromParts(t, exec.Messages[0].Content))
+	assert.Nil(t, vars["flag"])
+	assert.Equal(t, "flag=null", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func Test_bindTemplateVars_NilOptionalSlice(t *testing.T) {
@@ -44,7 +44,7 @@ func Test_bindTemplateVars_NilOptionalSlice(t *testing.T) {
 	vars, _, bindErr := bindTemplateVars(&Payload{})
 	require.NoError(t, bindErr)
 	require.Contains(t, vars, "tags")
-	assert.Equal(t, []string{}, vars["tags"])
+	assert.Nil(t, vars["tags"])
 	assert.Equal(t, "done", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
@@ -58,14 +58,14 @@ func Test_bindTemplateVars_RecursiveNestedNilPointer(t *testing.T) {
 	}
 	vars, _, err := bindTemplateVars(&Payload{})
 	require.NoError(t, err)
-	nested, ok := vars["user"].(map[string]any)
-	require.True(t, ok, "nested user must be map[string]any, got %T", vars["user"])
-	_, hasFirstName := nested["first_name"]
-	require.True(t, hasFirstName, "first_name key must be present in nested map")
-	assert.Empty(t, nested["first_name"])
+	require.Contains(t, vars, "user")
+	assert.Nil(t, vars["user"])
 
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("{{ .Input.user.first_name }}")},
+		{
+			Role:    RoleUser,
+			Content: TextContent("{{if eq .Input.user nil}}null{{else}}{{.Input.user.first_name}}{{end}}"),
+		},
 	})
 	require.NoError(t, err)
 	plan, err := NewRenderPlanFromStruct(tpl, &Payload{})
@@ -75,7 +75,7 @@ func Test_bindTemplateVars_RecursiveNestedNilPointer(t *testing.T) {
 	require.Len(t, exec.Messages[0].Content, 1)
 	text, ok := exec.Messages[0].Content[0].(TextPart)
 	require.True(t, ok)
-	assert.Empty(t, text.Text)
+	assert.Equal(t, "null", text.Text)
 }
 
 func TestPlanInputFrom_EmptyRegistryPlanInput(t *testing.T) {
@@ -120,7 +120,12 @@ func TestPlanInputFrom_HistoryNotInBoundVars(t *testing.T) {
 func Test_bindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("flag={{ .Input.flag }} tags={{ len .Input.tags }}")},
+		{
+			Role: RoleUser,
+			Content: TextContent(
+				"flag={{if eq .Input.flag nil}}null{{else}}{{.Input.flag}}{{end}} tags={{if eq .Input.tags nil}}null{{else}}{{len .Input.tags}}{{end}}",
+			),
+		},
 	})
 	require.NoError(t, err)
 	type Payload struct {
@@ -131,7 +136,7 @@ func Test_bindTemplateVars_JsonOmitemptyDoesNotAffectBinding(t *testing.T) {
 	require.NoError(t, err)
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "flag=false tags=0", mustTextFromParts(t, exec.Messages[0].Content))
+	assert.Equal(t, "flag=null tags=null", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func Test_bindTemplateVars_PromptTagOverridesJson(t *testing.T) {
@@ -155,7 +160,7 @@ func Test_bindTemplateVars_InterfaceNilPointer(t *testing.T) {
 	vars, _, err := bindTemplateVars(&Payload{Flag: (*bool)(nil)})
 	require.NoError(t, err)
 	require.Contains(t, vars, "flag")
-	assert.Equal(t, false, vars["flag"])
+	assert.Nil(t, vars["flag"])
 }
 
 func Test_bindTemplateVars_InterfaceFieldUnset(t *testing.T) {
@@ -299,13 +304,8 @@ func Test_bindTemplateVars_NestedTwoLevelsNil(t *testing.T) {
 	}
 	vars, _, err := bindTemplateVars(&Payload{})
 	require.NoError(t, err)
-	middle, ok := vars["middle"].(map[string]any)
-	require.True(t, ok)
-	inner, ok := middle["inner"].(map[string]any)
-	require.True(t, ok)
-	_, hasX := inner["x"]
-	require.True(t, hasX)
-	assert.Empty(t, inner["x"])
+	require.Contains(t, vars, "middle")
+	assert.Nil(t, vars["middle"])
 }
 
 func Test_bindTemplateVars_BindSliceOfPromptStructs(t *testing.T) {
@@ -372,18 +372,23 @@ func Test_bindTemplateVars_NilOptionalScalars(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, vars, "label")
 	require.Contains(t, vars, "count")
-	assert.Empty(t, vars["label"])
-	assert.Equal(t, 0, vars["count"])
+	assert.Nil(t, vars["label"])
+	assert.Nil(t, vars["count"])
 
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
-		{Role: RoleUser, Content: TextContent("{{ .Input.label }}:{{ .Input.count }}")},
+		{
+			Role: RoleUser,
+			Content: TextContent(
+				"{{if eq .Input.label nil}}null{{else}}{{.Input.label}}{{end}}:{{if eq .Input.count nil}}null{{else}}{{.Input.count}}{{end}}",
+			),
+		},
 	})
 	require.NoError(t, err)
 	plan, err := NewRenderPlanFromStruct(tpl, &Payload{})
 	require.NoError(t, err)
 	exec, err := plan.Execute(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, ":0", mustTextFromParts(t, exec.Messages[0].Content))
+	assert.Equal(t, "null:null", mustTextFromParts(t, exec.Messages[0].Content))
 }
 
 func Test_bindTemplateVars_NestedStructWithoutPromptFields(t *testing.T) {

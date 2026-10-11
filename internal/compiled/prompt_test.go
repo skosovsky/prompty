@@ -10,110 +10,116 @@ import (
 
 	"github.com/skosovsky/prompty"
 	"github.com/skosovsky/prompty/internal/compiled"
+	"github.com/skosovsky/prompty/manifest"
 )
 
-func TestNew_RequiresManifestBytes(t *testing.T) {
+func capturedTestPrompt(t *testing.T, raw map[string]any) (*compiled.Prompt, prompty.ManifestDescriptor) {
+	t.Helper()
+	data, err := json.Marshal(raw)
+	require.NoError(t, err)
+	snapshot, err := prompty.NewManifestSnapshot(
+		"agent",
+		prompty.SourceBundle{Sources: map[string][]byte{"main": data}},
+		func(ctx context.Context, bundle prompty.SourceBundle, _ prompty.RegistryPlanInput) (*prompty.ChatPromptTemplate, error) {
+			return manifest.Parse(
+				bundle.Sources["main"],
+				manifest.NewJSONParser(),
+				manifest.WithCompose(
+					manifest.ComposeContext{
+						Ctx:                         ctx,
+						Values:                      prompty.ComposeValues{},
+						Loader:                      &manifest.MemoryLoader{ByID: map[string]*manifest.RawManifest{}},
+						AllowMissingConditionValues: false,
+					},
+				),
+			)
+		},
+	)
+	require.NoError(t, err)
+	plan, err := snapshot.Plan(context.Background(), prompty.RegistryPlanInput{})
+	require.NoError(t, err)
+	prompt, err := compiled.FromRenderPlan(context.Background(), plan)
+	require.NoError(t, err)
+	return prompt, snapshot.Descriptor()
+}
+
+func plainSource() map[string]any {
+	return map[string]any{
+		"id": "agent",
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "hi"}}},
+		},
+	}
+}
+
+func TestFromRenderPlan_RequiresCapturedSource(t *testing.T) {
 	t.Parallel()
-	exec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")})
-	_, err := compiled.New(exec, "agent", nil)
-	require.ErrorIs(t, err, prompty.ErrManifestBytesRequired)
+	_, err := compiled.FromRenderPlan(context.Background(), nil)
+	require.Error(t, err)
+	template, err := prompty.NewChatPromptTemplate(
+		[]prompty.MessageTemplate{{Role: prompty.RoleUser, Content: prompty.TextContent("hi")}},
+	)
+	require.NoError(t, err)
+	_, err = compiled.FromRenderPlan(context.Background(), prompty.NewRenderPlan(template))
+	require.Error(t, err)
 }
 
 func TestPrompt_RoundTrip(t *testing.T) {
 	t.Parallel()
-	exec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")})
-	raw := []byte("id: agent\nversion: 1\n")
-	cp, err := compiled.New(exec, "agent", raw)
+	prompt, descriptor := capturedTestPrompt(t, plainSource())
+	data, err := json.Marshal(prompt)
 	require.NoError(t, err)
-
-	data, err := json.Marshal(cp)
-	require.NoError(t, err)
-
 	var restored compiled.Prompt
 	require.NoError(t, json.Unmarshal(data, &restored))
 	assert.Equal(t, "agent", restored.ManifestID())
-	assert.Equal(t, prompty.ManifestDigestSHA256(raw), restored.ManifestDigest())
+	assert.Equal(t, descriptor.Digest, restored.ManifestDigest())
+	assert.Equal(t, compiled.DigestSourceCapturedSources, restored.DigestSource())
 }
 
-func TestFromRenderPlanCanonicalSnapshot_UsesCanonicalDigest(t *testing.T) {
+func TestPrompt_UnmarshalRejectsLegacyFormats(t *testing.T) {
 	t.Parallel()
-	tpl, err := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
-		{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .Input.q }}")},
-	}, prompty.WithMetadata(prompty.PromptMetadata{ID: "t"}))
-	require.NoError(t, err)
-
-	plan, err := prompty.NewRenderPlanFromStruct(tpl, struct {
-		Q string `prompt:"q"`
-	}{Q: "x"})
-	require.NoError(t, err)
-	cp, err := compiled.FromRenderPlanCanonicalSnapshot(context.Background(), plan, "t")
-	require.NoError(t, err)
-	assert.Equal(t, compiled.DigestSourceCanonicalSnapshot, cp.DigestSource())
-	assert.NotEmpty(t, cp.ManifestDigest())
-}
-
-func TestPrompt_UnmarshalRejectsFormatVersion1(t *testing.T) {
-	t.Parallel()
-	const v1Wire = `{"format_version":1,"manifest_id":"a","manifest_digest":"d",` +
-		`"digest_source":"manifest_bytes","execution":{"messages":[]}}`
-	err := json.Unmarshal([]byte(v1Wire), new(compiled.Prompt))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "format_version")
+	for _, wire := range []string{
+		`{"format_version":1,"manifest_id":"a","manifest_digest":"d","digest_source":"manifest_bytes","execution":{"messages":[]}}`,
+		`{"format_version":2,"manifest_id":"a","manifest_digest":"d","digest_source":"canonical_snapshot","execution":{"messages":[]}}`,
+	} {
+		err := json.Unmarshal([]byte(wire), new(compiled.Prompt))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "format_version")
+	}
 }
 
 func TestPrompt_RoundTripProvenanceAndCachePolicy(t *testing.T) {
 	t.Parallel()
-	cache := &prompty.CachePolicy{Type: "ephemeral"}
-	exec := prompty.NewExecution([]prompty.ChatMessage{{
-		Role: prompty.RoleSystem,
-		Content: []prompty.ContentPart{
-			prompty.TextPart{Text: "hi", CachePolicy: cache},
-		},
-		CachePolicy: cache,
-		Provenance:  &prompty.MessageProvenance{LayerID: "rules", ManifestID: "agent"},
-	}})
-	raw := []byte("id: agent\n")
-	cp, err := compiled.New(exec, "agent", raw)
+	cache := &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker}
+	content := []any{map[string]any{"type": "text", "text": "hi", "cache_policy": cache}}
+	layer := map[string]any{"id": "rules", "role": "system", "cache_policy": cache, "content": content}
+	prompt, _ := capturedTestPrompt(t, map[string]any{"id": "agent", "layers": []any{layer}})
+	data, err := json.Marshal(prompt)
 	require.NoError(t, err)
-
-	data, err := json.Marshal(cp)
-	require.NoError(t, err)
-
 	var restored compiled.Prompt
 	require.NoError(t, json.Unmarshal(data, &restored))
-	restoredExec := restored.PromptExecution()
-	require.Len(t, restoredExec.Messages, 1)
-	require.NotNil(t, restoredExec.Messages[0].Provenance)
-	assert.Equal(t, "rules", restoredExec.Messages[0].Provenance.LayerID)
-	require.NotNil(t, restoredExec.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", restoredExec.Messages[0].CachePolicy.Type)
+	execution := restored.PromptExecution()
+	require.Len(t, execution.Messages, 1)
+	require.NotNil(t, execution.Messages[0].Provenance)
+	assert.Equal(t, "rules", execution.Messages[0].Provenance.LayerID)
+	require.NotNil(t, execution.Messages[0].CachePolicy)
+	assert.Equal(t, prompty.CacheBlockMarker, execution.Messages[0].CachePolicy.Mechanism)
 }
 
 func TestPrompt_ExecutionCloneIsImmutable(t *testing.T) {
 	t.Parallel()
-	exec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")})
-	cp, err := compiled.New(exec, "agent", []byte("id: agent\n"))
-	require.NoError(t, err)
-
-	got := cp.PromptExecution()
-	got.Messages[0].Content = []prompty.ContentPart{prompty.TextPart{Text: "mutated"}}
-	assert.Equal(t, "hi", cp.PromptExecution().Messages[0].Content[0].(prompty.TextPart).Text)
+	prompt, _ := capturedTestPrompt(t, plainSource())
+	cloned := prompt.PromptExecution()
+	cloned.Messages[0].Content = []prompty.ContentPart{prompty.TextPart{Text: "mutated"}}
+	assert.Equal(t, "hi", prompt.PromptExecution().Messages[0].Content[0].(prompty.TextPart).Text)
 }
 
 func TestPrompt_MarshalIncludesFormatVersion(t *testing.T) {
 	t.Parallel()
-	exec := prompty.NewExecution([]prompty.ChatMessage{prompty.NewUserMessage("hi")})
-	tpl, err := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{
-		{Role: prompty.RoleUser, Content: prompty.TextContent("{{ .Input.q }}")},
-	}, prompty.WithMetadata(prompty.PromptMetadata{ID: "agent"}))
+	prompt, _ := capturedTestPrompt(t, plainSource())
+	data, err := json.Marshal(prompt)
 	require.NoError(t, err)
-	cp, err := compiled.NewWithCanonicalSnapshot(exec, "agent", tpl)
-	require.NoError(t, err)
-
-	data, err := json.Marshal(cp)
-	require.NoError(t, err)
-
 	var wire map[string]any
 	require.NoError(t, json.Unmarshal(data, &wire))
-	assert.InDelta(t, 2, wire["format_version"], 0)
+	assert.InDelta(t, 3, wire["format_version"], 0)
 }

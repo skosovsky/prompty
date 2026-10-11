@@ -1,6 +1,6 @@
 # Git registry for prompty
 
-Provides a `remoteregistry.Fetcher` that reads YAML prompt manifests from a Git repository. The repo is cloned (or pulled if already present) on first use; you pass this Fetcher to `remoteregistry.New` to get a stateless registry and optionally wrap it with `remoteregistry.WithCache`.
+Provides a `remoteregistry.Fetcher` that reads YAML/JSON prompt manifests from a Git repository. The repo is cloned (or pulled if already present) on first use; you pass this Fetcher to `remoteregistry.New` to get a stateless registry and optionally wrap it with `remoteregistry.WithCache`.
 
 ## Install
 
@@ -15,7 +15,7 @@ go get github.com/skosovsky/prompty/remoteregistry/git
 
 ## Capabilities
 
-- **Usage:** `git.NewFetcher(repoURL, opts...)` returns a `*git.Fetcher` implementing `remoteregistry.Fetcher`. Pass it to `remoteregistry.New(fetcher, opts...)` to get a `prompty.Registry`. Resolve templates by id; manifest resolution is `{dir}/{id}.yaml` or `{dir}/{id}.yml` (see `WithDir`).
+- **Usage:** `git.NewFetcher(repoURL, opts...)` returns a `*git.Fetcher` implementing `remoteregistry.Fetcher`. Pass it to `remoteregistry.New(fetcher, opts...)` to get a `prompty.Registry`. Resolve templates by id; manifest resolution is `{dir}/{id}.yaml`, `.yml` or `.json` (see `WithDir`).
 - **Clone behavior:** on first `Fetch`, the repo is cloned (or opened and pulled if `WithCloneDir` was used and the directory already contains a clone). Shallow clone by default (depth 1); use `WithDepth(0)` for a full clone.
 - **Options:**
   - `WithBranch(branch)` — branch to clone/pull (default `main`).
@@ -26,3 +26,10 @@ go get github.com/skosovsky/prompty/remoteregistry/git
 - **Resources:** call `Close()` on the Fetcher (or the registry that holds it) to release the clone. When not using `WithCloneDir`, the temporary clone is removed on `Close()`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/remoteregistry/git) for the full API.
+
+Persistent checkouts must match the configured branch and sole origin URL exactly
+before refresh/credential use. A file:// reference to that same checkout needs no
+origin and selects frozen local data. Detached or foreign checkouts reject; the
+host reconciles them explicitly. WithDir admits only the root or relative slash
+paths without parent/empty segments. Trusted working-tree symlinks remain outside
+any sandbox promise. Mutable refresh failures return errors; no stale fallback.

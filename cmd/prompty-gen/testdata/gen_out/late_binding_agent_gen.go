@@ -3,6 +3,7 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,11 +13,57 @@ import (
 const LateBindingAgent PromptID = "late_binding_agent"
 
 type LateBindingAgentInput struct {
-	UserQuery string `json:"user_query" prompt:"user_query" validate:"required"`
+	UserQuery string `json:"user_query" prompt:"user_query"`
+}
+
+func (value LateBindingAgentInput) JSONSchema() prompty.JSONDocument {
+	return prompty.JSONDocument("{\"properties\":{\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}")
+}
+
+func (value LateBindingAgentInput) ValidateSchema() error {
+	return prompty.ValidateSchemaValue(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}"), Dialect: ""}, value)
+}
+
+func (value *LateBindingAgentInput) UnmarshalJSON(document []byte) error {
+	if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}"), Dialect: ""}, document); err != nil {
+		return err
+	}
+	type decodedValue LateBindingAgentInput
+	var decoded decodedValue
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = LateBindingAgentInput(decoded)
+	return nil
 }
 
 type LateBindingAgentLateInput struct {
-	PatientDossier *string `json:"patient_dossier,omitempty" prompt:"patient_dossier"`
+	PatientDossier *string `json:"patient_dossier,omitempty" prompt:"patient_dossier,omitempty"`
+}
+
+func (value LateBindingAgentLateInput) JSONSchema() prompty.JSONDocument {
+	return prompty.JSONDocument("{\"properties\":{\"patient_dossier\":{\"type\":\"string\"}},\"type\":\"object\"}")
+}
+
+func (value LateBindingAgentLateInput) ValidateSchema() error {
+	return prompty.ValidateSchemaValue(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"patient_dossier\":{\"type\":\"string\"}},\"type\":\"object\"}"), Dialect: ""}, value)
+}
+
+func (value *LateBindingAgentLateInput) UnmarshalJSON(document []byte) error {
+	if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"patient_dossier\":{\"type\":\"string\"}},\"type\":\"object\"}"), Dialect: ""}, document); err != nil {
+		return err
+	}
+	type decodedValue LateBindingAgentLateInput
+	var decoded decodedValue
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = LateBindingAgentLateInput(decoded)
+	return nil
 }
 
 type LateBindingAgentPrompt struct {
@@ -32,7 +79,7 @@ func NewLateBindingAgentRecipeFromCheckpoint(checkpoint prompty.PromptRecipeChec
 		return LateBindingAgentRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(LateBindingAgent), checkpoint.Descriptor.ID)
 	}
 	input := checkpoint.Input
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return LateBindingAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {
@@ -86,11 +133,11 @@ func (r LateBindingAgentRecipe) BindLate(input LateBindingAgentLateInput) (LateB
 	return LateBindingAgentRecipe{inner: inner}, nil
 }
 
-func (r LateBindingAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r LateBindingAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r LateBindingAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 
@@ -102,7 +149,7 @@ func (p *LateBindingAgentPrompt) newRecipe(ctx context.Context, input LateBindin
 	if p.registry == nil {
 		return LateBindingAgentRecipe{}, fmt.Errorf("%s recipe requires registry", string(LateBindingAgent))
 	}
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return LateBindingAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {

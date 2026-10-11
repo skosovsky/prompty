@@ -3,14 +3,13 @@ package prompty
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecuteWithStructuredOutput_InvalidJSONReturnsValidationError(t *testing.T) {
+func TestExecuteWithStructuredOutput_InvalidJSONReturnsDecodeError(t *testing.T) {
 	t.Parallel()
 
 	type result struct {
@@ -40,12 +39,8 @@ func TestExecuteWithStructuredOutput_InvalidJSONReturnsValidationError(t *testin
 	require.NotNil(t, seen[0].ResponseFormat)
 
 	var valErr *ValidationError
-	require.ErrorAs(t, err, &valErr)
-	require.NotNil(t, valErr.RawAssistantMessage)
-	assert.Equal(t, RoleAssistant, valErr.RawAssistantMessage.Role)
-	assert.Equal(t, `{invalid`, mustTextFromParts(t, valErr.RawAssistantMessage.Content))
-	assert.Contains(t, valErr.FeedbackPrompt, "JSON validation failed:")
-	assert.Contains(t, valErr.FeedbackPrompt, "Please fix your output.")
+	require.NotErrorAs(t, err, &valErr)
+	require.ErrorIs(t, err, ErrSchemaJSONDecode)
 }
 
 func TestExecuteWithStructuredOutput_SemanticValidationReturnsValidationError(t *testing.T) {
@@ -192,12 +187,8 @@ func TestExecuteWithStructuredOutput_RejectsJSONFenceWithPrefixAndSuffix(t *test
 	require.Nil(t, result)
 	require.Error(t, err)
 	var valErr *ValidationError
-	require.ErrorAs(t, err, &valErr)
-	assert.True(t,
-		strings.Contains(valErr.Err.Error(), "markdown code fences are not supported") ||
-			strings.Contains(valErr.Err.Error(), "looking for beginning of value"),
-		valErr.Err.Error(),
-	)
+	require.NotErrorAs(t, err, &valErr)
+	require.ErrorIs(t, err, ErrSchemaJSONDecode)
 }
 
 func TestExecuteWithStructuredOutput_RejectsGenericFence(t *testing.T) {
@@ -214,12 +205,8 @@ func TestExecuteWithStructuredOutput_RejectsGenericFence(t *testing.T) {
 	require.Nil(t, result)
 	require.Error(t, err)
 	var valErr *ValidationError
-	require.ErrorAs(t, err, &valErr)
-	assert.True(t,
-		strings.Contains(valErr.Err.Error(), "markdown code fences are not supported") ||
-			strings.Contains(valErr.Err.Error(), "looking for beginning of value"),
-		valErr.Err.Error(),
-	)
+	require.NotErrorAs(t, err, &valErr)
+	require.ErrorIs(t, err, ErrSchemaJSONDecode)
 }
 
 func TestExecuteWithStructuredOutput_AcceptsBackticksInsideJSONString(t *testing.T) {

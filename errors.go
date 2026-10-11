@@ -35,6 +35,8 @@ var (
 	)
 	// ErrManifestBytesUnavailable indicates the registry cannot supply raw manifest bytes.
 	ErrManifestBytesUnavailable = errors.New("prompty: manifest bytes unavailable from registry")
+	// ErrRegistryCapabilityUnavailable indicates an optional registry operation is unsupported.
+	ErrRegistryCapabilityUnavailable = errors.New("prompty: registry capability unavailable")
 	// ErrManifestBytesRequired indicates compile requires raw manifest bytes (strict default).
 	ErrManifestBytesRequired = errors.New("prompty: manifest bytes required for compiled prompt digest")
 	// ErrManifestDigestMismatch indicates checkpoint digest does not match current manifest bytes.
@@ -58,6 +60,8 @@ type ValidationError struct {
 
 // ToolCallError is returned when model-generated tool arguments fail validation.
 type ToolCallError struct {
+	// Response retains the known model result when batch validation fails.
+	Response            *Response
 	RawAssistantMessage *ChatMessage
 	ToolResults         []ContentPart
 	Err                 error
@@ -145,3 +149,15 @@ func ValidateID(id string) error {
 	}
 	return nil
 }
+
+// ToolDispatchError retains a known model response that was not accepted for
+// tool execution. The host owns reconciliation and retry policy.
+type ToolDispatchError struct {
+	Response *Response
+	Err      error
+}
+
+func (e *ToolDispatchError) Error() string {
+	return fmt.Sprintf("typed tools: response not accepted: %v", e.Err)
+}
+func (e *ToolDispatchError) Unwrap() error { return e.Err }

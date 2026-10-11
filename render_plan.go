@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/skosovsky/prompty/internal/cast"
 	"github.com/skosovsky/prompty/internal/late"
 )
 
@@ -16,6 +17,7 @@ type renderContext struct {
 
 // RenderPlan is the deferred rendering contract for prompt execution.
 type RenderPlan struct {
+	sourceDescriptor    ManifestDescriptor
 	template            *ChatPromptTemplate
 	typedInput          any
 	lateVars            map[string]any
@@ -26,6 +28,7 @@ type RenderPlan struct {
 
 func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 	return &RenderPlan{
+		sourceDescriptor:    ManifestDescriptor{ID: "", Digest: ""},
 		template:            CloneTemplate(tpl),
 		typedInput:          typedInput,
 		lateVars:            map[string]any{},
@@ -36,7 +39,11 @@ func newRenderPlan(tpl *ChatPromptTemplate, typedInput any) *RenderPlan {
 }
 
 // NewRenderPlan builds a deferred render plan with no template input (.Input is empty).
+// It panics for a nil template. Use NewRenderPlanFromPlanInput for a checked constructor.
 func NewRenderPlan(tpl *ChatPromptTemplate) *RenderPlan {
+	if tpl == nil {
+		panic("render plan: template must not be nil")
+	}
 	return newRenderPlan(tpl, nil)
 }
 
@@ -52,8 +59,9 @@ func newRenderPlanFromMap(tpl *ChatPromptTemplate, vars map[string]any) *RenderP
 
 // boundPlanInput holds template-bound vars and optional chat history for rendering.
 type boundPlanInput struct {
-	vars    map[string]any
-	history []ChatMessage
+	vars          map[string]any
+	history       []ChatMessage
+	historyValues map[string]any
 }
 
 // NewRenderPlanFromStruct builds a render plan from a struct payload (template .Input fields).
@@ -77,8 +85,9 @@ func NewRenderPlanFromPlanInput(tpl *ChatPromptTemplate, input RegistryPlanInput
 		return nil, err
 	}
 	return newRenderPlan(tpl, &boundPlanInput{
-		vars:    cloneMapAny(input.boundVars),
-		history: cloneMessages(input.chatHistory),
+		vars:          cloneMapAny(input.boundVars),
+		history:       cloneMessages(input.chatHistory),
+		historyValues: cloneMapAny(input.historyValues),
 	}), nil
 }
 
@@ -184,7 +193,9 @@ func WithResponseFormatFromStruct[T any](p *RenderPlan) (*RenderPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("response format: %w", err)
 	}
-	return p.WithResponseFormatDefinition(&SchemaDefinition{Name: "", Description: "", Schema: doc})
+	return p.WithResponseFormatDefinition(
+		&SchemaDefinition{Name: "", Description: "", Schema: doc, Dialect: schemaDeclaredDialect(schemaMap)},
+	)
 }
 
 // Execute materializes plan into PromptExecution using `.Input` and `.LateVars` template context.
@@ -213,6 +224,9 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 	if lateErr := validateRequiredLateVars(p.template.InputSchema, lateVars, templateID); lateErr != nil {
 		return nil, lateErr
 	}
+	if schemaErr := validatePlanSchema(p.template, prepared, p.lateVars); schemaErr != nil {
+		return nil, schemaErr
+	}
 	ctxData := renderContext{
 		Input:    prepared.templateInput(),
 		LateVars: cloneMapAny(lateVars),
@@ -225,14 +239,13 @@ func (p *RenderPlan) Execute(ctx context.Context) (*PromptExecution, error) {
 	applyManifestProvenanceOnMessages(rendered, p.template.Metadata.ID)
 	exec.Messages = spliceHistory(rendered, cloneMessages(prepared.history))
 	p.applyRuntimeOverrides(exec)
-	if p.toolScope != nil {
+	exec.toolScope = cloneToolScopePtr(p.toolScope)
+	if scopeErr := ValidateExecutionToolScope(exec); scopeErr != nil {
 		desc := p.toolScopeDescriptor
 		if desc.ID == "" {
 			desc.ID = templateID
 		}
-		if err := ValidateExecutionManifestContract(exec, desc, toolScopeContract(*p.toolScope)); err != nil {
-			return nil, err
-		}
+		return nil, toolContractErr(desc, "", "execution boundary", scopeErr)
 	}
 	return exec, nil
 }
@@ -246,8 +259,15 @@ func (p *RenderPlan) ValidateRuntimeBindings() error {
 	if p.template != nil {
 		templateID = p.template.Metadata.ID
 	}
-	lateVars := ensureOptionalLateDefaults(p.template.InputSchema, p.lateVars)
-	return validateRequiredLateVars(p.template.InputSchema, lateVars, templateID)
+	prepared, err := p.prepareExecutionInput()
+	if err != nil {
+		return err
+	}
+	defer prepared.release()
+	if err := validateRequiredLateVars(p.template.InputSchema, p.lateVars, templateID); err != nil {
+		return err
+	}
+	return validatePlanSchema(p.template, prepared, p.lateVars)
 }
 
 func (p *RenderPlan) clone() *RenderPlan {
@@ -255,7 +275,10 @@ func (p *RenderPlan) clone() *RenderPlan {
 		return nil
 	}
 	out := &RenderPlan{
-		template:            CloneTemplate(p.template),
+		sourceDescriptor: p.sourceDescriptor,
+		// Constructors own this snapshot; all plan methods treat it read-only.
+		// Template() keeps the external defensive-copy boundary.
+		template:            p.template,
 		typedInput:          p.typedInput,
 		lateVars:            cloneMapAny(p.lateVars),
 		responseFormat:      cloneSchemaDefinition(p.responseFormat),
@@ -276,9 +299,10 @@ func (p *RenderPlan) applyRuntimeOverrides(exec *PromptExecution) {
 }
 
 type preparedInput struct {
-	input     any
-	history   []ChatMessage
-	mergedMap map[string]any
+	input         any
+	history       []ChatMessage
+	historyValues map[string]any
+	mergedMap     map[string]any
 }
 
 func (pi *preparedInput) release() {
@@ -303,25 +327,28 @@ func (p *RenderPlan) prepareExecutionInput() (*preparedInput, error) {
 	if p.typedInput == nil {
 		merged := mergeBoundVarsWithPartials(p.template, map[string]any{})
 		return &preparedInput{
-			input:     merged,
-			history:   nil,
-			mergedMap: merged,
+			input:         merged,
+			history:       nil,
+			historyValues: nil,
+			mergedMap:     merged,
 		}, nil
 	}
 	if bound, ok := p.typedInput.(*boundPlanInput); ok {
 		merged := mergeBoundVarsWithPartials(p.template, bound.vars)
 		return &preparedInput{
-			input:     merged,
-			history:   bound.history,
-			mergedMap: merged,
+			input:         merged,
+			history:       bound.history,
+			historyValues: bound.historyValues,
+			mergedMap:     merged,
 		}, nil
 	}
 	if inputMap, ok := p.typedInput.(map[string]any); ok {
 		merged := mergeBoundVarsWithPartials(p.template, cloneMapAny(inputMap))
 		return &preparedInput{
-			input:     merged,
-			history:   nil,
-			mergedMap: merged,
+			input:         merged,
+			history:       nil,
+			historyValues: nil,
+			mergedMap:     merged,
 		}, nil
 	}
 	return nil, ErrInvalidPayload
@@ -341,6 +368,18 @@ func validateRequiredInputVars(tpl *ChatPromptTemplate, input map[string]any) er
 		}
 		props, _ := doc["properties"].(map[string]any)
 		required = late.FilterEarlyRequired(required, props)
+		schemaRequired, _ := cast.ToStringSlice(doc["required"])
+		requiredSet := make(map[string]bool, len(schemaRequired))
+		for _, name := range schemaRequired {
+			requiredSet[name] = true
+		}
+		filtered := required[:0]
+		for _, name := range required {
+			if _, declared := props[name]; !declared || requiredSet[name] {
+				filtered = append(filtered, name)
+			}
+		}
+		required = filtered
 	}
 	for _, name := range required {
 		if _, ok := merged[name]; ok {
@@ -368,4 +407,21 @@ func applyManifestProvenanceOnMessages(messages []ChatMessage, manifestID string
 			messages[i].Provenance.ManifestID = manifestID
 		}
 	}
+}
+
+// Validate the actual bindings before adding rendering-only optional defaults.
+func validatePlanSchema(template *ChatPromptTemplate, prepared *preparedInput, lateVars map[string]any) error {
+	if template == nil || template.InputSchema == nil {
+		return nil
+	}
+	values := make(map[string]any)
+	if input, ok := prepared.input.(map[string]any); ok {
+		maps.Copy(values, input)
+	}
+	maps.Copy(values, lateVars)
+	maps.Copy(values, prepared.historyValues)
+	if err := ValidateSchemaValue(template.InputSchema, values); err != nil {
+		return fmt.Errorf("input schema: %w", err)
+	}
+	return nil
 }

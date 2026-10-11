@@ -12,6 +12,7 @@ import (
 
 type cacheEntry struct {
 	tpl       *prompty.ChatPromptTemplate
+	snapshot  *prompty.ManifestSnapshot
 	expiresAt time.Time
 }
 
@@ -20,7 +21,7 @@ type inflightFetch struct {
 	cancel  context.CancelFunc
 	waiters int
 	done    chan struct{}
-	tpl     *prompty.ChatPromptTemplate
+	entry   *cacheEntry
 	err     error
 }
 
@@ -59,10 +60,10 @@ func (r *CachedRegistry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 	return r.ttl <= 0 || now.Before(ent.expiresAt)
 }
 
-func (r *CachedRegistry) loadTemplate(
+func (r *CachedRegistry) loadMaterial(
 	ctx context.Context,
 	id string,
-) (*prompty.ChatPromptTemplate, error) {
+) (*cacheEntry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -71,9 +72,9 @@ func (r *CachedRegistry) loadTemplate(
 	r.mu.RLock()
 	ent, ok := r.cache[id]
 	if ok && r.cacheEntryValid(ent, now) {
-		tpl := prompty.CloneTemplate(ent.tpl)
+		entry := ent
 		r.mu.RUnlock()
-		return tpl, nil
+		return entry, nil
 	}
 	r.mu.RUnlock()
 
@@ -81,9 +82,9 @@ func (r *CachedRegistry) loadTemplate(
 	now = time.Now()
 	ent, ok = r.cache[id]
 	if ok && r.cacheEntryValid(ent, now) {
-		tpl := prompty.CloneTemplate(ent.tpl)
+		entry := ent
 		r.mu.Unlock()
-		return tpl, nil
+		return entry, nil
 	}
 
 	if inFlight, exists := r.inflight[id]; exists {
@@ -98,7 +99,7 @@ func (r *CachedRegistry) loadTemplate(
 		cancel:  cancel,
 		waiters: 1,
 		done:    make(chan struct{}),
-		tpl:     nil,
+		entry:   nil,
 		err:     nil,
 	}
 	r.inflight[id] = inFlight
@@ -110,6 +111,9 @@ func (r *CachedRegistry) loadTemplate(
 
 // ReadManifestBytes delegates to the base registry when supported.
 func (r *CachedRegistry) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if reader, ok := r.base.(prompty.ManifestBytesReader); ok {
 		return reader.ReadManifestBytes(ctx, id)
 	}
@@ -118,36 +122,55 @@ func (r *CachedRegistry) ReadManifestBytes(ctx context.Context, id string) ([]by
 
 // DescribePrompt delegates introspection to the base registry when it implements PromptDescriber.
 func (r *CachedRegistry) DescribePrompt(ctx context.Context, id string) (prompty.TemplateDescriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
 	if d, ok := r.base.(prompty.PromptDescriber); ok {
 		return d.DescribePrompt(ctx, id)
 	}
-	return prompty.TemplateDescriptor{}, errors.New(
-		"remoteregistry: base registry does not implement PromptDescriber",
-	)
+	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: DescribePrompt", prompty.ErrRegistryCapabilityUnavailable)
 }
 
-// RecommendManifestDescriptor delegates checkpoint recommendation to the base registry when supported.
+// CaptureManifest selects one cached immutable generation.
+func (r *CachedRegistry) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, ok := r.base.(prompty.ManifestSnapshotRegistry); !ok {
+		return nil, fmt.Errorf("%w: CaptureManifest", prompty.ErrRegistryCapabilityUnavailable)
+	}
+	entry, err := r.loadMaterial(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if entry.snapshot == nil {
+		return nil, errors.New("remoteregistry: missing source snapshot")
+	}
+	return entry.snapshot, nil
+}
+
+// RecommendManifestDescriptor uses the same TTL generation as Plan.
 func (r *CachedRegistry) RecommendManifestDescriptor(
 	ctx context.Context,
 	id string,
 ) (prompty.ManifestDescriptor, error) {
-	if reg, ok := r.base.(prompty.ManifestCheckpointRegistry); ok {
-		return reg.RecommendManifestDescriptor(ctx, id)
+	snapshot, err := r.CaptureManifest(ctx, id)
+	if err != nil {
+		return prompty.ManifestDescriptor{}, err
 	}
-	return prompty.ManifestDescriptor{}, errors.New(
-		"remoteregistry: base registry does not support RecommendManifestDescriptor",
-	)
+	return snapshot.Descriptor(), nil
 }
 
-// VerifyManifestDescriptor delegates checkpoint verification to the base registry when supported.
-func (r *CachedRegistry) VerifyManifestDescriptor(
-	ctx context.Context,
-	desc prompty.ManifestDescriptor,
-) error {
-	if reg, ok := r.base.(prompty.ManifestCheckpointRegistry); ok {
-		return reg.VerifyManifestDescriptor(ctx, desc)
+// VerifyManifestDescriptor compares against the generation selected by cache policy.
+func (r *CachedRegistry) VerifyManifestDescriptor(ctx context.Context, desc prompty.ManifestDescriptor) error {
+	snapshot, err := r.CaptureManifest(ctx, desc.ID)
+	if err != nil {
+		return err
 	}
-	return errors.New("remoteregistry: base registry does not support VerifyManifestDescriptor")
+	if snapshot.Descriptor() != desc {
+		return fmt.Errorf("%w: %q", prompty.ErrManifestDigestMismatch, desc.ID)
+	}
+	return nil
 }
 
 var _ prompty.ManifestCheckpointRegistry = (*CachedRegistry)(nil)
@@ -158,102 +181,64 @@ func (r *CachedRegistry) ResolveManifest(
 	id string,
 	opts ...prompty.ResolveManifestOption,
 ) (prompty.TemplateDescriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateDescriptor{}, err
+	}
 	if resolver, ok := r.base.(prompty.ManifestResolver); ok {
 		return resolver.ResolveManifest(ctx, id, opts...)
 	}
-	return prompty.TemplateDescriptor{}, errors.New(
-		"remoteregistry: base registry does not implement ManifestResolver",
-	)
+	return prompty.TemplateDescriptor{}, fmt.Errorf("%w: ResolveManifest", prompty.ErrRegistryCapabilityUnavailable)
 }
 
-// Plan returns a deferred render plan. Compose manifests and explicit runtime compose values bypass template cache.
+// Plan uses the complete cached bundle; runtime values are evaluated within it.
 func (r *CachedRegistry) Plan(
 	ctx context.Context,
 	id string,
 	input prompty.RegistryPlanInput,
 ) (*prompty.RenderPlan, error) {
-	if r.shouldBypassTemplateCache(ctx, id, input) {
+	if _, ok := r.base.(prompty.ManifestSnapshotRegistry); !ok && input.ComposeValues().IsSet() {
 		return r.base.Plan(ctx, id, input)
 	}
-	tpl, err := r.loadTemplate(ctx, id)
+	entry, err := r.loadMaterial(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return prompty.NewRenderPlanFromPlanInput(tpl, input)
-}
-
-type composeCacheHint interface {
-	KnownManifestUsesCompose(id string) (bool, bool)
-}
-
-func (r *CachedRegistry) shouldBypassTemplateCache(
-	ctx context.Context,
-	id string,
-	input prompty.RegistryPlanInput,
-) bool {
-	if input.ComposeValues().IsSet() {
-		return true
+	if entry.snapshot != nil {
+		return entry.snapshot.Plan(ctx, input)
 	}
-	if hint, ok := r.base.(composeCacheHint); ok {
-		if known, ok := hint.KnownManifestUsesCompose(id); ok && known {
-			return true
-		}
-	}
-	if checker, ok := r.base.(prompty.ManifestComposeChecker); ok {
-		uses, err := checker.ManifestUsesComposeE(ctx, id)
-		if err != nil {
-			return true // conservative bypass on corrupt peek
-		}
-		return uses
-	}
-	return false
-}
-
-func (r *CachedRegistry) manifestUsesCompose(ctx context.Context, id string) bool {
-	if hint, ok := r.base.(composeCacheHint); ok {
-		if known, ok := hint.KnownManifestUsesCompose(id); ok && known {
-			return true
-		}
-	}
-	if checker, ok := r.base.(prompty.ManifestComposeChecker); ok {
-		uses, err := checker.ManifestUsesComposeE(ctx, id)
-		if err != nil {
-			return true
-		}
-		return uses
-	}
-	return false
+	return prompty.NewRenderPlanFromPlanInput(entry.tpl, input)
 }
 
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	defer inFlight.cancel()
 
-	plan, err := r.base.Plan(inFlight.ctx, id, prompty.RegistryPlanInput{})
-	if err == nil {
-		tpl := plan.Template()
-		if tpl == nil {
-			err = fmt.Errorf("remoteregistry: unexpected nil template for id %q", id)
-		} else {
-			inFlight.tpl = prompty.CloneTemplate(tpl)
+	entry := &cacheEntry{tpl: nil, snapshot: nil, expiresAt: time.Time{}}
+	var err error
+	if source, ok := r.base.(prompty.ManifestSnapshotRegistry); ok {
+		entry.snapshot, err = source.CaptureManifest(inFlight.ctx, id)
+		if err == nil && (entry.snapshot == nil || entry.snapshot.Descriptor().ID != id) {
+			err = errors.New("remoteregistry: nil captured snapshot")
+		}
+	} else {
+		var plan *prompty.RenderPlan
+		plan, err = r.base.Plan(inFlight.ctx, id, prompty.RegistryPlanInput{})
+		if err == nil {
+			entry.tpl, err = cachedPlanTemplate(plan, id)
 		}
 	}
+	inFlight.entry = entry
 	inFlight.err = err
-
-	skipCache := false
-	if inFlight.err == nil {
-		skipCache = r.manifestUsesCompose(inFlight.ctx, id)
-	}
 
 	r.mu.Lock()
 	if current, exists := r.inflight[id]; exists && current == inFlight {
 		delete(r.inflight, id)
-		if inFlight.err == nil && !skipCache {
-			stored := prompty.CloneTemplate(inFlight.tpl)
+		if inFlight.err == nil {
 			expiresAt := time.Now().Add(r.ttl)
 			if r.ttl <= 0 {
 				expiresAt = time.Time{}
 			}
-			r.cache[id] = &cacheEntry{tpl: stored, expiresAt: expiresAt}
+			entry.expiresAt = expiresAt
+			r.cache[id] = entry
 		}
 	}
 	r.mu.Unlock()
@@ -265,7 +250,7 @@ func (r *CachedRegistry) waitForInflight(
 	ctx context.Context,
 	id string,
 	inFlight *inflightFetch,
-) (*prompty.ChatPromptTemplate, error) {
+) (*cacheEntry, error) {
 	defer r.releaseInflightWaiter(id, inFlight)
 
 	select {
@@ -274,28 +259,28 @@ func (r *CachedRegistry) waitForInflight(
 	case <-inFlight.done:
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if inFlight.err != nil {
 		return nil, inFlight.err
 	}
-	if inFlight.tpl == nil {
+	if inFlight.entry == nil {
 		return nil, fmt.Errorf("remoteregistry: unexpected nil template for id %q", id)
 	}
-	return prompty.CloneTemplate(inFlight.tpl), nil
+	return inFlight.entry, nil
 }
 
 func (r *CachedRegistry) releaseInflightWaiter(id string, inFlight *inflightFetch) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	current, exists := r.inflight[id]
-	if !exists || current != inFlight {
-		return
-	}
-
-	current.waiters--
-	if current.waiters <= 0 {
-		delete(r.inflight, id)
-		current.cancel()
+	inFlight.waiters--
+	if inFlight.waiters <= 0 {
+		if current := r.inflight[id]; current == inFlight {
+			delete(r.inflight, id)
+		}
+		inFlight.cancel()
 	}
 }
 
@@ -307,15 +292,18 @@ func (r *CachedRegistry) List(ctx context.Context) ([]string, error) {
 	if lister, ok := r.base.(prompty.Lister); ok {
 		return lister.List(ctx)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("%w: List", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // Stat proxies to base when supported.
 func (r *CachedRegistry) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	if statter, ok := r.base.(prompty.Statter); ok {
 		return statter.Stat(ctx, id)
 	}
-	return prompty.TemplateInfo{}, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
+	return prompty.TemplateInfo{}, fmt.Errorf("%w: Stat", prompty.ErrRegistryCapabilityUnavailable)
 }
 
 // Evict removes one entry from cache.
@@ -325,6 +313,7 @@ func (r *CachedRegistry) Evict(id string) {
 	}
 	r.mu.Lock()
 	delete(r.cache, id)
+	delete(r.inflight, id) // Existing waiters retain their detached generation.
 	r.mu.Unlock()
 }
 
@@ -332,6 +321,7 @@ func (r *CachedRegistry) Evict(id string) {
 func (r *CachedRegistry) EvictAll() {
 	r.mu.Lock()
 	r.cache = make(map[string]*cacheEntry)
+	r.inflight = make(map[string]*inflightFetch)
 	r.mu.Unlock()
 }
 
@@ -341,4 +331,11 @@ func (r *CachedRegistry) Close() error {
 		return c.Close()
 	}
 	return nil
+}
+
+func cachedPlanTemplate(plan *prompty.RenderPlan, id string) (*prompty.ChatPromptTemplate, error) {
+	if plan == nil || plan.Template() == nil {
+		return nil, fmt.Errorf("remoteregistry: nil template for %q", id)
+	}
+	return plan.Template(), nil
 }

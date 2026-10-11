@@ -7,7 +7,7 @@ layers:
   - id: cached_layer
     role: system
     cache_policy:
-      type: ephemeral
+      mechanism: block_marker
     content: "Cached system rules."
   - id: user_turn
     role: user

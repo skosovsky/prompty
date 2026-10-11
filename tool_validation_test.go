@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testing.T) {
+func TestExecuteWithTypedTools_InvalidToolCallReturnsToolCallError(t *testing.T) {
 	t.Parallel()
 
 	callNum := 0
@@ -25,7 +25,8 @@ func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testin
 	}
 
 	exec := SimplePrompt("hi")
-	result, err := ExecuteWithToolValidation(
+	exec.Tools = []ToolDefinition{{Name: "lookup"}}
+	result, err := ExecuteWithTypedTools(
 		context.Background(),
 		invoker,
 		exec,
@@ -55,7 +56,7 @@ func TestExecuteWithToolValidation_InvalidToolCallReturnsToolCallError(t *testin
 	assert.Equal(t, "city must be a string", part.Content[0].(TextPart).Text)
 }
 
-func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *testing.T) {
+func TestExecuteWithTypedTools_MultipleInvalidToolCallsReturnAllResults(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -67,10 +68,12 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(
+	exec := SimplePrompt("hi")
+	exec.Tools = []ToolDefinition{{Name: "lookup"}, {Name: "weather"}}
+	result, err := ExecuteWithTypedTools(
 		context.Background(),
 		invoker,
-		SimplePrompt("hi"),
+		exec,
 		stubToolInvoker{
 			validate: func(name string, _ string) error {
 				return errors.New(name + " invalid")
@@ -88,11 +91,11 @@ func TestExecuteWithToolValidation_MultipleInvalidToolCallsReturnAllResults(t *t
 	assert.Equal(t, "weather invalid", toolErr.ToolResults[1].(ToolResultPart).Content[0].(TextPart).Text)
 }
 
-func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
+func TestExecuteWithTypedTools_ValidToolCallInvokesHandler(t *testing.T) {
 	t.Parallel()
 
 	var invoked bool
-	tool, err := NewTypedTool("lookup", func(_ struct{}) (string, error) {
+	tool, err := NewTypedTool("lookup", func(_ context.Context, _ struct{}) (string, error) {
 		invoked = true
 		return "ok", nil
 	})
@@ -111,10 +114,12 @@ func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(
+	exec := SimplePrompt("hi")
+	exec.Tools = reg.Definitions()
+	result, err := ExecuteWithTypedTools(
 		context.Background(),
 		invoker,
-		SimplePrompt("hi"),
+		exec,
 		reg,
 	)
 	require.NoError(t, err)
@@ -125,7 +130,7 @@ func TestExecuteWithToolValidation_ValidToolCallInvokesHandler(t *testing.T) {
 	assert.Equal(t, RoleTool, result.Messages[2].Role)
 }
 
-func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testing.T) {
+func TestExecuteWithTypedTools_PlainTextResponseReturnsImmediately(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -134,7 +139,7 @@ func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testin
 		},
 	}
 
-	result, err := ExecuteWithToolValidation(
+	result, err := ExecuteWithTypedTools(
 		context.Background(),
 		invoker,
 		SimplePrompt("hi"),
@@ -145,7 +150,7 @@ func TestExecuteWithToolValidation_PlainTextResponseReturnsImmediately(t *testin
 	require.Len(t, result.Messages, 2)
 }
 
-func TestExecuteWithToolValidation_RequiresToolInvoker(t *testing.T) {
+func TestExecuteWithTypedTools_NilValidatorWithToolCall(t *testing.T) {
 	t.Parallel()
 
 	invoker := &scriptedInvoker{
@@ -156,28 +161,7 @@ func TestExecuteWithToolValidation_RequiresToolInvoker(t *testing.T) {
 		},
 	}
 
-	_, err := ExecuteWithToolValidation(
-		context.Background(),
-		invoker,
-		SimplePrompt("hi"),
-		toolValidatorFunc(func(string, string) error { return nil }),
-	)
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrToolInvokerRequired)
-}
-
-func TestExecuteWithToolValidation_NilValidatorWithToolCall(t *testing.T) {
-	t.Parallel()
-
-	invoker := &scriptedInvoker{
-		generate: func(_ context.Context, _ *PromptExecution) (*Response, error) {
-			return NewResponse([]ContentPart{
-				ToolCallPart{ID: "tool-1", Name: "lookup", Args: `{}`},
-			}), nil
-		},
-	}
-
-	_, err := ExecuteWithToolValidation(context.Background(), invoker, SimplePrompt("hi"), nil)
+	_, err := ExecuteWithTypedTools(context.Background(), invoker, SimplePrompt("hi"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool invoker is nil")
 }

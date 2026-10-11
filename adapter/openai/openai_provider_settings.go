@@ -17,7 +17,7 @@ func openAIProviderSettingKeys() []string {
 		"seed",
 		"logprobs",
 		"top_logprobs",
-		"reasoning_effort",
+		wireReasoningEffort,
 	}
 }
 
@@ -55,15 +55,15 @@ func applyOpenAIProviderSettings(params *openai.ChatCompletionNewParams, setting
 		}
 		params.TopLogprobs = openai.Int(int64(topLogprobs))
 	}
-	if raw, ok := settings["reasoning_effort"]; ok {
+	if raw, ok := settings[wireReasoningEffort]; ok {
 		effort, err := cast.ToString(raw)
 		if err != nil {
-			return false, adapter.ProviderSettingError("reasoning_effort", err)
+			return false, adapter.ProviderSettingError(wireReasoningEffort, err)
 		}
 		reasoningEffort, ok := parseReasoningEffort(effort)
 		if !ok {
 			return false, adapter.ProviderSettingError(
-				"reasoning_effort",
+				wireReasoningEffort,
 				fmt.Errorf("unsupported value %q", strings.TrimSpace(effort)),
 			)
 		}

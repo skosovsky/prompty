@@ -6,510 +6,264 @@ import (
 	"iter"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/ext/truncate"
 )
 
-type mockCounter struct {
-	count func(string) (int, error)
+type budgetUpstream struct {
+	handles  int
+	dispatch int
+	received *prompty.PromptExecution
+	mutate   bool
 }
 
-func (m *mockCounter) Count(text string) (int, error) {
-	if m.count != nil {
-		return m.count(text)
+func (s *budgetUpstream) Execute(_ context.Context, execution *prompty.PromptExecution) (*prompty.Response, error) {
+	s.dispatch++
+	s.received = execution
+	if s.mutate {
+		execution.Messages[0].Content[0] = prompty.TextPart{Text: "changed"}
 	}
-	return len(text) / 4, nil
+	return prompty.NewResponse([]prompty.ContentPart{prompty.TextPart{Text: "ok"}}), nil
 }
 
-func (m *mockCounter) CountMessage(msg prompty.ChatMessage) (int, error) {
-	return countMessageTokens(msg, m)
-}
-
-func countMessageTokens(msg prompty.ChatMessage, counter *mockCounter) (int, error) {
-	return countPartsTokens(msg.Content, counter)
-}
-
-func countPartsTokens(parts []prompty.ContentPart, counter *mockCounter) (int, error) {
-	total := 0
-	for _, part := range parts {
-		n, err := countPartTokens(part, counter)
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	return total, nil
-}
-
-func countPartTokens(part prompty.ContentPart, counter *mockCounter) (int, error) {
-	switch x := part.(type) {
-	case prompty.TextPart:
-		return counter.Count(x.Text)
-	case prompty.ReasoningPart:
-		return counter.Count(x.Text)
-	case prompty.ToolCallPart:
-		args := x.Args
-		if args == "" {
-			args = x.ArgsChunk
-		}
-		return counter.Count(args)
-	case prompty.ToolResultPart:
-		return countPartsTokens(x.Content, counter)
-	case prompty.MediaPart:
-		return 256, nil
-	case *prompty.TextPart:
-		if x == nil {
-			return 0, nil
-		}
-		return counter.Count(x.Text)
-	case *prompty.ReasoningPart:
-		if x == nil {
-			return 0, nil
-		}
-		return counter.Count(x.Text)
-	case *prompty.ToolCallPart:
-		if x == nil {
-			return 0, nil
-		}
-		args := x.Args
-		if args == "" {
-			args = x.ArgsChunk
-		}
-		return counter.Count(args)
-	case *prompty.ToolResultPart:
-		if x == nil {
-			return 0, nil
-		}
-		return countPartsTokens(x.Content, counter)
-	case *prompty.MediaPart:
-		if x != nil {
-			return 256, nil
-		}
-	}
-
-	return 0, nil
-}
-
-func TestWithTokenBudget_TrimsWhenOverLimit(t *testing.T) {
-	t.Parallel()
-	callCount := 0
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			callCount++
-			receivedExec = exec
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s) / 2, nil }}
-	mw := WithTokenBudget(10, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "system"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "user1"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{prompty.TextPart{Text: "assistant1"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "user2"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	assert.Equal(t, 1, callCount)
-	// Original exec unchanged (deep copy passed to next)
-	require.Len(t, exec.Messages, 4)
-	// Downstream receives trimmed copy: system (3) + user2 (2) = 5 tokens, under 10
-	require.Len(t, receivedExec.Messages, 2)
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-	assert.Equal(t, prompty.RoleUser, receivedExec.Messages[1].Role)
-	assert.Equal(t, "user2", receivedExec.Messages[1].Content[0].(prompty.TextPart).Text)
-}
-
-func TestWithTokenBudget_KeepsSystemMessage(t *testing.T) {
-	t.Parallel()
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			require.GreaterOrEqual(t, len(exec.Messages), 1)
-			assert.Equal(t, prompty.RoleSystem, exec.Messages[0].Role)
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s), nil }}
-	mw := WithTokenBudget(5, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "uuuuuuuu"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2, "original must be unmodified")
-	require.Len(t, receivedExec.Messages, 1, "downstream receives trimmed copy")
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-}
-
-func TestWithTokenBudget_KeepsDeveloperMessageOutsidePrefix(t *testing.T) {
-	t.Parallel()
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) {
-		switch s {
-		case "drop-me":
-			return 10, nil
-		default:
-			return 1, nil
-		}
-	}}
-	inv := WithTokenBudget(4, counter)(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "drop-me"}}},
-			{Role: prompty.RoleDeveloper, Content: []prompty.ContentPart{prompty.TextPart{Text: "dev-guard"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "keep-me"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.NotNil(t, receivedExec)
-	require.Len(t, receivedExec.Messages, 3)
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-	assert.Equal(t, prompty.RoleDeveloper, receivedExec.Messages[1].Role)
-	assert.Equal(t, prompty.RoleUser, receivedExec.Messages[2].Role)
-	assert.Equal(t, "keep-me", receivedExec.Messages[2].Content[0].(prompty.TextPart).Text)
-}
-
-func TestWithTokenBudget_NoTrimWhenUnderLimit(t *testing.T) {
-	t.Parallel()
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			require.Len(t, exec.Messages, 2)
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(_ string) (int, error) { return 1, nil }}
-	mw := WithTokenBudget(100, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "x"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "y"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2)
-}
-
-func TestWithTokenBudget_KeepsToolWithAssistant(t *testing.T) {
-	t.Parallel()
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			// Must have User, Assistant(tool_call), Tool - no orphan tool
-			roles := make([]string, len(exec.Messages))
-			for i, m := range exec.Messages {
-				roles[i] = string(m.Role)
-			}
-			assert.NotContains(t, roles, "tool", "tool without preceding assistant tool_call causes 400")
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s) / 2, nil }}
-	mw := WithTokenBudget(4, counter) // total ~5; budget 4 forces trim of first turn
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u1"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
-				prompty.ToolCallPart{ID: "c1", Name: "f", Args: "{}"},
-			}},
-			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{
-					ToolCallID: "c1",
-					Name:       "f",
-					Content:    []prompty.ContentPart{prompty.TextPart{Text: "r1"}},
-				},
-			}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u2"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 5, "original must be unmodified")
-	// Downstream receives trimmed: Turn 1 (user1+assistant+tool) removed; keep system + user2
-	require.Len(t, receivedExec.Messages, 2)
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-	assert.Equal(t, prompty.RoleUser, receivedExec.Messages[1].Role)
-}
-
-func TestWithTokenBudget_PropagatesCounterError(t *testing.T) {
-	t.Parallel()
-	countErr := errors.New("counter error")
-	counter := &mockCounter{count: func(string) (int, error) { return 0, countErr }}
-	mw := WithTokenBudget(10, counter)
-	inv := mw(
-		&invokerFunc{
-			generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) { return nil, nil }, //nolint:nilnil // Empty provider response is the behavior under test.
-		},
-	)
-
-	_, err := inv.Execute(context.Background(), &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "x"}}},
-		},
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, countErr)
-}
-
-func TestWithTokenBudget_ToolHeavyTurn_CountsArgsAndResult(t *testing.T) {
-	t.Parallel()
-	var receivedExec *prompty.PromptExecution
-	// Counter: 1 token per 2 chars. Large Args and ToolResult should contribute to budget.
-	// sys=2, u1=2, asst(tool_args)=5, tool(result)=5, u2=2 -> total 16. Budget 6 -> trim first turn.
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			require.Len(t, exec.Messages, 2, "system + user2 only; tool-heavy turn removed")
-			assert.Equal(t, prompty.RoleSystem, exec.Messages[0].Role)
-			assert.Equal(t, prompty.RoleUser, exec.Messages[1].Role)
-			// No orphan tool message
-			for _, m := range exec.Messages {
-				assert.NotEqual(t, prompty.RoleTool, m.Role)
-			}
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s) / 2, nil }}
-	mw := WithTokenBudget(6, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u1"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
-				prompty.ToolCallPart{ID: "c1", Name: "f", Args: `{"x":"long_args"}`},
-			}},
-			{Role: prompty.RoleTool, Content: []prompty.ContentPart{
-				prompty.ToolResultPart{
-					ToolCallID: "c1",
-					Name:       "f",
-					Content:    []prompty.ContentPart{prompty.TextPart{Text: "long_result"}},
-				},
-			}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u2"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 5, "original unchanged")
-	require.Len(t, receivedExec.Messages, 2)
-}
-
-func TestWithTokenBudget_CountsReasoningPart(t *testing.T) {
-	t.Parallel()
-	var receivedExec *prompty.PromptExecution
-	// ReasoningPart is counted. sys=1, u=1, asst(reasoning "chain"=5, text "ok"=2)=7 -> total 9.
-	// Budget 4. Turn-based trim removes entire turn (user+assistant) -> system only.
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s), nil }}
-	mw := WithTokenBudget(4, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "s"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "u"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{
-				prompty.ReasoningPart{Text: "chain"},
-				prompty.TextPart{Text: "ok"},
-			}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 3, "original unchanged")
-	require.Len(t, receivedExec.Messages, 1, "turn removed; system only fits budget 4")
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-}
-
-func TestWithTokenBudget_MediaPartCounted(t *testing.T) {
-	t.Parallel()
-	// MediaPart adds penalty (default 256). sys=1, u=1, img=256 -> 258. Budget 10 -> trim to sys only.
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) { return len(s), nil }}
-	mw := WithTokenBudget(10, counter) // default 256 per MediaPart
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "s"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{
-				prompty.TextPart{Text: "u"},
-				prompty.MediaPart{MediaType: "image", MIMEType: "image/png"},
-			}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	require.Len(t, exec.Messages, 2, "original unchanged")
-	require.Len(t, receivedExec.Messages, 1, "downstream trimmed: media-heavy turn exceeds budget")
-	assert.Equal(t, prompty.RoleSystem, receivedExec.Messages[0].Role)
-}
-
-func TestWithTokenBudget_BudgetMetWhenTurnIncludedBeforeBreak(t *testing.T) {
-	t.Parallel()
-	// Off-by-one fix: when total-turnTokens <= maxTokens, we must set trimEnd=end before break.
-	// Turn1=40, Turn2=20, total=100, budget=50. After removing Turn1: 60>50. Remove Turn2: 40<=50, done.
-	var receivedExec *prompty.PromptExecution
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			receivedExec = exec
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(s string) (int, error) {
-		switch s {
-		case "turn1":
-			return 40, nil
-		case "turn2":
-			return 20, nil
-		case "sys":
-			return 10, nil
-		default:
-			return 1, nil
-		}
-	}}
-	mw := WithTokenBudget(50, counter)
-	inv := mw(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{Role: prompty.RoleSystem, Content: []prompty.ContentPart{prompty.TextPart{Text: "sys"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "turn1"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{prompty.TextPart{Text: "turn1"}}},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "turn2"}}},
-			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{prompty.TextPart{Text: "turn2"}}},
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	// Must fit in 50: sys(10) + turn2(20) = 30. Both turns removed.
-	require.Len(t, receivedExec.Messages, 3, "sys + turn2 only; budget 50 must be met")
-	total := 0
-	for _, m := range receivedExec.Messages {
-		for _, p := range m.Content {
-			if t, ok := p.(prompty.TextPart); ok {
-				n, _ := counter.Count(t.Text)
-				total += n
-			}
-		}
-	}
-	require.LessOrEqual(t, total, 50, "trimmed total must fit budget")
-}
-
-func TestWithTokenBudget_DownstreamMutationDoesNotLeakToOriginal(t *testing.T) {
-	t.Parallel()
-
-	base := &invokerFunc{
-		generate: func(_ context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-			prompty.MustJSONDocumentAsMap(exec.Metadata.Extras)["trace"].(map[string]any)["env"] = "prod"
-			prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["trace"].(map[string]any)["id"] = "mutated"
-			exec.Messages[0].Content[0].(*prompty.TextPart).Text = "mutated"
-			return &prompty.Response{}, nil
-		},
-	}
-	counter := &mockCounter{count: func(_ string) (int, error) { return 1, nil }}
-	inv := WithTokenBudget(100, counter)(base)
-
-	exec := &prompty.PromptExecution{
-		Messages: []prompty.ChatMessage{
-			{
-				Role: prompty.RoleSystem,
-				Content: []prompty.ContentPart{
-					&prompty.TextPart{Text: "sys"},
-				},
-				Metadata: prompty.MustJSONDocumentFromMap(map[string]any{"trace": map[string]any{"id": "original"}}),
-			},
-			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
-		},
-		Metadata: prompty.PromptMetadata{
-			Extras: prompty.MustJSONDocumentFromMap(map[string]any{"trace": map[string]any{"env": "dev"}}),
-		},
-	}
-
-	_, err := inv.Execute(context.Background(), exec)
-	require.NoError(t, err)
-	assert.Equal(t, "dev", prompty.MustJSONDocumentAsMap(exec.Metadata.Extras)["trace"].(map[string]any)["env"])
-	assert.Equal(
-		t,
-		"original",
-		prompty.MustJSONDocumentAsMap(exec.Messages[0].Metadata)["trace"].(map[string]any)["id"],
-	)
-	assert.Equal(t, "sys", exec.Messages[0].Content[0].(*prompty.TextPart).Text)
-}
-
-type invokerFunc struct {
-	generate func(context.Context, *prompty.PromptExecution) (*prompty.Response, error)
-}
-
-func (i *invokerFunc) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-	return i.generate(ctx, exec)
-}
-
-func (i *invokerFunc) ExecuteStream(
+func (s *budgetUpstream) ExecuteStream(
 	ctx context.Context,
-	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		resp, err := i.generate(ctx, exec)
-		if err != nil {
-			yield(nil, err)
-			return
+	execution *prompty.PromptExecution,
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	s.handles++
+	return prompty.NewStream(ctx, mode, func(context.Context) iter.Seq2[*prompty.ResponseChunk, error] {
+		return func(yield func(*prompty.ResponseChunk, error) bool) {
+			s.dispatch++
+			s.received = execution
+			if s.mutate {
+				execution.Messages[0].Content[0] = prompty.TextPart{Text: "changed"}
+			}
+			yield(
+				&prompty.ResponseChunk{
+					Kind:     prompty.StreamFinish,
+					Outcome:  prompty.OutcomeCompleted,
+					Identity: prompty.StreamIdentity{PartIDs: []string{"text"}},
+					Content:  []prompty.ContentPart{prompty.TextPart{Text: "ok"}},
+				},
+				nil,
+			)
 		}
-		if resp != nil {
-			yield(&prompty.ResponseChunk{Content: resp.Content, IsFinished: true}, nil)
-		} else {
-			yield(&prompty.ResponseChunk{IsFinished: true}, nil)
+	})
+}
+func messageBudget(limit int) Options {
+	return Options{
+		Budget: truncate.Options{
+			Limit: limit,
+			Estimator: truncate.EstimatorFunc(
+				func(_ context.Context, execution *prompty.PromptExecution) (truncate.Estimate, error) {
+					return truncate.Estimate{
+						Tokens: len(execution.Messages),
+						Known:  true,
+						Scope:  truncate.ScopeMessages,
+					}, nil
+				},
+			),
+		},
+	}
+}
+func invoke(t *testing.T, invoker prompty.Invoker, execution *prompty.PromptExecution, mode prompty.StreamMode) error {
+	t.Helper()
+	if mode == "" {
+		_, err := invoker.Execute(t.Context(), execution)
+		return err
+	}
+	stream := invoker.ExecuteStream(t.Context(), execution, mode)
+	for range stream.Events() {
+	}
+	return stream.Status().Err
+}
+
+func TestBudgetFailureDoesNotCreateUpstreamRequest(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("estimate failed")
+	for _, mode := range []prompty.StreamMode{"", prompty.StreamNative, prompty.StreamBuffered} {
+		for _, test := range []struct {
+			name      string
+			options   Options
+			execution *prompty.PromptExecution
+			expected  error
+		}{
+			{"protected oversize", messageBudget(1), prompty.NewExecution([]prompty.ChatMessage{prompty.NewSystemMessage("sys"), prompty.NewUserMessage("latest")}), truncate.ErrBudgetUnsatisfied},
+			{"nil input", messageBudget(1), nil, truncate.ErrInvalidInput},
+			{"zero", messageBudget(0), prompty.SimplePrompt("current"), truncate.ErrInvalidBudget},
+			{"nil estimator", Options{Budget: truncate.Options{Limit: 1}}, prompty.SimplePrompt("current"), truncate.ErrInvalidBudget},
+			{"counter error", Options{Budget: truncate.Options{Limit: 1, Estimator: truncate.EstimatorFunc(func(context.Context, *prompty.PromptExecution) (truncate.Estimate, error) {
+				return truncate.Estimate{}, sentinel
+			})}, Advisory: true}, prompty.SimplePrompt("current"), sentinel},
+		} {
+			t.Run(test.name+string(mode), func(t *testing.T) {
+				t.Parallel()
+				// Arrange.
+				upstream := &budgetUpstream{}
+				invoker := WithTokenBudget(test.options)(upstream)
+				// Act.
+				err := invoke(t, invoker, test.execution, mode)
+				// Assert.
+				require.ErrorIs(t, err, test.expected)
+				require.Zero(t, upstream.handles)
+				require.Zero(t, upstream.dispatch)
+			})
 		}
 	}
+}
+
+func TestBudgetPolicySameAcrossSyncNativeBufferedAndOwned(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []prompty.StreamMode{"", prompty.StreamNative, prompty.StreamBuffered} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			// Arrange.
+			execution := prompty.NewExecution(
+				[]prompty.ChatMessage{
+					prompty.NewSystemMessage("sys"),
+					prompty.NewUserMessage("old"),
+					prompty.NewUserMessage("latest"),
+				},
+			)
+			original := execution.Clone()
+			upstream := &budgetUpstream{mutate: true}
+			var report truncate.Report
+			options := messageBudget(2)
+			options.Observe = func(_ context.Context, value truncate.Report) error { report = value; return nil }
+			invoker := WithTokenBudget(options)(upstream)
+			// Act.
+			err := invoke(t, invoker, execution, mode)
+			// Assert.
+			require.NoError(t, err)
+			require.Equal(t, 1, upstream.dispatch)
+			require.Len(t, upstream.received.Messages, 2)
+			require.Equal(t, []int{1}, report.Removed)
+			require.Equal(t, truncate.BudgetSatisfied, report.State)
+			require.Equal(t, original, execution)
+		})
+	}
+}
+
+func TestStreamBudgetPreservesLazySingleUseAndClose(t *testing.T) {
+	t.Parallel()
+	// Arrange.
+	upstream := &budgetUpstream{}
+	invoker := WithTokenBudget(messageBudget(1))(upstream)
+	// Act: creation has no provider dispatch, consumption dispatches once.
+	stream := invoker.ExecuteStream(t.Context(), prompty.SimplePrompt("current"), prompty.StreamNative)
+	require.Zero(t, upstream.dispatch)
+	for range stream.Events() {
+	}
+	for _, err := range stream.Events() {
+		require.ErrorIs(t, err, prompty.ErrStreamConsumed)
+	}
+	// Assert.
+	require.Equal(t, 1, upstream.dispatch)
+	closed := invoker.ExecuteStream(t.Context(), prompty.SimplePrompt("current"), prompty.StreamNative)
+	require.NoError(t, closed.Close())
+	for _, err := range closed.Events() {
+		require.ErrorIs(t, err, context.Canceled)
+	}
+	require.Equal(t, 1, upstream.dispatch)
+}
+
+func TestExplicitAdvisoryAndDisable(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []prompty.StreamMode{"", prompty.StreamNative, prompty.StreamBuffered} {
+		for _, disabled := range []bool{false, true} {
+			t.Run(string(mode), func(t *testing.T) {
+				t.Parallel()
+				// Arrange.
+				options := messageBudget(1)
+				options.Advisory = true
+				options.Budget.Disabled = disabled
+				var report truncate.Report
+				options.Observe = func(_ context.Context, value truncate.Report) error { report = value; return nil }
+				upstream := &budgetUpstream{}
+				invoker := WithTokenBudget(options)(upstream)
+				execution := prompty.NewExecution(
+					[]prompty.ChatMessage{prompty.NewSystemMessage("sys"), prompty.NewUserMessage("current")},
+				)
+				// Act.
+				err := invoke(t, invoker, execution, mode)
+				// Assert.
+				require.NoError(t, err)
+				require.Equal(t, 1, upstream.dispatch)
+				if disabled {
+					require.Equal(t, truncate.BudgetDisabled, report.State)
+					require.False(t, report.Before.Known)
+				} else {
+					require.Equal(t, truncate.BudgetUnsatisfied, report.State)
+				}
+			})
+		}
+	}
+}
+
+func TestObserverFailureAndCallerPolicySnapshot(t *testing.T) {
+	t.Parallel()
+	// Arrange.
+	sentinel := errors.New("observer failed")
+	upstream := &budgetUpstream{}
+	options := messageBudget(2)
+	options.Observe = func(context.Context, truncate.Report) error { return sentinel }
+	invoker := WithTokenBudget(options)(upstream)
+	// Act.
+	err := invoke(t, invoker, prompty.SimplePrompt("current"), "")
+	// Assert.
+	require.ErrorIs(t, err, sentinel)
+	require.Zero(t, upstream.dispatch)
+}
+
+func TestCallerProtectionIsCapturedAndDoesNotBypassBudget(t *testing.T) {
+	t.Parallel()
+	// Arrange: policy inputs are mutated after middleware construction.
+	boundary := 2
+	options := messageBudget(2)
+	options.Budget.Protection = truncate.Protection{
+		CurrentTurnStart: &boundary,
+		Protected:        []int{1},
+		Dependencies:     [][]int{{0, 1}},
+	}
+	upstream := &budgetUpstream{}
+	invoker := WithTokenBudget(options)(upstream)
+	options.Budget.Protection.Protected[0] = 99
+	options.Budget.Protection.Dependencies[0][0] = 99
+	boundary = 99
+	execution := prompty.NewExecution(
+		[]prompty.ChatMessage{
+			prompty.NewSystemMessage("sys"),
+			prompty.NewUserMessage("old"),
+			prompty.NewUserMessage("current"),
+		},
+	)
+	// Act.
+	err := invoke(t, invoker, execution, prompty.StreamNative)
+	// Assert: original captured protection, not the later invalid caller indices.
+	require.ErrorIs(t, err, truncate.ErrBudgetUnsatisfied)
+	require.Zero(t, upstream.handles)
+	require.Zero(t, upstream.dispatch)
+}
+
+func TestInvalidHistoryIsNotSilentlyDeleted(t *testing.T) {
+	t.Parallel()
+	// Arrange: malformed older history would otherwise be removable.
+	var invalid *prompty.TextPart
+	execution := prompty.NewExecution(
+		[]prompty.ChatMessage{
+			prompty.NewUserMessage("old"),
+			{Role: prompty.RoleAssistant, Content: []prompty.ContentPart{invalid}},
+			prompty.NewUserMessage("current"),
+		},
+	)
+	upstream := &budgetUpstream{}
+	invoker := WithTokenBudget(messageBudget(1))(upstream)
+	// Act.
+	err := invoke(t, invoker, execution, "")
+	// Assert.
+	require.ErrorIs(t, err, truncate.ErrInvalidInput)
+	require.Zero(t, upstream.dispatch)
 }

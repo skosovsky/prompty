@@ -147,14 +147,14 @@ func TestTypePurity_RenderPlanStrictMethodsOnly(t *testing.T) {
 	assert.False(t, ok, "WithResponseFormat(any) removed; use WithResponseFormatDefinition/FromStruct")
 }
 
-func TestTypePurity_ManifestCheckpointRegistryEmbedsRegistryAndBytesReader(t *testing.T) {
+func TestTypePurity_ManifestCheckpointRegistryEmbedsRegistryAndCapture(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeFor[ManifestCheckpointRegistry]()
 	require.Equal(t, reflect.Interface, typ.Kind())
 
 	methods := map[string]bool{
 		"Plan":                        false,
-		"ReadManifestBytes":           false,
+		"CaptureManifest":             false,
 		"RecommendManifestDescriptor": false,
 		"VerifyManifestDescriptor":    false,
 	}

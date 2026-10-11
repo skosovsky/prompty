@@ -119,7 +119,7 @@ func TestTranslate_WithTools(t *testing.T) {
 	assert.Equal(t, "Get weather", req.Tools[0].Function.Description)
 }
 
-func TestTranslate_WithForcedToolInstruction(t *testing.T) {
+func TestTranslate_ForcedToolRequiresNativeMapping(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -135,10 +135,9 @@ func TestTranslate_WithForcedToolInstruction(t *testing.T) {
 		ForcedTool: "get_weather",
 	}
 	req, err := a.Translate(exec)
-	require.NoError(t, err)
-	require.Len(t, req.Messages, 2)
-	assert.Equal(t, "system", req.Messages[0].Role)
-	assert.Contains(t, req.Messages[0].Content, `"get_weather"`)
+	require.ErrorIs(t, err, adapter.ErrUnsupportedCapability)
+	require.Nil(t, req)
+	require.Len(t, exec.Messages, 1)
 }
 
 func TestTranslate_ToolResult(t *testing.T) {
@@ -180,7 +179,7 @@ func TestTranslate_BatchedToolResults(t *testing.T) {
 					ToolCallID: "call_2",
 					Name:       "get_time",
 					Content:    []prompty.ContentPart{prompty.TextPart{Text: "12:00"}},
-					IsError:    true,
+					IsError:    false,
 				},
 			}},
 		},
@@ -546,7 +545,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Contains(t, tc.Args, "NYC")
 }
 
-func TestParseResponse_EmptyToolCallArgsFailsClosed(t *testing.T) {
+func TestParseResponse_EmptyToolCallArgs(t *testing.T) {
 	t.Parallel()
 	a := New()
 	resp := &api.ChatResponse{
@@ -560,9 +559,9 @@ func TestParseResponse_EmptyToolCallArgsFailsClosed(t *testing.T) {
 			}},
 		},
 	}
-	_, err := a.ParseResponse(resp)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
+	parsed, err := a.ParseResponse(resp)
+	require.NoError(t, err)
+	require.Equal(t, "{}", parsed.Content[0].(prompty.ToolCallPart).Args)
 }
 
 func TestParseResponse_InvalidType(t *testing.T) {
@@ -614,7 +613,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
-func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
+func TestTranslate_StructuredOutputRequiresKnownProfile(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -627,7 +626,7 @@ func TestTranslate_StructuredOutputNotSupported(t *testing.T) {
 	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrStructuredOutputNotSupported)
+	assert.ErrorIs(t, err, adapter.ErrUnknownProfile)
 }
 
 func TestParseStreamChunk_Text(t *testing.T) {

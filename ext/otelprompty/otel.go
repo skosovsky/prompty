@@ -1,133 +1,88 @@
-// Package otelprompty provides OpenTelemetry tracing middleware for prompty.
-// Use WithTracing to wrap an Invoker and record spans for Execute and ExecuteStream.
+// Package otelprompty records logical prompty operations with caller-owned OTel
+// tracing. Default telemetry excludes content, identifiers, URLs and error text.
 package otelprompty
 
 import (
 	"context"
-	"iter"
-	"time"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/prompty"
 )
 
-const tracerName = "github.com/skosovsky/prompty/ext/otelprompty"
-
-// WithTracing returns a Middleware that records spans for each invocation.
-// Uses the global tracer provider; call otel.SetTracerProvider before use if needed.
+// WithTracing observes one logical invocation, not physical SDK attempts.
 func WithTracing(opts ...Option) prompty.Middleware {
-	cfg := &config{tracerName: tracerName}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-	tracer := otel.Tracer(cfg.tracerName)
-	return func(next prompty.Invoker) prompty.Invoker {
-		return &tracingInvoker{next: next, tracer: tracer}
-	}
-}
-
-type config struct {
-	tracerName string
-}
-
-// Option configures WithTracing.
-type Option func(*config)
-
-// WithTracerName sets the tracer name. Default is the package path.
-func WithTracerName(name string) Option {
-	return func(c *config) { c.tracerName = name }
+	cfg := resolveConfig(opts)
+	return func(next prompty.Invoker) prompty.Invoker { return &tracingInvoker{next: next, cfg: cfg} }
 }
 
 type tracingInvoker struct {
-	next   prompty.Invoker
-	tracer trace.Tracer
+	next prompty.Invoker
+	cfg  *config
 }
 
 func (t *tracingInvoker) Execute(ctx context.Context, exec *prompty.PromptExecution) (*prompty.Response, error) {
-	ctx, span := t.tracer.Start(ctx, "prompty.Execute")
-	defer span.End()
-	attrs := execAttrs(exec)
-	span.SetAttributes(attrs...)
-	start := time.Now()
-	defer func() {
-		span.SetAttributes(attribute.Int64("prompty.latency_ms", time.Since(start).Milliseconds()))
-	}()
-	resp, err := t.next.Execute(ctx, exec)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-	if resp != nil {
-		if resp.Usage.TotalTokens > 0 {
-			span.SetAttributes(attribute.Int("prompty.tokens_total", resp.Usage.TotalTokens))
-		}
-		if resp.FinishReason != "" {
-			span.SetAttributes(attribute.String("prompty.finish_reason", resp.FinishReason))
+	obs := invocationObservation(exec)
+	spanCtx, span := begin(ctx, t.cfg, obs)
+	defer span.finishOnReturn(&obs)
+	if exec != nil {
+		if err := prompty.ValidateExecutionToolScope(exec); err != nil {
+			obs.Err = err
+			obs.ErrorCategory = "preflight_rejection"
+			return nil, err
 		}
 	}
-	return resp, nil
+	resp, err := t.next.Execute(spanCtx, exec)
+	obs.Response, obs.Err = resp, err
+	return resp, err
 }
 
 func (t *tracingInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		streamCtx, span := t.tracer.Start(ctx, "prompty.ExecuteStream")
-		defer span.End()
-		attrs := execAttrs(exec)
-		span.SetAttributes(attrs...)
-		start := time.Now()
-		var totalTokens int
-		var finishReason string
-		defer func() {
-			span.SetAttributes(attribute.Int64("prompty.latency_ms", time.Since(start).Milliseconds()))
-			if totalTokens > 0 {
-				span.SetAttributes(attribute.Int("prompty.tokens_total", totalTokens))
-			}
-			if finishReason != "" {
-				span.SetAttributes(attribute.String("prompty.finish_reason", finishReason))
-			}
-		}()
-		seq := t.next.ExecuteStream(streamCtx, exec)
-		for chunk, err := range seq {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			recordStreamUsage(chunk, &totalTokens, &finishReason)
-			if !yield(chunk, err) {
-				return
-			}
-		}
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	obs := invocationObservation(exec)
+	stream := t.scopedStream(ctx, exec, mode)
+	if stream == nil {
+		stream = prompty.ErrorStream(ctx, mode, prompty.ErrStreamProtocol)
 	}
+	err := stream.ObserveLifecycle(func(startCtx context.Context) (context.Context, func(prompty.StreamStatus)) {
+		spanCtx, span := begin(startCtx, t.cfg, obs)
+		return spanCtx, func(status prompty.StreamStatus) {
+			result := obs
+			result.Response, result.Err, result.StreamStatus = status.Result, status.Err, &status
+			span.finish(result)
+		}
+	})
+	if err != nil {
+		return prompty.ErrorStream(ctx, mode, err)
+	}
+	return stream
 }
 
-func execAttrs(exec *prompty.PromptExecution) []attribute.KeyValue {
-	if exec == nil {
-		return nil
+func invocationObservation(exec *prompty.PromptExecution) Observation {
+	var obs Observation
+	obs.Operation = "generate_content"
+	if exec != nil {
+		obs.Execution = exec.Clone()
+		if exec.ModelOptions != nil {
+			obs.RequestModel = exec.ModelOptions.Model
+		}
+		if exec.Requirements.Override != nil {
+			obs.Provider = exec.Requirements.Override.Identity.Provider
+		}
 	}
-	attrs := []attribute.KeyValue{
-		attribute.String("prompty.prompt_id", exec.Metadata.ID),
-	}
-	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" {
-		attrs = append(attrs, attribute.String("prompty.model", exec.ModelOptions.Model))
-	}
-	return attrs
+	return obs
 }
 
-func recordStreamUsage(chunk *prompty.ResponseChunk, totalTokens *int, finishReason *string) {
-	if chunk != nil {
-		if chunk.Usage.TotalTokens > 0 {
-			*totalTokens = chunk.Usage.TotalTokens
-		}
-		if chunk.FinishReason != "" {
-			*finishReason = chunk.FinishReason
+func (t *tracingInvoker) scopedStream(
+	ctx context.Context,
+	exec *prompty.PromptExecution,
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	if exec != nil {
+		if err := prompty.ValidateExecutionToolScope(exec); err != nil {
+			return prompty.ErrorStream(ctx, mode, err)
 		}
 	}
+	return t.next.ExecuteStream(ctx, exec, mode)
 }

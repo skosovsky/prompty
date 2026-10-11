@@ -32,21 +32,54 @@ func ExecuteWithStructuredOutput[T any](
 	if err != nil {
 		return nil, err
 	}
-	resp, err := invoker.Execute(ctx, workExec)
+	validator, err := compileSchemaSnapshot(
+		workExec.Validator,
+		workExec.ResponseFormat.Schema,
+		workExec.ResponseFormat.Dialect,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if validator == nil {
+		return nil, ErrSchemaValidatorRequired
+	}
+	if boundaryErr := validateDispatchBoundary(ctx, workExec); boundaryErr != nil {
+		return nil, boundaryErr
+	}
+	resp, err := invoker.Execute(ctx, workExec.Clone())
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
 		return nil, errors.New("structured output: nil response")
 	}
+	if metadataErr := ValidateResponseMetadata(resp); metadataErr != nil {
+		return nil, metadataErr
+	}
+	if resp.Outcome != OutcomeCompleted {
+		return nil, &OutcomeError{Outcome: resp.Outcome, FinishReason: resp.FinishReason}
+	}
 
-	assistantMsg := newAssistantMessageWithContent(resp.Content)
+	assistantMsg, err := resp.AssistantMessage()
+	if err != nil {
+		return nil, err
+	}
 	rawText, err := resp.StrictText()
 	if err != nil {
 		return nil, &ValidationError{
 			RawAssistantMessage: &assistantMsg,
 			FeedbackPrompt:      validationFeedbackText(err),
 			Err:                 err,
+		}
+	}
+	if validationErr := validator.ValidateJSON(JSONDocument(rawText)); validationErr != nil {
+		if errors.Is(validationErr, ErrSchemaJSONDecode) {
+			return nil, validationErr
+		}
+		return nil, &ValidationError{
+			RawAssistantMessage: &assistantMsg,
+			FeedbackPrompt:      validationFeedbackText(validationErr),
+			Err:                 validationErr,
 		}
 	}
 	result, err := decodeStructuredOutput[T](rawText)
@@ -73,6 +106,12 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 	}
 
 	workExec := clonePromptExecution(exec)
+	if scopeErr := ValidateExecutionToolScope(workExec); scopeErr != nil {
+		return nil, scopeErr
+	}
+	if workExec.Validator == nil {
+		workExec.Validator = NewJSONSchemaValidator(nil)
+	}
 	if workExec.ResponseFormat != nil {
 		return workExec, nil
 	}
@@ -86,7 +125,8 @@ func prepareStructuredExecution[T any](exec *PromptExecution) (*PromptExecution,
 		return nil, fmt.Errorf("structured output: %w", err)
 	}
 	workExec.ResponseFormat = &SchemaDefinition{Name: "", Description: "",
-		Schema: schemaDoc,
+		Schema:  schemaDoc,
+		Dialect: schemaDeclaredDialect(schema),
 	}
 	return workExec, nil
 }
@@ -99,6 +139,7 @@ func decodeStructuredOutput[T any](raw string) (*T, error) {
 	var result T
 	rawText := strings.TrimSpace(raw)
 	dec := json.NewDecoder(bytes.NewReader([]byte(rawText)))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&result); err != nil {
 		if hasMarkdownCodeFence(rawText) {

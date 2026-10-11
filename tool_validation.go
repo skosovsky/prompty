@@ -1,45 +1,13 @@
 package prompty
 
-import (
-	"context"
-	"errors"
-)
-
-// ErrToolInvokerRequired indicates tool orchestration requires a typed ToolInvoker.
-var ErrToolInvokerRequired = errors.New("tool validation: validator must implement ToolInvoker")
-
 // ToolValidator validates a tool call without coupling prompty to a concrete tool registry.
 type ToolValidator interface {
 	ValidateToolCall(name string, argsJSON string) error
 }
 
-// ExecuteWithToolValidation performs one model call, validates tool args, and invokes handlers.
-// Clear-break: validator must implement ToolInvoker (use TypedToolRegistry or custom ToolInvoker).
-func ExecuteWithToolValidation(
-	ctx context.Context,
-	invoker Invoker,
-	exec *PromptExecution,
-	validator ToolValidator,
-) (*PromptExecution, error) {
-	if invoker == nil {
-		return nil, errors.New("tool validation: invoker is nil")
-	}
-	if exec == nil {
-		return nil, errors.New("tool validation: execution is nil")
-	}
-	if validator == nil {
-		return nil, errors.New("tool validation: tool invoker is nil")
-	}
-	toolInvoker, ok := validator.(ToolInvoker)
-	if !ok {
-		return nil, ErrToolInvokerRequired
-	}
-	return ExecuteWithTypedTools(ctx, invoker, exec, toolInvoker)
-}
-
 func toolCallsFromContent(parts []ContentPart) ([]ToolCallPart, error) {
 	var err error
-	parts, err = GlueToolCallArgChunks(parts)
+	parts, err = AssembleToolCallParts(parts)
 	if err != nil {
 		return nil, err
 	}

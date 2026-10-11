@@ -58,6 +58,7 @@ func TestValidateExecutionContract_MissingRequiredTool(t *testing.T) {
 	t.Parallel()
 	exec := NewExecution([]ChatMessage{NewUserMessage("hi")})
 	exec.RequiredTools = []string{"search", "lookup"}
+	exec.Tools = []ToolDefinition{{Name: "search"}, {Name: "lookup"}}
 	contract := ToolManifestContractFunc(func(name string) (ToolManifest, bool) {
 		return ToolManifest{Name: name}, name == "search"
 	})
@@ -79,15 +80,16 @@ func TestValidateExecutionContract_EmptyRequiredToolNameFailsClosed(t *testing.T
 
 	err := ValidateExecutionManifestContract(exec, ManifestDescriptor{ID: "agent", Digest: "abc"}, contract)
 
-	require.ErrorIs(t, err, ErrToolContractMismatch)
+	require.ErrorIs(t, err, ErrToolScope)
 	assert.Contains(t, err.Error(), "agent@abc")
-	assert.Contains(t, err.Error(), "required tool name is required")
+	assert.Contains(t, err.Error(), "empty or duplicate required tool")
 }
 
-func TestValidateExecutionContract_NameMismatchWithoutPromptAllowedTools(t *testing.T) {
+func TestValidateExecutionContract_NameMismatchAgainstPromptDefinition(t *testing.T) {
 	t.Parallel()
 	exec := NewExecution([]ChatMessage{NewUserMessage("hi")})
 	exec.RequiredTools = []string{"search"}
+	exec.Tools = []ToolDefinition{{Name: "search"}}
 	contract := ToolManifestContractFunc(func(string) (ToolManifest, bool) {
 		return ToolManifest{Name: "lookup"}, true
 	})
@@ -151,15 +153,15 @@ func TestValidateExecutionContract_RequiredToolOutsidePromptAllowedTools(t *test
 
 	err := ValidateExecutionContract(exec, contract)
 
-	require.ErrorIs(t, err, ErrToolContractMismatch)
-	assert.Contains(t, err.Error(), "outside prompt allowed tools")
+	require.ErrorIs(t, err, ErrToolScope)
+	assert.Contains(t, err.Error(), "required tool missing from execution")
 }
 
 func TestRenderPlan_ExecuteWithContract_ValidatesAfterMaterialization(t *testing.T) {
 	t.Parallel()
 	tpl, err := NewChatPromptTemplate([]MessageTemplate{
 		{Role: RoleUser, Content: TextContent("hello")},
-	}, WithRequiredTools([]string{"search"}))
+	}, WithRequiredTools([]string{"search"}), WithTools([]ToolDefinition{{Name: "search"}}))
 	require.NoError(t, err)
 	plan := NewRenderPlan(tpl)
 

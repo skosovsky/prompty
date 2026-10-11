@@ -95,11 +95,13 @@ func run() error {
 	if os.Getenv("GEMINI_API_KEY") == "" {
 		return errors.New("GEMINI_API_KEY is not set")
 	}
-	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: os.Getenv("GEMINI_API_KEY")})
+	const endpoint = "https://generativelanguage.googleapis.com"
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: os.Getenv("GEMINI_API_KEY"),
+		HTTPOptions: genai.HTTPOptions{BaseURL: endpoint}})
 	if err != nil {
 		return fmt.Errorf("genai NewClient: %w", err)
 	}
-	adp := geminiadapter.New(geminiadapter.WithClient(genaiClient))
+	adp := geminiadapter.New(geminiadapter.WithClient(genaiClient), geminiadapter.WithProfiles(endpoint))
 	client := adapter.NewClient(adp)
 	resp, err := client.Execute(ctx, exec)
 	if err != nil {

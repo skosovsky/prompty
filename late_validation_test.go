@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateRequiredLateVars_RejectsEmptyBinding(t *testing.T) {
+func TestValidateRequiredLateVars_RejectsMissingBinding(t *testing.T) {
 	t.Parallel()
 	schema := &SchemaDefinition{
 		Schema: MustJSONDocumentFromMap(map[string]any{
@@ -21,7 +21,7 @@ func TestValidateRequiredLateVars_RejectsEmptyBinding(t *testing.T) {
 			"required": []string{"patient_dossier"},
 		}),
 	}
-	err := validateRequiredLateVars(schema, map[string]any{"patient_dossier": ""}, "late_agent")
+	err := validateRequiredLateVars(schema, map[string]any{}, "late_agent")
 	require.Error(t, err)
 	var ve *VariableError
 	require.ErrorAs(t, err, &ve)

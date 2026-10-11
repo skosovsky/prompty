@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -44,7 +45,8 @@ type ChatPromptTemplate struct {
 	requiredFromAST  []string          // pre-computed in constructor from non-optional message templates
 	tokenCounter     TokenCounter
 	parsedTemplates  []parsedMessage
-	partialsGlob     string   // e.g. "_partials/*.tmpl" for ParseGlob
+	partialsGlob     string // e.g. "_partials/*.tmpl" for ParseGlob
+	partialSources   map[string]string
 	partialsFS       struct { // for ParseFS (e.g. embed)
 		fsys    fs.FS
 		pattern string
@@ -83,7 +85,7 @@ func NewChatPromptTemplate(
 		opt(tpl)
 	}
 	if tpl.PartialVariables != nil {
-		tpl.PartialVariables = maps.Clone(tpl.PartialVariables)
+		tpl.PartialVariables = cloneMapAny(tpl.PartialVariables)
 	}
 	if tpl.Tools != nil {
 		tpl.Tools = cloneToolDefinitions(tpl.Tools)
@@ -127,30 +129,18 @@ func NewChatPromptTemplate(
 			)
 		}
 	}
-	tpl.parsedTemplates = make([]parsedMessage, 0, len(tpl.Messages))
-	for i, m := range tpl.Messages {
-		parsedParts, allVars, err := parseMessageParts(root, m, i)
-		if err != nil {
-			return nil, err
+	for _, name := range slices.Sorted(maps.Keys(tpl.partialSources)) {
+		if _, err = root.New(filepath.Base(name)).Parse(tpl.partialSources[name]); err != nil {
+			return nil, fmt.Errorf("%w: captured partial %q: %w", ErrTemplateParse, name, err)
 		}
-		var meta map[string]any
-		if len(m.Metadata) > 0 {
-			decoded, decodeErr := JSONDocumentAsMap(m.Metadata)
-			if decodeErr != nil {
-				return nil, fmt.Errorf("%w: message %d metadata: %w", ErrTemplateParse, i, decodeErr)
-			}
-			meta = maps.Clone(decoded)
-		}
-		tpl.parsedTemplates = append(tpl.parsedTemplates, parsedMessage{
-			parts:        parsedParts,
-			role:         m.Role,
-			optional:     m.Optional,
-			cacheControl: cloneCachePolicy(m.CachePolicy),
-			metadata:     meta,
-			vars:         allVars,
-			layerID:      m.LayerID,
-			layerKind:    m.LayerKind,
-		})
+	}
+	if err := tpl.parseMessages(root); err != nil {
+		return nil, err
+	}
+	// Definitions in later messages/parts may satisfy earlier partial invocations.
+	for index := range tpl.parsedTemplates {
+		message := &tpl.parsedTemplates[index]
+		message.vars = requiredVarsFromMessage(*message)
 	}
 	tpl.requiredFromAST = extractRequiredVarsFromParsed(tpl.parsedTemplates)
 	return tpl, nil
@@ -172,13 +162,14 @@ func CloneTemplate(c *ChatPromptTemplate) *ChatPromptTemplate {
 		tokenCounter:    c.tokenCounter,
 		parsedTemplates: c.parsedTemplates,
 		partialsGlob:    c.partialsGlob,
+		partialSources:  maps.Clone(c.partialSources),
 		partialsFS:      c.partialsFS,
 	}
 	if c.ResponseFormat != nil {
 		out.ResponseFormat = cloneSchemaDefinition(c.ResponseFormat)
 	}
 	if c.PartialVariables != nil {
-		out.PartialVariables = maps.Clone(c.PartialVariables)
+		out.PartialVariables = cloneMapAny(c.PartialVariables)
 	}
 	out.InputSchema = cloneSchemaDefinition(c.InputSchema)
 	out.ModelOptions = cloneModelOptions(c.ModelOptions)
@@ -204,16 +195,34 @@ func (c *ChatPromptTemplate) renderTemplates(mergedVars map[string]any) (*Prompt
 		if pm.layerID != "" || c.Metadata.ID != "" {
 			prov = &MessageProvenance{LayerID: pm.layerID, ManifestID: c.Metadata.ID}
 		}
-		out = append(out, ChatMessage{
-			Role:        pm.role,
-			Content:     contentParts,
-			CachePolicy: cloneCachePolicy(pm.cacheControl),
-			Provenance:  prov,
-			Metadata:    msgMeta,
-			LayerKind:   pm.layerKind,
-		})
+		out = append(
+			out,
+			ChatMessage{ProviderState: nil, Annotations: nil, MessageAnnotations: nil, ContinuationUnavailable: false,
+				Role:        pm.role,
+				Content:     contentParts,
+				CachePolicy: cloneCachePolicy(pm.cacheControl),
+				Provenance:  prov,
+				Metadata:    msgMeta,
+				LayerKind:   pm.layerKind,
+			},
+		)
 	}
-	return &PromptExecution{ForcedTool: "",
+	return &PromptExecution{
+		toolScope:     nil,
+		RequestCache:  nil,
+		CacheResource: nil,
+		HostedTools:   nil,
+		Validator:     nil,
+		Capture:       nil,
+		Requirements: ExecutionRequirements{
+			OutputMode:   "",
+			Capabilities: nil,
+			OutputMIME:   nil,
+			Override:     nil,
+			Schema:       SchemaPolicy{Mode: "", AllowedTransforms: nil},
+			Capture:      CaptureRequirement{Stages: nil, Accuracy: "", Durable: false, PhysicalAttempts: false},
+		},
+		ForcedTool:     "",
 		Messages:       out,
 		Tools:          cloneToolDefinitions(c.Tools),
 		RequiredTools:  cloneStringSlice(c.RequiredTools),
@@ -420,8 +429,7 @@ func spliceHistory(rendered []ChatMessage, history []ChatMessage) []ChatMessage 
 	return slices.Concat(rendered[:insertAt], history, rendered[insertAt:])
 }
 
-func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]parsedPart, []string, error) {
-	var allVars []string
+func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]parsedPart, error) {
 	parsedParts := make([]parsedPart, 0, len(m.Content))
 	for j, part := range m.Content {
 		namePrefix := fmt.Sprintf("msg_%d_part_%d", i, j)
@@ -429,7 +437,7 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 		case partKindText:
 			textTpl, err := parsePartTemplate(root, namePrefix, part.Text)
 			if err != nil {
-				return nil, nil, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: message %d part %d: %w",
 					ErrTemplateParse,
 					i,
@@ -445,7 +453,6 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 				urlTpl:       nil,
 				cacheControl: cloneCachePolicy(part.CachePolicy),
 			})
-			allVars = append(allVars, extractVarsFromTree(textTpl.Tree)...)
 		case partKindMedia:
 			mediaTypeTpl, err := parsePartTemplate(
 				root,
@@ -453,7 +460,7 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 				part.MediaType,
 			)
 			if err != nil {
-				return nil, nil, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: message %d part %d media_type: %w",
 					ErrTemplateParse,
 					i,
@@ -463,7 +470,7 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 			}
 			mimeTypeTpl, err := parsePartTemplate(root, namePrefix+"_mime_type", part.MIMEType)
 			if err != nil {
-				return nil, nil, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: message %d part %d mime_type: %w",
 					ErrTemplateParse,
 					i,
@@ -473,7 +480,7 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 			}
 			urlTpl, err := parsePartTemplate(root, namePrefix+"_url", part.URL)
 			if err != nil {
-				return nil, nil, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: message %d part %d url: %w",
 					ErrTemplateParse,
 					i,
@@ -489,11 +496,8 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 				urlTpl:       urlTpl,
 				cacheControl: cloneCachePolicy(part.CachePolicy),
 			})
-			allVars = append(allVars, extractVarsFromTree(mediaTypeTpl.Tree)...)
-			allVars = append(allVars, extractVarsFromTree(mimeTypeTpl.Tree)...)
-			allVars = append(allVars, extractVarsFromTree(urlTpl.Tree)...)
 		default:
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"%w: message %d part %d: unknown type %q",
 				ErrTemplateParse,
 				i,
@@ -503,7 +507,7 @@ func parseMessageParts(root *template.Template, m MessageTemplate, i int) ([]par
 		}
 	}
 
-	return parsedParts, allVars, nil
+	return parsedParts, nil
 }
 
 func renderMessageParts(pm parsedMessage, i int, mergedVars map[string]any) ([]ContentPart, error) {
@@ -638,6 +642,35 @@ func validateMessageParts(pm parsedMessage, i int, merged map[string]any) error 
 				err,
 			)
 		}
+	}
+	return nil
+}
+
+func (c *ChatPromptTemplate) parseMessages(root *template.Template) error {
+	c.parsedTemplates = make([]parsedMessage, 0, len(c.Messages))
+	for i, m := range c.Messages {
+		parsedParts, err := parseMessageParts(root, m, i)
+		if err != nil {
+			return err
+		}
+		var meta map[string]any
+		if len(m.Metadata) > 0 {
+			decoded, decodeErr := JSONDocumentAsMap(m.Metadata)
+			if decodeErr != nil {
+				return fmt.Errorf("%w: message %d metadata: %w", ErrTemplateParse, i, decodeErr)
+			}
+			meta = maps.Clone(decoded)
+		}
+		c.parsedTemplates = append(c.parsedTemplates, parsedMessage{
+			parts:        parsedParts,
+			role:         m.Role,
+			optional:     m.Optional,
+			cacheControl: cloneCachePolicy(m.CachePolicy),
+			metadata:     meta,
+			vars:         nil,
+			layerID:      m.LayerID,
+			layerKind:    m.LayerKind,
+		})
 	}
 	return nil
 }

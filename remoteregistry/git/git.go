@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,7 +21,7 @@ import (
 	"github.com/skosovsky/prompty/remoteregistry"
 )
 
-// Fetcher fetches YAML manifests from a Git repository (clone on first use, then pull).
+// Fetcher fetches YAML/JSON manifests from a Git repository (clone on first use, then pull).
 // Implements remoteregistry.Fetcher. Call Close to remove the local clone.
 var _ remoteregistry.Fetcher = (*Fetcher)(nil)
 
@@ -57,11 +56,25 @@ func NewFetcher(repoURL string, opts ...Option) (*Fetcher, error) {
 	if strings.TrimSpace(g.branch) == "" {
 		return nil, errors.New("remoteregistry/git: branch must not be empty")
 	}
+	if g.dir != "" && g.dir != "." && (!fs.ValidPath(g.dir) || strings.Contains(g.dir, "\\")) {
+		return nil, errors.New("remoteregistry/git: dir must be a relative slash path without parent/empty segments")
+	}
 	return g, nil
 }
 
-// Fetch reads the manifest from the repo: {dir}/{id}.yaml or {dir}/{id}.yml.
-func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
+// Fetch reads the manifest from the repo: {dir}/{id}.yaml, .yml or .json.
+//
+//nolint:nonamedreturns // Named results let deferred cleanup join its error with the operation error.
+func (g *Fetcher) Fetch(ctx context.Context, id string) (result []byte, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := remoteregistry.ValidatePathForFetch(id); err != nil {
 		return nil, err
 	}
@@ -80,6 +93,9 @@ func (g *Fetcher) Fetch(ctx context.Context, id string) ([]byte, error) {
 	data, err := os.ReadFile(absPath) // #nosec G304 -- absPath from resolvePath (validated path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: read %s: %w", remoteregistry.ErrFetchFailed, absPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return data, nil
 }
@@ -117,7 +133,18 @@ func trimManifestExt(s string) string {
 }
 
 // ListIDs returns all template ids (relative path without .yaml/.yml/.json, forward slashes) under the manifest dir.
-func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
+//
+//nolint:gocognit,nonamedreturns // Named results allow deferred cleanup to join operation errors.
+func (g *Fetcher) ListIDs(ctx context.Context) (result []string, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = nil
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureClone(ctx); err != nil {
@@ -127,6 +154,9 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	err := fs.WalkDir(os.DirFS(baseDir), ".", func(path string, d fs.DirEntry, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return err
 		}
@@ -157,13 +187,27 @@ func (g *Fetcher) ListIDs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("list ids: %w", err)
 	}
 	slices.Sort(ids)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 
 var _ remoteregistry.Statter = (*Fetcher)(nil)
 
 // Stat returns template metadata without parsing the manifest body. Version is the commit hash; UpdatedAt is commit time.
-func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, error) {
+//
+//nolint:nonamedreturns // Named results let deferred cleanup join its error with the operation error.
+func (g *Fetcher) Stat(ctx context.Context, id string) (result prompty.TemplateInfo, operationErr error) {
+	defer func() {
+		if contextErr := ctx.Err(); contextErr != nil {
+			result = prompty.TemplateInfo{ID: "", Version: "", UpdatedAt: time.Time{}}
+			operationErr = errors.Join(contextErr, operationErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	if err := remoteregistry.ValidateID(id); err != nil {
 		return prompty.TemplateInfo{}, err
 	}
@@ -196,11 +240,17 @@ func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, er
 	if err != nil {
 		cIter.Close()
 		if errors.Is(err, io.EOF) {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return prompty.TemplateInfo{}, contextErr
+			}
 			return prompty.TemplateInfo{ID: id, Version: "", UpdatedAt: time.Time{}}, nil
 		}
 		return prompty.TemplateInfo{}, err
 	}
 	cIter.Close()
+	if err := ctx.Err(); err != nil {
+		return prompty.TemplateInfo{}, err
+	}
 	return prompty.TemplateInfo{
 		ID:        id,
 		Version:   commit.Hash.String(),
@@ -208,14 +258,58 @@ func (g *Fetcher) Stat(ctx context.Context, id string) (prompty.TemplateInfo, er
 	}, nil
 }
 
+//nolint:gocognit,nestif // Keep checkout validation and refresh errors in acquisition order.
 func (g *Fetcher) ensureClone(ctx context.Context) error {
-	if g.repo != nil {
-		return g.refreshClone(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	if g.repo != nil {
+		// file:// selects a frozen local checkout; other URLs refresh on each operation.
+		if !strings.HasPrefix(g.repoURL, "file://") {
+			wt, err := g.repo.Worktree()
+			if err != nil {
+				return fmt.Errorf("worktree: %w", err)
+			}
+			pullOpts := &git.PullOptions{}
+			if g.authToken != "" {
+				pullOpts.Auth = &http.BasicAuth{
+					Username: "x-access-token",
+					Password: g.authToken,
+				}
+			}
+			err = wt.PullContext(ctx, pullOpts)
+			if contextErr := ctx.Err(); contextErr != nil {
+				return errors.Join(contextErr, err)
+			}
+			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+				return fmt.Errorf("refresh: %w", err)
+			}
+		}
+		return ctx.Err()
+	}
+	opened := false
 	var repo *git.Repository
 	var err error
 	if g.cloneDir != "" {
-		repo, err = g.openPersistentClone(ctx)
+		g.localDir = g.cloneDir
+		gitDir := filepath.Join(g.cloneDir, ".git")
+		if _, statErr := os.Stat(gitDir); statErr == nil {
+			repo, err = git.PlainOpen(g.cloneDir)
+			if err == nil {
+				err = g.validatePersistentCheckout(repo)
+			}
+			opened = true
+		} else {
+			if mkErr := os.MkdirAll(g.cloneDir, 0o750); mkErr != nil {
+				return fmt.Errorf("mkdir clone dir: %w", mkErr)
+			}
+			cloneOpts := g.buildCloneOptions()
+			repo, err = git.PlainCloneContext(ctx, g.cloneDir, false, cloneOpts)
+			if err != nil {
+				g.localDir = ""
+				return fmt.Errorf("clone: %w", err)
+			}
+		}
 	} else {
 		dir, mkErr := os.MkdirTemp("", "prompty-git-*")
 		if mkErr != nil {
@@ -237,7 +331,35 @@ func (g *Fetcher) ensureClone(ctx context.Context) error {
 		return fmt.Errorf("clone/open: %w", err)
 	}
 	g.repo = repo
-	return g.refreshClone(ctx)
+	// A fresh clone already observes the remote. Persistent opens need refresh.
+	if opened {
+		return g.ensureClone(ctx)
+	}
+	return ctx.Err()
+}
+
+func (g *Fetcher) validatePersistentCheckout(repo *git.Repository) error {
+	head, err := repo.Head()
+	if err != nil || head.Name() != plumbing.NewBranchReferenceName(g.branch) {
+		return errors.New("persistent checkout: current branch differs from configured branch")
+	}
+	// An exact file:// reference to this checkout deliberately freezes local data.
+	if localURL, ok := strings.CutPrefix(g.repoURL, "file://"); ok {
+		local, localErr := filepath.Abs(localURL)
+		clone, cloneErr := filepath.Abs(g.cloneDir)
+		if localErr == nil && cloneErr == nil && local == clone {
+			return nil
+		}
+	}
+	origin, err := repo.Remote("origin")
+	if err != nil {
+		return errors.New("persistent checkout: configured origin is unavailable")
+	}
+	urls := origin.Config().URLs
+	if len(urls) != 1 || urls[0] != g.repoURL {
+		return errors.New("persistent checkout: origin differs from configured URL")
+	}
+	return nil
 }
 
 func (g *Fetcher) buildCloneOptions() *git.CloneOptions {
@@ -277,40 +399,3 @@ func (g *Fetcher) Close() error {
 }
 
 const accessTokenUsername = "x-access-token"
-
-func (g *Fetcher) refreshClone(ctx context.Context) error {
-	// Run pull once after open or clone so persistent cache is refreshed.
-	if !strings.HasPrefix(g.repoURL, "file://") {
-		wt, wtErr := g.repo.Worktree()
-		if wtErr != nil {
-			return fmt.Errorf("worktree: %w", wtErr)
-		}
-		pullOpts := &git.PullOptions{}
-		if g.authToken != "" {
-			pullOpts.Auth = &http.BasicAuth{
-				Username: accessTokenUsername,
-				Password: g.authToken,
-			}
-		}
-		if pullErr := wt.PullContext(ctx, pullOpts); pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
-			slog.Default().WarnContext(ctx, "git pull failed, using cached clone", "err", pullErr)
-		}
-	}
-	return nil
-}
-
-func (g *Fetcher) openPersistentClone(ctx context.Context) (*git.Repository, error) {
-	g.localDir = g.cloneDir
-	if _, err := os.Stat(filepath.Join(g.cloneDir, ".git")); err == nil {
-		return git.PlainOpen(g.cloneDir)
-	}
-	if err := os.MkdirAll(g.cloneDir, 0o750); err != nil {
-		return nil, fmt.Errorf("mkdir clone dir: %w", err)
-	}
-	repo, err := git.PlainCloneContext(ctx, g.cloneDir, false, g.buildCloneOptions())
-	if err != nil {
-		g.localDir = ""
-		return nil, fmt.Errorf("clone: %w", err)
-	}
-	return repo, nil
-}

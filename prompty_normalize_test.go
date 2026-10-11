@@ -100,7 +100,7 @@ func TestNormalize_CachePolicyMergeSemantics_PartialNil(t *testing.T) {
 		{
 			Role:        RoleSystem,
 			Content:     []ContentPart{TextPart{Text: "a"}},
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Provenance:  &MessageProvenance{ManifestID: "m", LayerID: "same"},
 		},
 		{
@@ -110,8 +110,9 @@ func TestNormalize_CachePolicyMergeSemantics_PartialNil(t *testing.T) {
 		},
 	})
 	normalized := exec.Normalize()
-	require.Len(t, normalized.Messages, 1)
-	assert.Nil(t, normalized.Messages[0].CachePolicy)
+	require.Len(t, normalized.Messages, 2)
+	assert.NotNil(t, normalized.Messages[0].CachePolicy)
+	assert.Nil(t, normalized.Messages[1].CachePolicy)
 }
 
 func TestNormalize_CachePolicyMergeSemantics_MatchingTypes(t *testing.T) {
@@ -120,20 +121,20 @@ func TestNormalize_CachePolicyMergeSemantics_MatchingTypes(t *testing.T) {
 		{
 			Role:        RoleSystem,
 			Content:     []ContentPart{TextPart{Text: "a"}},
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Provenance:  &MessageProvenance{ManifestID: "m", LayerID: "same"},
 		},
 		{
 			Role:        RoleSystem,
 			Content:     []ContentPart{TextPart{Text: "b"}},
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Provenance:  &MessageProvenance{ManifestID: "m", LayerID: "same"},
 		},
 	})
 	normalized := exec.Normalize()
 	require.Len(t, normalized.Messages, 1)
 	require.NotNil(t, normalized.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", normalized.Messages[0].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, normalized.Messages[0].CachePolicy.Mechanism)
 }
 
 func TestNormalize_ProvenanceNilVsEmptyLayerID(t *testing.T) {
@@ -153,23 +154,24 @@ func TestNormalize_ProvenanceNilVsEmptyLayerID(t *testing.T) {
 	require.Len(t, normalized.Messages, 1)
 }
 
-func TestNormalize_DropsCachePolicyOnMismatch(t *testing.T) {
+func TestNormalize_PreservesCachePolicyOnMismatch(t *testing.T) {
 	t.Parallel()
 	exec := NewExecution([]ChatMessage{
 		{
 			Role:        RoleSystem,
 			Content:     []ContentPart{TextPart{Text: "a"}},
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Provenance:  &MessageProvenance{ManifestID: "m", LayerID: "same"},
 		},
 		{
 			Role:        RoleSystem,
 			Content:     []ContentPart{TextPart{Text: "b"}},
-			CachePolicy: &CachePolicy{Type: "persistent"},
+			CachePolicy: &CachePolicy{Mechanism: "implicit_prefix"},
 			Provenance:  &MessageProvenance{ManifestID: "m", LayerID: "same"},
 		},
 	})
 	normalized := exec.Normalize()
-	require.Len(t, normalized.Messages, 1)
-	assert.Nil(t, normalized.Messages[0].CachePolicy)
+	require.Len(t, normalized.Messages, 2)
+	assert.Equal(t, CacheBlockMarker, normalized.Messages[0].CachePolicy.Mechanism)
+	assert.Equal(t, CacheImplicitPrefix, normalized.Messages[1].CachePolicy.Mechanism)
 }

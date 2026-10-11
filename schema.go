@@ -2,6 +2,7 @@ package prompty
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 )
 
@@ -13,16 +14,10 @@ type SchemaProvider interface {
 	JSONSchema() JSONDocument
 }
 
-// ExtractSchema returns a JSON Schema for v using SchemaProvider when available,
-// otherwise falling back to the built-in reflect generator.
-//
-// On unsupported input, it returns nil.
-func ExtractSchema(v any) map[string]any {
-	schema, err := extractSchema(v)
-	if err != nil {
-		return nil
-	}
-	return schema
+// ExtractSchema returns the explicit or inferred JSON Schema for the caller's type.
+// Unsupported codecs, recursion and invalid explicit schemas return an error.
+func ExtractSchema(v any) (map[string]any, error) {
+	return extractSchema(v)
 }
 
 func extractSchema(v any) (map[string]any, error) {
@@ -38,8 +33,8 @@ func extractSchemaFromType(t reflect.Type) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if schema, ok := schemaFromProvider(base); ok {
-		return schema, nil
+	if schema, ok, providerErr := schemaFromProvider(base); ok {
+		return schema, providerErr
 	}
 	return newSchemaBuilder().schemaForType(base, 0)
 }
@@ -55,18 +50,21 @@ func normalizedSchemaType(t reflect.Type) (reflect.Type, error) {
 	if t == nil {
 		return nil, errors.New("schema: nil type")
 	}
+	seen := make(map[reflect.Type]bool)
 	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-		if t == nil {
-			return nil, errors.New("schema: nil type")
+		if seen[t] || len(seen) >= maxSchemaDepth {
+			return nil, fmt.Errorf("%w: recursive or excessive-depth pointer type %s", ErrSchemaUnsupported, t)
 		}
+		seen[t] = true
+		t = t.Elem()
 	}
+
 	return t, nil
 }
 
-func schemaFromProvider(t reflect.Type) (map[string]any, bool) {
+func schemaFromProvider(t reflect.Type) (map[string]any, bool, error) {
 	if t == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	candidates := []reflect.Type{t}
@@ -78,14 +76,17 @@ func schemaFromProvider(t reflect.Type) (map[string]any, bool) {
 		provider, ok := instantiateSchemaProvider(candidate)
 		if ok {
 			doc := provider.JSONSchema()
-			m, err := JSONDocumentAsMap(doc)
+			m, err := SchemaDocumentAsMap(doc)
 			if err != nil {
-				return nil, false
+				return nil, true, fmt.Errorf("schema provider %s: %w", t, err)
 			}
-			return cloneMapAny(m), true
+			if _, err := NewJSONSchemaValidator(nil).CompileSchema(doc, schemaDeclaredDialect(m)); err != nil {
+				return nil, true, fmt.Errorf("schema provider %s: %w", t, err)
+			}
+			return cloneMapAny(m), true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func instantiateSchemaProvider(t reflect.Type) (SchemaProvider, bool) {
@@ -105,4 +106,9 @@ func instantiateSchemaProvider(t reflect.Type) (SchemaProvider, bool) {
 
 	provider, ok := reflect.TypeAssert[SchemaProvider](value)
 	return provider, ok
+}
+
+func schemaDeclaredDialect(schema map[string]any) string {
+	dialect, _ := schema["$schema"].(string)
+	return dialect
 }

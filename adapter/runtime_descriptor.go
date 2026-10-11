@@ -3,17 +3,26 @@ package adapter
 import (
 	"context"
 	"errors"
-	"iter"
+	"maps"
+	"slices"
 
 	"github.com/skosovsky/prompty"
 )
 
 // RuntimeDescriptor describes adapter runtime metadata without exposing provider internals.
-// Capabilities must be conservative: omit provider/model-dependent features unless
-// the runtime can guarantee them for the configured adapter instance.
+// Profiles must be conservative and bound to the effective endpoint/model.
+// SDK mappings do not establish provider-wide feature support.
 type RuntimeDescriptor struct {
-	Name         string   `json:"name"`
-	Capabilities []string `json:"capabilities,omitempty"`
+	Name              string                      `json:"name"`
+	Endpoint          string                      `json:"endpoint"`
+	DefaultModel      string                      `json:"default_model"`
+	Profiles          []prompty.CapabilityProfile `json:"profiles,omitempty"`
+	ReasoningSettings []string                    `json:"reasoning_settings,omitempty"`
+	// HostedToolCapabilities binds implemented adapter kinds to profile guarantees.
+	HostedToolCapabilities map[string]string `json:"hosted_tool_capabilities,omitempty"`
+	// MessageAnnotationCapabilities gates provider history features on the same
+	// profile and operation combinations as requested execution features.
+	MessageAnnotationCapabilities map[string][]string `json:"message_annotation_capabilities,omitempty"`
 }
 
 // RuntimeDescriber is implemented by adapters that expose runtime metadata.
@@ -69,8 +78,9 @@ func (c *runtimeClient[Req, Resp]) Execute(
 func (c *runtimeClient[Req, Resp]) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return c.invoker.ExecuteStream(ctx, exec)
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	return c.invoker.ExecuteStream(ctx, exec, mode)
 }
 
 // RuntimeDescriptor returns adapter runtime metadata or an explicit error.
@@ -86,10 +96,31 @@ func (c *runtimeClient[Req, Resp]) RuntimeDescriptor() (RuntimeDescriptor, error
 	if desc.Name == "" {
 		return RuntimeDescriptor{}, ErrNoRuntimeDescriptor
 	}
-	return RuntimeDescriptor{
-		Name:         desc.Name,
-		Capabilities: append([]string(nil), desc.Capabilities...),
-	}, nil
+	if err := prompty.ValidateEndpointIdentity(desc.Endpoint); err != nil {
+		return RuntimeDescriptor{}, errors.Join(ErrInvalidProfile, err)
+	}
+	for _, profile := range desc.Profiles {
+		if err := prompty.ValidateEndpointIdentity(profile.Identity.Endpoint); err != nil {
+			return RuntimeDescriptor{}, errors.Join(ErrInvalidProfile, err)
+		}
+	}
+	return CloneRuntimeDescriptor(desc), nil
+}
+
+// CloneRuntimeDescriptor isolates every nested profile.
+func CloneRuntimeDescriptor(desc RuntimeDescriptor) RuntimeDescriptor {
+	out := desc
+	out.ReasoningSettings = slices.Clone(desc.ReasoningSettings)
+	out.HostedToolCapabilities = maps.Clone(desc.HostedToolCapabilities)
+	out.MessageAnnotationCapabilities = maps.Clone(desc.MessageAnnotationCapabilities)
+	for kind, capabilities := range out.MessageAnnotationCapabilities {
+		out.MessageAnnotationCapabilities[kind] = slices.Clone(capabilities)
+	}
+	out.Profiles = make([]prompty.CapabilityProfile, len(desc.Profiles))
+	for i, profile := range desc.Profiles {
+		out.Profiles[i] = prompty.CloneCapabilityProfile(profile)
+	}
+	return out
 }
 
 // TokenEstimator returns adapter token estimator or an explicit error.

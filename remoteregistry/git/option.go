@@ -12,6 +12,7 @@ func WithBranch(branch string) Option {
 
 // WithDir sets the subdirectory within the repo to read manifests from (e.g. "prompts").
 // Default is "" (repo root).
+// Non-root values must be valid relative slash paths; this is not a symlink sandbox.
 func WithDir(dir string) Option {
 	return func(g *Fetcher) {
 		g.dir = dir
@@ -37,6 +38,7 @@ func WithAuth(token string) Option {
 // WithCloneDir sets the directory to clone into (persistent cache). If the directory
 // already contains a clone (.git exists), PlainOpen is used and pull is run; otherwise
 // the repo is cloned into this dir. Close() does not remove the directory when using WithCloneDir.
+// Existing branch/origin must match configuration before refresh; no implicit adoption.
 func WithCloneDir(dir string) Option {
 	return func(g *Fetcher) {
 		g.cloneDir = dir

@@ -138,17 +138,7 @@ func (p *RenderPlan) ExecuteAsText(ctx context.Context, invoker Invoker) (string
 	if err != nil {
 		return "", err
 	}
-	if vErr := validateTextExecution(exec); vErr != nil {
-		return "", vErr
-	}
-	resp, err := invoker.Execute(ctx, exec)
-	if err != nil {
-		return "", err
-	}
-	if resp == nil {
-		return "", errors.New("execute as text: nil response")
-	}
-	return resp.StrictText()
+	return ExecuteAsText(ctx, invoker, exec)
 }
 
 // ExecuteAsText runs a prepared execution through the invoker and returns strict plain text.
@@ -159,10 +149,14 @@ func ExecuteAsText(ctx context.Context, invoker Invoker, exec *PromptExecution) 
 	if exec == nil {
 		return "", errors.New("execute as text: execution is nil")
 	}
-	if vErr := validateTextExecution(exec); vErr != nil {
+	working := exec.Clone()
+	if boundaryErr := validateDispatchBoundary(ctx, working); boundaryErr != nil {
+		return "", boundaryErr
+	}
+	if vErr := validateTextExecution(working); vErr != nil {
 		return "", vErr
 	}
-	resp, err := invoker.Execute(ctx, exec)
+	resp, err := invoker.Execute(ctx, working)
 	if err != nil {
 		return "", err
 	}

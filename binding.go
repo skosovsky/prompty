@@ -5,18 +5,23 @@ import (
 	"sync"
 )
 
+const maxPooledInputEntries = 1024
+
 //nolint:gochecknoglobals // pooled map projection for text/template (.Input field access)
 var boundInputMapPool = sync.Pool{
 	New: func() any { return make(map[string]any) },
 }
 
 func mergeBoundVarsWithPartials(tpl *ChatPromptTemplate, vars map[string]any) map[string]any {
-	m, ok := boundInputMapPool.Get().(map[string]any)
-	if !ok || m == nil {
-		capHint := len(vars)
-		if tpl != nil && tpl.PartialVariables != nil {
-			capHint += len(tpl.PartialVariables)
-		}
+	capHint := len(vars)
+	if tpl != nil {
+		capHint += len(tpl.PartialVariables)
+	}
+	var m map[string]any
+	if capHint <= maxPooledInputEntries {
+		m, _ = boundInputMapPool.Get().(map[string]any)
+	}
+	if m == nil {
 		m = make(map[string]any, capHint)
 	}
 	clear(m)
@@ -32,7 +37,7 @@ func mergeBoundVarsWithPartials(tpl *ChatPromptTemplate, vars map[string]any) ma
 }
 
 func releaseBoundInputMap(m map[string]any) {
-	if m == nil {
+	if m == nil || len(m) > maxPooledInputEntries {
 		return
 	}
 	clear(m)

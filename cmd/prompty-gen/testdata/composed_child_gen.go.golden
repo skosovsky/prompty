@@ -3,6 +3,7 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,30 @@ import (
 const ComposedChild PromptID = "composed_child"
 
 type ComposedChildInput struct {
-	ClinicName *string `json:"clinic_name,omitempty" prompt:"clinic_name"`
+	ClinicName *string `json:"clinic_name,omitempty" prompt:"clinic_name,omitempty"`
+}
+
+func (value ComposedChildInput) JSONSchema() prompty.JSONDocument {
+	return prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"}},\"type\":\"object\"}")
+}
+
+func (value ComposedChildInput) ValidateSchema() error {
+	return prompty.ValidateSchemaValue(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"}},\"type\":\"object\"}"), Dialect: ""}, value)
+}
+
+func (value *ComposedChildInput) UnmarshalJSON(document []byte) error {
+	if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"clinic_name\":{\"type\":\"string\"}},\"type\":\"object\"}"), Dialect: ""}, document); err != nil {
+		return err
+	}
+	type decodedValue ComposedChildInput
+	var decoded decodedValue
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = ComposedChildInput(decoded)
+	return nil
 }
 
 type ComposedChildPrompt struct {
@@ -28,7 +52,7 @@ func NewComposedChildRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateC
 		return ComposedChildRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(ComposedChild), checkpoint.Descriptor.ID)
 	}
 	input := checkpoint.Input
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return ComposedChildRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {
@@ -74,11 +98,11 @@ func (r ComposedChildRecipe) JSONSchema() (prompty.JSONDocument, error) {
 	return prompty.CloneJSONDocument(format.Schema), nil
 }
 
-func (r ComposedChildRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r ComposedChildRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r ComposedChildRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r ComposedChildRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 
@@ -90,7 +114,7 @@ func (p *ComposedChildPrompt) newRecipe(ctx context.Context, input ComposedChild
 	if p.registry == nil {
 		return ComposedChildRecipe{}, fmt.Errorf("%s recipe requires registry", string(ComposedChild))
 	}
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return ComposedChildRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {

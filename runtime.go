@@ -2,10 +2,10 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 )
 
 // RuntimeRecipeState describes whether a raw runtime checkpoint carries late input.
@@ -17,7 +17,9 @@ const (
 	RuntimeRecipeStateLateBound   RuntimeRecipeState = "late_bound"
 )
 
-// RuntimeRecipeCheckpoint is a JSON-safe raw checkpoint for runtime recipe binding.
+// RuntimeRecipeCheckpoint is a JSON-safe prompt-materialization checkpoint.
+// Its raw input/late-input surface is distinct from generic typed recipes;
+// it is not an agent-run/session checkpoint and carries no runtime ports.
 type RuntimeRecipeCheckpoint struct {
 	Descriptor     ManifestDescriptor   `json:"descriptor"`
 	Input          JSONDocument         `json:"input,omitempty"`
@@ -26,7 +28,8 @@ type RuntimeRecipeCheckpoint struct {
 	RuntimeOptions PromptRuntimeOptions `json:"runtime_options,omitzero"`
 }
 
-// RuntimeOverlay carries late-bound runtime values applied over a checkpoint.
+// RuntimeOverlay carries request-local late/compose bindings over a checkpoint.
+// It does not represent a session or conversation-context overlay.
 type RuntimeOverlay struct {
 	LateInput JSONDocument  `json:"late_input,omitempty"`
 	Values    ComposeValues `json:"-"`
@@ -34,14 +37,14 @@ type RuntimeOverlay struct {
 
 // ToolScope is the runtime allowed/required tool boundary for a prompt execution.
 type ToolScope struct {
-	Required []ToolRequirement `json:"required,omitempty"`
-	Allowed  []ToolManifest    `json:"allowed,omitempty"`
+	Required []ToolRequirement `json:"required"`
+	Allowed  []ToolManifest    `json:"allowed"`
 }
 
 // BindRuntime verifies a checkpoint, applies runtime overlay/tool scope, and returns a materializable plan.
 func BindRuntime(
 	ctx context.Context,
-	registry ManifestCheckpointRegistry,
+	registry ManifestSnapshotRegistry,
 	checkpoint RuntimeRecipeCheckpoint,
 	overlay RuntimeOverlay,
 	scope ToolScope,
@@ -50,9 +53,6 @@ func BindRuntime(
 		return nil, errors.New("runtime binding: registry is required")
 	}
 	if err := validateRuntimeCheckpoint(checkpoint); err != nil {
-		return nil, err
-	}
-	if err := registry.VerifyManifestDescriptor(ctx, checkpoint.Descriptor); err != nil {
 		return nil, err
 	}
 	plan, err := runtimePlanFromCheckpoint(ctx, registry, checkpoint, overlay)
@@ -68,7 +68,7 @@ func BindRuntime(
 
 func runtimePlanFromCheckpoint(
 	ctx context.Context,
-	registry ManifestCheckpointRegistry,
+	registry ManifestSnapshotRegistry,
 	checkpoint RuntimeRecipeCheckpoint,
 	overlay RuntimeOverlay,
 ) (*RenderPlan, error) {
@@ -79,6 +79,7 @@ func runtimePlanFromCheckpoint(
 	input := RegistryPlanInput{
 		boundVars:     inputVars,
 		chatHistory:   nil,
+		historyValues: nil,
 		composeValues: nil,
 		composeSet:    false,
 	}
@@ -90,7 +91,7 @@ func runtimePlanFromCheckpoint(
 	if overlay.Values.IsSet() {
 		input = planInputWithComposeValues(input, overlay.Values)
 	}
-	plan, err := registry.Plan(ctx, checkpoint.Descriptor.ID, input)
+	plan, err := VerifiedManifestPlan(ctx, registry, checkpoint.Descriptor, input)
 	if err != nil {
 		return nil, fmt.Errorf("runtime binding: build render plan: %w", err)
 	}
@@ -137,15 +138,23 @@ func bindRuntimeToolScope(
 func ValidateToolScope(desc ManifestDescriptor, scope ToolScope) error {
 	allowed := make(map[string]ToolManifest, len(scope.Allowed))
 	for _, tool := range scope.Allowed {
-		if tool.Name == "" {
+		if strings.TrimSpace(tool.Name) == "" {
 			return toolContractErr(desc, "", "allowed tool name is required", ErrToolContractMismatch)
+		}
+		if _, exists := allowed[tool.Name]; exists {
+			return toolContractErr(desc, tool.Name, "duplicate allowed tool", ErrToolContractMismatch)
 		}
 		allowed[tool.Name] = tool
 	}
+	seen := make(map[string]bool)
 	for _, req := range scope.Required {
-		if req.Name == "" {
+		if strings.TrimSpace(req.Name) == "" {
 			return toolContractErr(desc, "", "required tool name is required", ErrToolContractMismatch)
 		}
+		if seen[req.Name] {
+			return toolContractErr(desc, req.Name, "duplicate required tool", ErrToolContractMismatch)
+		}
+		seen[req.Name] = true
 		tool, ok := allowed[req.Name]
 		if !ok {
 			return toolContractErr(desc, req.Name, "required tool is outside allowed scope", ErrMissingRequiredTool)
@@ -189,8 +198,8 @@ func jsonDocumentObject(doc JSONDocument, label string) (map[string]any, error) 
 	if len(doc) == 0 {
 		return make(map[string]any), nil
 	}
-	var out map[string]any
-	if err := json.Unmarshal(doc, &out); err != nil {
+	out, err := JSONDocumentAsMap(doc)
+	if err != nil {
 		return nil, fmt.Errorf("%s: decode JSON object: %w", label, err)
 	}
 	if out == nil {

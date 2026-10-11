@@ -189,7 +189,7 @@ func TestTranslate_CacheControlOnMessage(t *testing.T) {
 			{
 				Role:        prompty.RoleSystem,
 				Content:     []prompty.ContentPart{prompty.TextPart{Text: "You are a helper."}},
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 			},
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "Hi"}}},
 		},
@@ -488,7 +488,7 @@ func TestTranslate_PDFPartData_WithMessageCacheControlSetsCacheControl(t *testin
 		Messages: []prompty.ChatMessage{
 			{
 				Role:        prompty.RoleUser,
-				CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 				Content: []prompty.ContentPart{
 					prompty.MediaPart{
 						MediaType: "document",
@@ -516,13 +516,13 @@ func TestTranslate_PDFPartData_WithPartCacheControlOverridesMessage(t *testing.T
 		Messages: []prompty.ChatMessage{
 			{
 				Role:        prompty.RoleUser,
-				CachePolicy: &prompty.CachePolicy{Type: "persistent"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheImplicitPrefix},
 				Content: []prompty.ContentPart{
 					prompty.MediaPart{
 						MediaType:   "document",
 						Data:        []byte("%PDF-1.7"),
 						MIMEType:    "application/pdf",
-						CachePolicy: &prompty.CachePolicy{Type: "ephemeral"},
+						CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheBlockMarker},
 					},
 				},
 			},
@@ -643,14 +643,14 @@ func TestTranslate_MediaPartURLWithoutMIMETypeRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "MediaPart.MIMEType is required")
 }
 
-func TestTranslate_UnsupportedCacheControlType_ReturnsError(t *testing.T) {
+func TestTranslate_RequiredUnmappedCacheControl_ReturnsError(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
 		Messages: []prompty.ChatMessage{
 			{
 				Role:        prompty.RoleUser,
-				CachePolicy: &prompty.CachePolicy{Type: "persistent"},
+				CachePolicy: &prompty.CachePolicy{Mechanism: prompty.CacheImplicitPrefix, Mode: prompty.CacheRequired},
 				Content: []prompty.ContentPart{
 					prompty.TextPart{Text: "Hello"},
 				},
@@ -659,7 +659,7 @@ func TestTranslate_UnsupportedCacheControlType_ReturnsError(t *testing.T) {
 	}
 	_, err := a.Translate(exec)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported cache_policy.type")
+	require.ErrorIs(t, err, prompty.ErrCacheRequirement)
 }
 
 func TestTranslate_AssistantToolCalls(t *testing.T) {
@@ -757,6 +757,11 @@ func TestParseResponse_UsageBreakdown(t *testing.T) {
 		TotalTokens:               27,
 		PromptTokensCached:        7,
 		PromptTokensCacheCreation: 3,
+		Known: []prompty.UsageCounter{
+			prompty.UsagePrompt, prompty.UsageCompletion, prompty.UsageTotal,
+			prompty.UsageCacheRead, prompty.UsageCacheWrite,
+		},
+		Mode: prompty.UsageCumulative,
 	}, resp.Usage)
 }
 
@@ -801,7 +806,7 @@ func TestParseResponse_ToolCalls(t *testing.T) {
 	assert.Contains(t, tc.Args, "NYC")
 }
 
-func TestParseResponse_OutputFormatToolUse_ReturnsTextPart(t *testing.T) {
+func TestParseResponse_OutputFormatToolUse_RemainsToolCall(t *testing.T) {
 	t.Parallel()
 	a := New()
 	structuredJSON := `{"name":"Alice","age":30}`
@@ -809,15 +814,18 @@ func TestParseResponse_OutputFormatToolUse_ReturnsTextPart(t *testing.T) {
 		Content: []anthropic.ContentBlockUnion{{
 			Type:  "tool_use",
 			ID:    "call_out",
-			Name:  outputFormatToolName,
+			Name:  "output_format",
 			Input: json.RawMessage(structuredJSON),
 		}},
 	}
 	resp, err := a.ParseResponse(msg)
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
-	tp := resp.Content[0].(prompty.TextPart)
-	assert.JSONEq(t, structuredJSON, tp.Text)
+	tc, ok := resp.Content[0].(prompty.ToolCallPart)
+	require.True(t, ok)
+	assert.Equal(t, "output_format", tc.Name)
+	assert.Equal(t, "call_out", tc.ID)
+	assert.JSONEq(t, structuredJSON, tc.Args)
 }
 
 func TestParseResponse_EmptyContent(t *testing.T) {
@@ -863,7 +871,7 @@ func TestParseResponse_UnknownBlockTypeFailsClosed(t *testing.T) {
 	a := New()
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
-			{Type: "thinking"},
+			{Type: "future_unknown_block"},
 		},
 	}
 	_, err := a.ParseResponse(msg)
@@ -874,12 +882,13 @@ func TestParseResponse_UnknownBlockTypeFailsClosed(t *testing.T) {
 func TestUsageFromAnthropic_MapsBreakdownFields(t *testing.T) {
 	t.Parallel()
 
-	got := usageFromAnthropic(anthropic.Usage{
+	got, err := usageFromAnthropic(anthropic.Usage{
 		InputTokens:              40,
 		OutputTokens:             9,
 		CacheReadInputTokens:     11,
 		CacheCreationInputTokens: 6,
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, prompty.Usage{
 		PromptTokens:              57,
@@ -887,6 +896,11 @@ func TestUsageFromAnthropic_MapsBreakdownFields(t *testing.T) {
 		TotalTokens:               66,
 		PromptTokensCached:        11,
 		PromptTokensCacheCreation: 6,
+		Known: []prompty.UsageCounter{
+			prompty.UsagePrompt, prompty.UsageCompletion, prompty.UsageTotal,
+			prompty.UsageCacheRead, prompty.UsageCacheWrite,
+		},
+		Mode: prompty.UsageCumulative,
 	}, got)
 }
 
@@ -905,7 +919,7 @@ func TestTranslate_InvalidToolCallArgs(t *testing.T) {
 	assert.ErrorIs(t, err, adapter.ErrMalformedArgs)
 }
 
-func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
+func TestTranslate_ToolsWithResponseFormat_NativeFieldsCoexist(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -926,13 +940,15 @@ func TestTranslate_ToolsWithResponseFormat_FailFast(t *testing.T) {
 			}),
 		},
 	}
-	_, err := a.Translate(exec)
-	require.Error(t, err)
-	require.ErrorIs(t, err, prompty.ErrConflictingDirectives)
-	assert.Contains(t, err.Error(), "cannot use both Tools and ResponseFormat")
+	params, err := a.Translate(exec)
+	require.NoError(t, err)
+	require.Len(t, params.Tools, 1)
+	assert.Equal(t, "my_tool", params.Tools[0].OfTool.Name)
+	assert.Equal(t, "object", params.OutputConfig.Format.Schema["type"])
+	assert.Nil(t, params.ToolChoice.OfTool)
 }
 
-func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T) {
+func TestTranslate_ResponseFormat_UsesNativeOutputConfig(t *testing.T) {
 	t.Parallel()
 	a := New()
 	exec := &prompty.PromptExecution{
@@ -951,13 +967,17 @@ func TestTranslate_ResponseFormat_AddsOutputFormatToolAndToolChoice(t *testing.T
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
 	require.NotNil(t, params)
-	require.Len(t, params.Tools, 1)
-	assert.Equal(t, outputFormatToolName, params.Tools[0].OfTool.Name)
-	assert.NotNil(t, params.Tools[0].OfTool.InputSchema.Properties)
-	assert.Equal(t, []string{"x"}, params.Tools[0].OfTool.InputSchema.Required)
-	// tool_choice forces output_format
-	require.NotNil(t, params.ToolChoice.OfTool)
-	assert.Equal(t, outputFormatToolName, params.ToolChoice.OfTool.Name)
+	assert.Empty(t, params.Tools)
+	assert.Nil(t, params.ToolChoice.OfTool)
+	assert.Equal(t, []any{"x"}, params.OutputConfig.Format.Schema["required"])
+	wire, marshalErr := json.Marshal(params)
+	require.NoError(t, marshalErr)
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(wire, &request))
+	format := request["output_config"].(map[string]any)["format"].(map[string]any)
+	assert.Equal(t, "json_schema", format["type"])
+	assert.NotContains(t, request, "tools")
+	assert.NotContains(t, request, "tool_choice")
 }
 
 func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *testing.T) {
@@ -979,20 +999,10 @@ func TestTranslate_ResponseFormat_PassesFullSchemaWithAdditionalProperties(t *te
 	}
 	params, err := a.Translate(exec)
 	require.NoError(t, err)
-	require.Len(t, params.Tools, 1)
-	schema := params.Tools[0].OfTool.InputSchema
-	assert.NotNil(t, schema.Properties)
-	assert.Equal(t, []string{"x"}, schema.Required)
-	// ExtraFields should contain additionalProperties and description for strict decoding
-	assert.NotNil(t, schema.ExtraFields)
-	assert.Equal(t, false, schema.ExtraFields["additionalProperties"])
-	assert.Equal(t, "Strict output schema", schema.ExtraFields["description"])
-}
-
-func TestParseStreamChunk_NotImplemented(t *testing.T) {
-	t.Parallel()
-	a := New()
-	_, err := a.ParseStreamChunk(nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, adapter.ErrStreamNotImplemented)
+	assert.Empty(t, params.Tools)
+	schema := params.OutputConfig.Format.Schema
+	assert.NotNil(t, schema["properties"])
+	assert.Equal(t, []any{"x"}, schema["required"])
+	assert.Equal(t, false, schema["additionalProperties"])
+	assert.Equal(t, "Strict output schema", schema["description"])
 }

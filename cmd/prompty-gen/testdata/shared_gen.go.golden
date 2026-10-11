@@ -7,14 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	"github.com/skosovsky/prompty"
 	"io"
 )
 
 type PromptID string
-
-var validate = validator.New()
 
 type Recipe interface {
 	PromptID() PromptID
@@ -22,8 +19,8 @@ type Recipe interface {
 	CheckpointJSON() ([]byte, error)
 	ResponseFormat() (*prompty.SchemaDefinition, error)
 	JSONSchema() (prompty.JSONDocument, error)
-	Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error)
-	ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
+	Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error)
+	ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error)
 }
 
 type PromptCatalog interface {
@@ -98,7 +95,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 	case SupportAgent:
 		metadata = prompty.PromptMetadata{ID: "support_agent"}
 		requiredTools = []string{}
-		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "sha256:test-support_agent"}
+		descriptor = prompty.ManifestDescriptor{ID: "support_agent", Digest: "source-bundle.v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"}
 		newRecipeFromJSON = func(ctx context.Context, payload []byte) (Recipe, error) {
 			if i.registry == nil {
 				return nil, fmt.Errorf("prompt index: registry is required for %q", "support_agent")
@@ -106,6 +103,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var input SupportAgentInput
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&input); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -129,6 +127,7 @@ func (i PromptIndex) Lookup(id PromptID) (PromptEntry, bool) {
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {
@@ -171,6 +170,7 @@ func (i PromptIndex) DecodeRecipeCheckpoint(id PromptID, payload []byte) (Recipe
 			var checkpoint prompty.PromptRecipeNoLateCheckpoint[SupportAgentInput]
 			var err error
 			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
 			decoder.DisallowUnknownFields()
 			if err = decoder.Decode(&checkpoint); err == nil {
 				if err = decoder.Decode(&struct{}{}); err != io.EOF {

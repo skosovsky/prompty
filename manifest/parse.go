@@ -57,6 +57,7 @@ type ParseOption func(*parseOpts)
 
 type parseOpts struct {
 	partialsGlob      string
+	partialSources    map[string]string
 	partialsFS        fs.FS
 	partialsFSPattern string
 	compose           *ComposeContext
@@ -86,6 +87,11 @@ func WithComposeValues(values prompty.ComposeValues) ParseOption {
 // WithPartialsGlob sets a glob for partials when loading from file (e.g. "_partials/*.tmpl").
 func WithPartialsGlob(glob string) ParseOption {
 	return func(o *parseOpts) { o.partialsGlob = glob }
+}
+
+// WithPartialSources supplies already captured partial templates.
+func WithPartialSources(sources map[string]string) ParseOption {
+	return func(o *parseOpts) { o.partialSources = sources }
 }
 
 // WithPartialsFS sets [fs.FS] and pattern for partials (e.g. embed and "partials/*.tmpl").
@@ -159,6 +165,9 @@ func BuildFromRaw(raw *RawManifest, po *parseOpts) (*prompty.ChatPromptTemplate,
 	}
 	opts = append(opts, schemaOpts...)
 	opts = appendManifestRuntimeOptions(opts, raw, po)
+	if po != nil && po.partialSources != nil {
+		opts = append(opts, prompty.WithPartialSources(po.partialSources))
+	}
 	return prompty.NewChatPromptTemplate(messages, opts...)
 }
 

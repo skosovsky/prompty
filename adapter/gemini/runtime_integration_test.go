@@ -22,7 +22,7 @@ func TestIntegrationRuntimeClientDescriptor(t *testing.T) {
 	// Assert.
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", descriptor.Name)
-	assert.Empty(t, descriptor.Capabilities)
+	assert.Empty(t, descriptor.Profiles)
 }
 
 func TestIntegrationEstimateTokens_GeminiAdapter(t *testing.T) {

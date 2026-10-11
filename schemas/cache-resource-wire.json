@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prompty.invalid/cache-resource-wire",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "identity", "account_binding", "provider_id", "content_digest", "expires_at", "state"],
+  "properties": {
+    "format": {"const": "prompty.cache_resource"},
+    "identity": {"$ref": "https://prompty.invalid/wire-common#/$defs/identity"},
+    "account_binding": {"type": "string", "minLength": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "content_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "state": {"enum": ["active", "expired", "deleted", "unknown"]}
+  }
+}

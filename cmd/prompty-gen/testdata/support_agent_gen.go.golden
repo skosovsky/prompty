@@ -3,6 +3,7 @@
 package prompts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,8 +13,31 @@ import (
 const SupportAgent PromptID = "support_agent"
 
 type SupportAgentInput struct {
-	BotName   *string `json:"bot_name,omitempty" prompt:"bot_name"`
-	UserQuery string  `json:"user_query" prompt:"user_query" validate:"required"`
+	BotName   *string `json:"bot_name,omitempty" prompt:"bot_name,omitempty"`
+	UserQuery string  `json:"user_query" prompt:"user_query"`
+}
+
+func (value SupportAgentInput) JSONSchema() prompty.JSONDocument {
+	return prompty.JSONDocument("{\"properties\":{\"bot_name\":{\"default\":\"SupportBot\",\"type\":\"string\"},\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}")
+}
+
+func (value SupportAgentInput) ValidateSchema() error {
+	return prompty.ValidateSchemaValue(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"bot_name\":{\"default\":\"SupportBot\",\"type\":\"string\"},\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}"), Dialect: ""}, value)
+}
+
+func (value *SupportAgentInput) UnmarshalJSON(document []byte) error {
+	if err := prompty.ValidateSchemaJSON(&prompty.SchemaDefinition{Schema: prompty.JSONDocument("{\"properties\":{\"bot_name\":{\"default\":\"SupportBot\",\"type\":\"string\"},\"user_query\":{\"type\":\"string\"}},\"required\":[\"user_query\"],\"type\":\"object\"}"), Dialect: ""}, document); err != nil {
+		return err
+	}
+	type decodedValue SupportAgentInput
+	var decoded decodedValue
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*value = SupportAgentInput(decoded)
+	return nil
 }
 
 type SupportAgentPrompt struct {
@@ -33,7 +57,7 @@ func NewSupportAgentRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCh
 		v := "SupportBot"
 		input.BotName = &v
 	}
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return SupportAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {
@@ -79,11 +103,11 @@ func (r SupportAgentRecipe) JSONSchema() (prompty.JSONDocument, error) {
 	return prompty.CloneJSONDocument(format.Schema), nil
 }
 
-func (r SupportAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r SupportAgentRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r SupportAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r SupportAgentRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 
@@ -99,7 +123,7 @@ func (p *SupportAgentPrompt) newRecipe(ctx context.Context, input SupportAgentIn
 		v := "SupportBot"
 		input.BotName = &v
 	}
-	if err := validate.Struct(&input); err != nil {
+	if err := input.ValidateSchema(); err != nil {
 		return SupportAgentRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	if _, err := prompty.PlanInputFrom(input); err != nil {

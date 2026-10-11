@@ -22,7 +22,8 @@ func TestComposeValues_EmptyMapIsRuntimeStrict(t *testing.T) {
 		Query string `prompt:"query"`
 	}{Query: "hi"})
 	require.NoError(t, err)
-	withEmpty := PlanInputWithComposeContext(base, testComposeValuesContext{values: NewComposeValuesFromPairs()})
+	withEmpty, err := PlanInputWithComposeContext(base, testComposeValuesContext{values: NewComposeValuesFromPairs()})
+	require.NoError(t, err)
 	assert.True(t, withEmpty.ComposeValues().IsSet())
 	_, ok := withEmpty.ComposeValues().Lookup("capabilities.workspace_enabled")
 	assert.False(t, ok)
@@ -35,12 +36,13 @@ func TestPlanInputWithComposeContext_ReturnsClonedValues(t *testing.T) {
 	}{Query: "hi"})
 	require.NoError(t, err)
 
-	withCaps := PlanInputWithComposeContext(
+	withCaps, err := PlanInputWithComposeContext(
 		base,
 		testComposeValuesContext{values: NewComposeValuesFromPairs(
 			ComposeBool("capabilities.workspace_enabled", true),
 		)},
 	)
+	require.NoError(t, err)
 	got, ok := withCaps.ComposeValues().Lookup("capabilities.workspace_enabled")
 	require.True(t, ok)
 	assert.True(t, got.(bool))
@@ -60,7 +62,8 @@ func TestPlanInputWithComposeContext_UsesTypedPairs(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := testComposeContext{workspaceEnabled: true}
-	withCtx := PlanInputWithComposeContext(base, ctx)
+	withCtx, err := PlanInputWithComposeContext(base, ctx)
+	require.NoError(t, err)
 
 	got, ok := withCtx.ComposeValues().Lookup("capabilities.workspace_enabled")
 	require.True(t, ok)

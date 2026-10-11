@@ -1,6 +1,7 @@
 package yaml
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/skosovsky/prompty"
@@ -179,11 +180,10 @@ messages:
 	assert.InDelta(t, 0.8, *raw.ModelOptions.TopP, 1e-9)
 	assert.Equal(t, []string{"END"}, raw.ModelOptions.Stop)
 	require.NotNil(t, raw.ModelOptions.ProviderSettings)
-	assert.InDelta(
+	assert.Equal(
 		t,
-		0.5,
-		prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["frequency_penalty"].(float64),
-		1e-9,
+		json.Number("0.5"),
+		prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["frequency_penalty"],
 	)
 	assert.Equal(t, true, prompty.MustJSONDocumentAsMap(raw.ModelOptions.ProviderSettings)["custom_flag"])
 }
@@ -266,12 +266,12 @@ version: "1"
 messages:
   - role: system
     cache_policy:
-      type: ephemeral
+      mechanism: block_marker
     content:
       - type: text
         text: "Policy"
         cache_policy:
-          type: ephemeral
+          mechanism: block_marker
   - role: user
     content: "Hi"
 `)
@@ -280,10 +280,10 @@ messages:
 	require.NoError(t, err)
 	require.Len(t, raw.Messages, 2)
 	require.NotNil(t, raw.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", raw.Messages[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, raw.Messages[0].CachePolicy.Mechanism)
 	require.Len(t, raw.Messages[0].Content, 1)
 	require.NotNil(t, raw.Messages[0].Content[0].CachePolicy)
-	assert.Equal(t, "ephemeral", raw.Messages[0].Content[0].CachePolicy.Type)
+	assert.Equal(t, prompty.CacheBlockMarker, raw.Messages[0].Content[0].CachePolicy.Mechanism)
 }
 
 func TestUnmarshal_LegacyCacheFieldRejected(t *testing.T) {

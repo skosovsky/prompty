@@ -30,5 +30,5 @@ func TestEmbedregistry_PlanInputFrom_NilOptionals(t *testing.T) {
 	exec, err := plan.Execute(ctx)
 	require.NoError(t, err)
 	require.Len(t, exec.Messages, 1)
-	assert.Equal(t, "flag=false tags=0", exec.Messages[0].Content[0].(prompty.TextPart).Text)
+	assert.Equal(t, "flag=null tags=null", exec.Messages[0].Content[0].(prompty.TextPart).Text)
 }

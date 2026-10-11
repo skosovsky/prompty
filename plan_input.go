@@ -1,21 +1,30 @@
 package prompty
 
 import (
+	"errors"
 	"fmt"
-	"maps"
+	"math"
 	"strings"
 )
+
+var ErrComposeValues = errors.New("prompty: invalid compose values")
 
 // RegistryPlanInput is an opaque token: payload already bound for template rendering.
 type RegistryPlanInput struct {
 	boundVars     map[string]any
 	chatHistory   []ChatMessage
+	historyValues map[string]any
 	composeValues map[string]any
 	composeSet    bool
 }
 
 // PlanInputFrom binds a typed payload for Registry.Plan (fail-fast before registry access).
 func PlanInputFrom[T any](payload T) (RegistryPlanInput, error) {
+	if check, ok := any(payload).(interface{ ValidateSchema() error }); ok {
+		if err := check.ValidateSchema(); err != nil {
+			return RegistryPlanInput{}, fmt.Errorf("plan input schema: %w", err)
+		}
+	}
 	vars, history, err := bindTemplateVars(payload)
 	if err != nil {
 		return RegistryPlanInput{}, fmt.Errorf("plan input: %w", err)
@@ -26,28 +35,18 @@ func PlanInputFrom[T any](payload T) (RegistryPlanInput, error) {
 	return RegistryPlanInput{
 		boundVars:     vars,
 		chatHistory:   history,
+		historyValues: historySchemaValues(payload),
 		composeValues: nil,
 		composeSet:    false,
 	}, nil
 }
 
 func (r RegistryPlanInput) isEmpty() bool {
-	return len(r.boundVars) == 0 && len(r.chatHistory) == 0
+	return len(r.boundVars) == 0 && len(r.chatHistory) == 0 && len(r.historyValues) == 0
 }
 
 func cloneComposeMap(values map[string]any) map[string]any {
-	if values == nil {
-		return nil
-	}
-	out := make(map[string]any, len(values))
-	for k, v := range values {
-		if nested, ok := v.(map[string]any); ok {
-			out[k] = maps.Clone(nested)
-			continue
-		}
-		out[k] = v
-	}
-	return out
+	return cloneMapAny(values)
 }
 
 // ComposeValues is an opaque typed token for manifest condition.match evaluation.
@@ -90,36 +89,59 @@ func newComposeValuesFromMap(values map[string]any) ComposeValues {
 	return ComposeValues{values: cloneComposeMap(values), set: true}
 }
 
-// NewComposeValuesFromPairs builds compose values from typed path/value pairs.
+// NewComposeValuesFromPairs builds programmer-supplied compose values.
+// It panics on invalid paths/collisions; use CheckedComposeValuesFromPairs
+// for error-return admission of dynamic input.
 func NewComposeValuesFromPairs(pairs ...ComposeValue) ComposeValues {
-	values := make(map[string]any)
-	for _, pair := range pairs {
-		if pair.path == "" {
-			continue
-		}
-		setComposeDotPath(values, pair.path, pair.value)
+	values, err := CheckedComposeValuesFromPairs(pairs...)
+	if err != nil {
+		panic(err)
 	}
-	return ComposeValues{values: values, set: true}
+	return values
 }
 
-func setComposeDotPath(dst map[string]any, path string, value any) {
+// CheckedComposeValuesFromPairs rejects invalid input atomically.
+func CheckedComposeValuesFromPairs(pairs ...ComposeValue) (ComposeValues, error) {
+	values := make(map[string]any)
+	for _, pair := range pairs {
+		if value, ok := pair.value.(float64); ok && (math.IsNaN(value) || math.IsInf(value, 0)) {
+			return ComposeValues{}, fmt.Errorf("%w: nonfinite value for %q", ErrComposeValues, pair.path)
+		}
+		if err := setComposeDotPath(values, pair.path, pair.value); err != nil {
+			return ComposeValues{}, err
+		}
+	}
+	return ComposeValues{values: values, set: true}, nil
+}
+
+func setComposeDotPath(dst map[string]any, path string, value any) error {
 	parts := strings.Split(path, ".")
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			return fmt.Errorf("%w: empty segment in %q", ErrComposeValues, path)
+		}
+	}
 	cur := dst
 	for i, part := range parts {
-		if part == "" {
-			return
-		}
 		if i == len(parts)-1 {
+			if _, exists := cur[part]; exists {
+				return fmt.Errorf("%w: repeated or colliding path %q", ErrComposeValues, path)
+			}
 			cur[part] = value
-			return
+			return nil
 		}
-		next, ok := cur[part].(map[string]any)
-		if !ok {
+		node, exists := cur[part]
+		next, ok := node.(map[string]any)
+		if exists && !ok {
+			return fmt.Errorf("%w: scalar parent in %q", ErrComposeValues, path)
+		}
+		if !exists {
 			next = make(map[string]any)
 			cur[part] = next
 		}
 		cur = next
 	}
+	return nil
 }
 
 // IsSet reports whether compose values were intentionally provided.
@@ -137,7 +159,7 @@ func (v ComposeValues) mapValue() map[string]any {
 	return cloneComposeMap(v.values)
 }
 
-// Lookup returns a runtime compose value by dot path.
+// Lookup returns an owned copy of a runtime compose value by dot path.
 func (v ComposeValues) Lookup(path string) (any, bool) {
 	if !v.set || path == "" {
 		return nil, false
@@ -155,7 +177,7 @@ func (v ComposeValues) Lookup(path string) (any, bool) {
 		}
 		cur = next
 	}
-	return cur, true
+	return cloneAny(cur), true
 }
 
 // ComposeContext is the typed public contract generated prompt packages can implement.
@@ -174,11 +196,24 @@ func planInputWithComposeValues(in RegistryPlanInput, values ComposeValues) Regi
 }
 
 // PlanInputWithComposeContext attaches runtime compose values from a typed compose context.
-func PlanInputWithComposeContext(in RegistryPlanInput, ctx ComposeContext) RegistryPlanInput {
-	if ctx == nil {
-		return in
+func PlanInputWithComposeContext(in RegistryPlanInput, ctx ComposeContext) (RegistryPlanInput, error) {
+	values, err := admittedComposeValues(ctx)
+	if err != nil {
+		return RegistryPlanInput{}, err
 	}
-	return planInputWithComposeValues(in, ctx.ComposeValues())
+	return planInputWithComposeValues(in, values), nil
+}
+
+func admittedComposeValues(ctx ComposeContext) (ComposeValues, error) {
+	if ctx == nil {
+		return ComposeValues{}, nil
+	}
+	if validator, ok := ctx.(interface{ ValidateComposeContext() error }); ok {
+		if err := validator.ValidateComposeContext(); err != nil {
+			return ComposeValues{}, err
+		}
+	}
+	return ctx.ComposeValues(), nil
 }
 
 // ComposeValues returns runtime compose values for declarative manifest composition.

@@ -20,11 +20,15 @@ response_format:
       count:
         type: integer
       tags:
-        type: array
-        items:
-          type: string
+        anyOf:
+          - type: array
+            items:
+              type: string
+          - type: "null"
       score:
-        type: number
+        anyOf:
+          - type: number
+          - type: "null"
       details:
         type: object
         properties:
@@ -37,6 +41,7 @@ response_format:
       - id
       - name
       - tags
+      - score
       - details
     additionalProperties: false
 

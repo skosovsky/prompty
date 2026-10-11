@@ -1,0 +1,4 @@
+# github.com/skosovsky/prompty/adapter/anthropic [github.com/skosovsky/prompty/adapter/anthropic.test]
+adapter/anthropic/hosted_stream_test.go:86:54: restored.ToMessage undefined (type *prompty.Response has no field or method ToMessage)
+FAIL    github.com/skosovsky/prompty/adapter/anthropic [build failed]
+FAIL

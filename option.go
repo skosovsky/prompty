@@ -3,6 +3,7 @@ package prompty
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 )
 
 // ChatTemplateOption configures ChatPromptTemplate (functional options pattern).
@@ -15,7 +16,7 @@ func WithPartialVariablesJSON(doc JSONDocument) (ChatTemplateOption, error) {
 		return nil, fmt.Errorf("partial variables: %w", err)
 	}
 	return func(c *ChatPromptTemplate) {
-		c.PartialVariables = vars
+		c.PartialVariables = cloneMapAny(vars)
 	}, nil
 }
 
@@ -90,6 +91,12 @@ func WithPartialsGlob(glob string) ChatTemplateOption {
 	return func(c *ChatPromptTemplate) {
 		c.partialsGlob = glob
 	}
+}
+
+// WithPartialSources compiles captured named partial bytes without source I/O.
+// Names are sorted in lexical order; implicit template names use the basename.
+func WithPartialSources(sources map[string]string) ChatTemplateOption {
+	return func(t *ChatPromptTemplate) { t.partialSources = maps.Clone(sources) }
 }
 
 // WithPartialsFS sets an [fs.FS] and pattern for partials (e.g. embed FS and "partials/*.tmpl"); enables {{ template "name" }}.

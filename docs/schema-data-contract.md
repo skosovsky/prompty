@@ -1,0 +1,58 @@
+# Schema and JSON data contract
+
+Dynamic JSON objects decode numbers as `json.Number`. Nested objects, arrays, runtime checkpoint inputs and late overlays retain integer, decimal and exponent values without float64 conversion. A caller-selected numeric DTO field uses that Go type's conversion semantics. Structural schema comparison ignores object key order and compares decimal numbers exactly: `1`, `1.0` and `1e0` agree; adjacent integers above 2^53 do not. Invalid documents never agree. This comparison does not prove logical equivalence of schemas.
+
+`ExtractSchema(value)` returns `(map[string]any, error)`. Explicit `SchemaProvider` documents take precedence and must compile. A malformed provider never triggers reflection fallback. A provider selects its dialect through `$schema`; downstream definitions retain this selection. Reflection supports scalar fields, structs, arrays and slices, `omitempty`, `omitzero`, pointers, embedded-field dominance and `json:",string"`. Nil pointers and slices are nullable; omission differs from null. Invalid JSON tag names, recursive types, custom JSON/text codecs without a provider and unsupported types return an error before dispatch. Supply an explicit schema for those types. A field-level provider combined with `json:",string"` is rejected because inference cannot generally project its constraints through that codec; provide the enclosing type's wire schema instead. Cycle/depth errors include recursive slice and pointer shapes.
+
+JSON Schema validation is independent of a caller's domain `Validate()` and validation tags. Generated DTOs expose `JSONSchema()` and `ValidateSchema()`, with no generated domain validation tags. Their JSON decoder validates the source document before decoding into Go fields, so missing required values differ from explicit zero, false or empty string. A caller-created DTO serializes all required fields; zero is a present value. Optional generated fields use an outer pointer to distinguish absence from a present empty value. Optional nullable scalar/object fields use two pointer levels: nil outer means absent, non-nil outer with nil inner means explicit null. Nullable slices/maps use a pointer to a nil collection for explicit null. Their decoders preserve these states, including nested fields, nullable array items and typed map values. Nullable root structs require caller-owned pointer types. Generated numeric fields use json.Number, including integer fields; the schema determines which numeric values are valid. Caller-created required numeric fields follow encoding/json: the empty Go json.Number zero value serializes as 0 and is a present value. Applications can bring their own numeric types and explicit schemas. Open schemas permit unknown JSON fields; Go DTO decoding follows encoding/json's projection onto declared fields. Schema constraints are checked again on the typed representation. Generated declared-field structs reject required names outside properties and open-object presence/conditional/reference constraints that need unknown fields to survive projection. Use a closed schema or caller-owned type for those cases.
+
+Input composition unions required names and fields. Every repeated property's whole contract must agree, including nested constraints and late metadata. Different root constraints are rejected. Adding fields to a contract with restricted additional/unevaluated properties is rejected. There is no local override or compatibility solver. Full input validation runs after combining early and late bindings, before rendering-only optional late defaults. Prompt projection preserves nil as null and uses `prompt` tags independently of JSON tags; generated optional prompt fields explicitly use `prompt:"name,omitempty"`.
+
+Schema references are resolved by the existing isolated JSON Schema engine. No implicit network or filesystem resolver is installed. Inferred structured streams bundle referenced item schemas once behind an item resource boundary, so local refs retain their item scope; explicitly supplied response schemas describe the whole stream document. Generated early/late partitions retain supported root constraints and local definitions. Root constraints that cannot be projected across early/late fields are rejected during generation; full runtime validation still checks the combined original schema. YAML numbers remain exact; non-JSON numeric values such as `.nan` and `.inf`, non-string object keys and recursive aliases return manifest errors.
+
+This is a breaking contract. Update `ExtractSchema` callers to handle errors, regenerate DTOs, replace assumptions about dynamic float64 values with json.Number, and remove reliance on required meaning nonzero or on composed local overrides.
+
+## Checked schema boundaries (task45)
+
+Exact decimal structural equality applies to schema composition, ToolScope matching and the strict provider mapper's no-transformation comparison, including numbers nested in arrays and objects. Compare finite decimal values without float64 or lexeme equality; `-0` and `0` agree. Document/schema digests continue to hash their designated original/canonical bytes: semantic equality does not authorize rewriting numbers or equating byte digests. Invalid JSON does not compare equal, even to the same invalid input.
+
+Reflection resolves encoding/json embedded-field dominance before inspecting a selected field's type, tags or codecs. Ignored, shadowed and ambiguous fields do not contribute schema or inference errors. Selected unsupported fields still fail. SchemaProvider is a pure, stable type-level declaration on a zero instance, not a live-value schema. Injected schema compilers receive private schema copies; their interface remains read-only and they must not mutate inputs. CompileProviderSchema uses the shared compileSchemaSnapshot guard for both source and translated schemas: a successful compile that changes their structural contract is rejected before mapping/dispatch. Harmless exact-decimal or object-order normalization is allowed under the same structural equality; byte digests still refer to the retained documents. This is hardening for a violated host-port contract, not evidence of an ordinary validator defect, and cannot detect a validator that lies without changing its input.
+
+PlanInputFrom runs ValidateSchema before binding, including for empty and history-only structs. A structurally valid empty payload is supported; validator, history and binding errors are preserved and prevent registry access. Recipe variants share that admission rule; empty input is never an error-recovery policy.
+
+Compose paths consist of nonblank dot-separated segments. Empty paths/segments, repeated paths, scalar-parent/child collisions and nonfinite numeric values fail atomically with ErrComposeValues. CheckedComposeValuesFromPairs returns a zero unset token on failure; NewComposeValuesFromPairs is the programmer-input convenience constructor and panics on the same invalid input. Valid empty pairs produce a set empty token. Neither constructor repairs paths or resolves collisions by insertion order. PlanInputWithComposeContext now returns an error and invokes optional ValidateComposeContext before calling ComposeValues, using the same admission helper as PromptRuntimeOptionsFromComposeContext. Nil context remains a no-op; typed-nil implementations remain caller misuse.
+
+CachePolicy.Mode is the defined CacheMode string type with CacheAdvisory and CacheRequired values; empty remains advisory. JSON/YAML strings are unchanged. Arbitrary runtime strings require explicit conversion and still undergo ValidateCachePolicy; this is a type distinction, not a provider TTL guarantee.
+
+RenderPlan constructors take an owned template snapshot. With methods may share
+that private read-only template between sibling plans; they copy their mutable
+late variables, schema and tool-scope overrides. Template() still returns an
+independent defensive clone, and materialization owns its published execution.
+Sharing the private snapshot does not permit callers or host functions to mutate
+template state and does not create a general copy-on-write object graph.
+
+Typed and no-late recipes share input admission and verified plan construction.
+Raw runtime checkpoints retain explicit strict JSON decoding because their binding
+surface is different; all use VerifiedManifestPlan to bind descriptor and captured
+source. Public Runtime names remain prompt-materialization bindings, not agent-run
+checkpoints, session state or scheduler APIs.
+
+Reference-origin diagnostic probing remains an engine-owned error explanation,
+not a second validator or successful-validation fallback. Retained references
+use the same engine resources; diagnostic failure leaves compilation failed.
+Graph size can be expensive even on rejection: local 1k/10k-edge measurements
+are in task45-performance.md. Hosts bound schema admission/remote-resource policy
+before compilation; diagnostics do not promise a global byte/time budget.
+
+Go template dependency extraction follows dot and variable scope: range/with local fields are not required root inputs; explicit root Input references, variable aliases, else branches and named template invocation retain their real dependencies. Optional-message skipping uses the same dependencies. Explicit schema required constraints and actual template missing-key errors remain enforced; uncertain inference must not invent root fields.
+
+The [ownership table](README.md#ownership-and-concurrency) specifies admissible acyclic materialization values and mutable DTO boundaries. ExtractSchema dereferences a root pointer as a DTO declaration; nullable roots need an explicit nullable schema. Integer inference expresses JSON integer, not machine-range bounds: typed decoding still rejects overflow. Schema compile/validation costs depend on supplied graphs; reflection depth limits are not universal byte/time budgets and CompileSchema has no cancellation context. Hosts bound admission before compilation. Mapper transformation ledgers are trusted claims, not a semantic completeness proof.
+
+NewRenderPlan is a convenience constructor requiring a non-nil template; nil is programmer misuse and panics immediately. Error-returning NewRenderPlanFromPlanInput remains the checked input boundary. A zero RenderPlan is not initialized. Scratch map pooling retains only projections of at most 1024 entries; larger projections are per-call allocations. The limit bounds retained entry count, not a universal heap-byte cap.
+
+Template randomHex and escapeXML format delimiters/markup; they do not prevent model prompt injection. randomHex propagates an RNG-port failure as a render error instead of returning an empty delimiter. truncate_tokens uses the configured counter (heuristic by default), assumes prefix monotonicity for binary search and does not certify the complete billed request or an optimal prefix for a non-monotonic tokenizer.
+
+Anonymous embedding cycles are skipped during JSON field metadata discovery, as
+encoding/json does; only surviving fields undergo schema inference. This metadata
+walk is separate from selected-value recursion admission: a recursive named value
+that survives dominance still requires an explicit SchemaProvider or fails.

@@ -23,9 +23,9 @@ func TestWithTracing_Execute_WrapsNext(t *testing.T) {
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
 				yield(
-					&prompty.ResponseChunk{
-						Content:    []prompty.ContentPart{prompty.TextPart{Text: "ok"}},
-						IsFinished: true,
+					&prompty.ResponseChunk{Identity: prompty.StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
+						Content: []prompty.ContentPart{prompty.TextPart{Text: "ok"}},
+						Kind:    prompty.StreamFinish, Outcome: prompty.OutcomeCompleted,
 					},
 					nil,
 				)
@@ -72,25 +72,25 @@ func TestWithTracing_ExecuteStream_WrapsNext(t *testing.T) {
 		},
 		generateStream: func(_ context.Context, _ *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
-				yield(&prompty.ResponseChunk{IsFinished: true}, nil)
+				yield(&prompty.ResponseChunk{Kind: prompty.StreamFinish, Outcome: prompty.OutcomeCompleted}, nil)
 			}
 		},
 	}
 	mw := WithTracing()
 	inv := mw(base)
-	seq := inv.ExecuteStream(context.Background(), &prompty.PromptExecution{})
+	seq := inv.ExecuteStream(context.Background(), &prompty.PromptExecution{}, prompty.StreamNative)
 	count := 0
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		if err != nil {
 			require.NoError(t, err)
 		}
 		count++
 	}
-	assert.Equal(t, 1, count, "stream should yield one chunk")
+	assert.Equal(t, 2, count, "finish marker and one terminal event")
 }
 
 // TestWithTracing_ExecuteStream_InterruptedStream verifies that when the consumer
-// stops early (yield=false), metrics (latency_ms, tokens_total, finish_reason) are still recorded
+// stops early (yield=false), the wrapper preserves consumer-stop completion.
 // via the defer finalizer. The stream yields one chunk with tokens and FinishReason, then consumer
 // stops; we assert no panic and that the iterator terminates.
 func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
@@ -103,8 +103,10 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 			return func(yield func(*prompty.ResponseChunk, error) bool) {
 				// First chunk has tokens and finish reason; consumer stops after it (yield=false)
 				chunk := &prompty.ResponseChunk{
+					Identity:     prompty.StreamIdentity{MessageID: "", PartIDs: []string{"text"}},
 					Content:      []prompty.ContentPart{prompty.TextPart{Text: "a"}},
-					IsFinished:   true,
+					Kind:         prompty.StreamFinish,
+					Outcome:      prompty.OutcomeCompleted,
 					FinishReason: "stop",
 					Usage:        prompty.Usage{TotalTokens: 42},
 				}
@@ -117,9 +119,10 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	count := 0
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		if err != nil {
 			require.NoError(t, err)
 		}
@@ -136,7 +139,7 @@ func TestWithTracing_ExecuteStream_InterruptedStream(t *testing.T) {
 }
 
 // TestWithTracing_ExecuteStream_ProviderError verifies that when the base invoker yields an error,
-// it propagates to the consumer and the middleware does not panic. Defer still records latency_ms.
+// it propagates to the consumer and the middleware does not panic.
 func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("stream backend error")
@@ -155,9 +158,10 @@ func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	var gotErr error
-	for _, err := range seq {
+	for _, err := range seq.Events() {
 		gotErr = err
 		break
 	}
@@ -165,9 +169,9 @@ func TestWithTracing_ExecuteStream_ProviderError(t *testing.T) {
 	assert.ErrorIs(t, gotErr, wantErr)
 }
 
-// TestWithTracing_Execute_ErrorPathRecordsLatency verifies that when Execute returns an error,
-// the middleware records latency_ms via defer and propagates the error without panic.
-func TestWithTracing_Execute_ErrorPathRecordsLatency(t *testing.T) {
+// TestWithTracing_Execute_ErrorPathPropagatesCause verifies that when Execute returns an error,
+// the middleware propagates the error without panic.
+func TestWithTracing_Execute_ErrorPathPropagatesCause(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("sync backend error")
 	base := &invokerStub{
@@ -186,7 +190,7 @@ func TestWithTracing_Execute_ErrorPathRecordsLatency(t *testing.T) {
 }
 
 // TestWithTracing_ExecuteStream_EmptyStream verifies that when the stream yields no chunks,
-// the middleware completes without panic and defer still runs (recording latency_ms only).
+// the middleware completes without panic and closes the lifecycle.
 func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 	t.Parallel()
 	base := &invokerStub{
@@ -195,7 +199,7 @@ func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 		},
 		generateStream: func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
 			return func(_ func(*prompty.ResponseChunk, error) bool) {
-				// No chunks yielded; defer records only latency_ms
+				// No chunks yielded; the lifecycle still closes.
 			}
 		},
 	}
@@ -204,15 +208,14 @@ func TestWithTracing_ExecuteStream_EmptyStream(t *testing.T) {
 	seq := inv.ExecuteStream(
 		context.Background(),
 		&prompty.PromptExecution{Metadata: prompty.PromptMetadata{ID: "test"}},
+		prompty.StreamNative,
 	)
 	count := 0
-	for _, err := range seq {
-		if err != nil {
-			require.NoError(t, err)
-		}
+	for _, err := range seq.Events() {
+		require.ErrorIs(t, err, prompty.ErrStreamProtocol)
 		count++
 	}
-	assert.Equal(t, 0, count, "empty stream yields zero chunks")
+	assert.Equal(t, 1, count, "missing finish yields one failed terminal")
 }
 
 // TestWithTracing_Execute_RecordsFinishReason exercises the sync path where Response has FinishReason.
@@ -252,6 +255,41 @@ func (i *invokerStub) Execute(ctx context.Context, exec *prompty.PromptExecution
 func (i *invokerStub) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return i.generateStream(ctx, exec)
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	return prompty.NewStream(ctx, mode, func(ctx context.Context) iter.Seq2[*prompty.ResponseChunk, error] {
+		return i.generateStream(ctx, exec)
+	})
+}
+
+func TestTracingRejectsChangedToolScopeBeforeNext(t *testing.T) {
+	t.Parallel()
+	// Arrange: tracing cannot defer this core boundary to a custom next invoker.
+	calls := 0
+	next := &invokerStub{
+		generate: func(context.Context, *prompty.PromptExecution) (*prompty.Response, error) {
+			calls++
+			return prompty.NewResponse([]prompty.ContentPart{prompty.TextPart{Text: "ok"}}), nil
+		},
+		generateStream: func(context.Context, *prompty.PromptExecution) iter.Seq2[*prompty.ResponseChunk, error] {
+			calls++
+			return func(func(*prompty.ResponseChunk, error) bool) {}
+		},
+	}
+	execution := prompty.SimplePrompt("work")
+	execution.Tools = []prompty.ToolDefinition{{Name: "read"}}
+	execution, err := execution.WithToolScope(prompty.ToolScope{Allowed: []prompty.ToolManifest{{Name: "read"}}})
+	require.NoError(t, err)
+	execution.Tools[0].Name = "delete_all"
+	invoker := WithTracing()(next)
+	// Act.
+	_, err = invoker.Execute(context.Background(), execution)
+	stream := invoker.ExecuteStream(context.Background(), execution, prompty.StreamNative)
+	for _, streamErr := range stream.Events() {
+		require.ErrorIs(t, streamErr, prompty.ErrToolScope)
+	}
+	// Assert.
+	require.ErrorIs(t, stream.Status().Err, prompty.ErrToolScope)
+	require.ErrorIs(t, err, prompty.ErrToolScope)
+	require.Zero(t, calls)
 }

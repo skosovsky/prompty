@@ -12,7 +12,7 @@ func TestExecuteWithTypedTools_InvokesHandler(t *testing.T) {
 	t.Parallel()
 
 	var invoked bool
-	tool, err := NewTypedTool("greet", func(a greetArgs) (string, error) {
+	tool, err := NewTypedTool("greet", func(_ context.Context, a greetArgs) (string, error) {
 		invoked = true
 		return "hi " + a.Name, nil
 	})
@@ -29,7 +29,9 @@ func TestExecuteWithTypedTools_InvokesHandler(t *testing.T) {
 		},
 	}
 
-	result, err := ExecuteWithTypedTools(context.Background(), invoker, SimplePrompt("hi"), reg)
+	exec := SimplePrompt("hi")
+	exec.Tools = reg.Definitions()
+	result, err := ExecuteWithTypedTools(context.Background(), invoker, exec, reg)
 	require.NoError(t, err)
 	require.True(t, invoked)
 	require.Len(t, result.Messages, 3)
@@ -44,7 +46,7 @@ func TestExecuteWithTypedTools_ValidationErrorDoesNotInvoke(t *testing.T) {
 	t.Parallel()
 
 	var invoked bool
-	tool, err := NewTypedTool("greet", func(_ greetArgs) (string, error) {
+	tool, err := NewTypedTool("greet", func(_ context.Context, _ greetArgs) (string, error) {
 		invoked = true
 		return "hi", nil
 	})
@@ -61,7 +63,9 @@ func TestExecuteWithTypedTools_ValidationErrorDoesNotInvoke(t *testing.T) {
 		},
 	}
 
-	_, err = ExecuteWithTypedTools(context.Background(), invoker, SimplePrompt("hi"), reg)
+	exec := SimplePrompt("hi")
+	exec.Tools = reg.Definitions()
+	_, err = ExecuteWithTypedTools(context.Background(), invoker, exec, reg)
 	require.Error(t, err)
 	assert.False(t, invoked)
 }

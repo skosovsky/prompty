@@ -1,0 +1,63 @@
+--- FAIL: TestStreamObservationModelAndInterruptionCause (0.00s)
+    --- FAIL: TestStreamObservationModelAndInterruptionCause/closed (0.00s)
+        response_observation_test.go:79:
+                Error Trace:    /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/prompty/response_observation_test.go:79
+                Error:          Not equal:
+                                expected: "closed"
+                                actual  : ""
+
+                                Diff:
+                                --- Expected
+                                +++ Actual
+                                @@ -1,2 +1,2 @@
+                                -(prompty.StreamStopReason) (len=6) "closed"
+                                +(prompty.StreamStopReason) ""
+
+                Test:           TestStreamObservationModelAndInterruptionCause/closed
+    --- FAIL: TestStreamObservationModelAndInterruptionCause/#00 (0.00s)
+        response_observation_test.go:80:
+                Error Trace:    /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/prompty/response_observation_test.go:80
+                Error:          Not equal:
+                                expected: "observed"
+                                actual  : ""
+
+                                Diff:
+                                --- Expected
+                                +++ Actual
+                                @@ -1 +1 @@
+                                -observed
+                                +
+                Test:           TestStreamObservationModelAndInterruptionCause/#00
+    --- FAIL: TestStreamObservationModelAndInterruptionCause/canceled (0.00s)
+        response_observation_test.go:79:
+                Error Trace:    /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/prompty/response_observation_test.go:79
+                Error:          Not equal:
+                                expected: "canceled"
+                                actual  : ""
+
+                                Diff:
+                                --- Expected
+                                +++ Actual
+                                @@ -1,2 +1,2 @@
+                                -(prompty.StreamStopReason) (len=8) "canceled"
+                                +(prompty.StreamStopReason) ""
+
+                Test:           TestStreamObservationModelAndInterruptionCause/canceled
+    --- FAIL: TestStreamObservationModelAndInterruptionCause/consumer_stop (0.00s)
+        response_observation_test.go:79:
+                Error Trace:    /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/prompty/response_observation_test.go:79
+                Error:          Not equal:
+                                expected: "consumer_stop"
+                                actual  : ""
+
+                                Diff:
+                                --- Expected
+                                +++ Actual
+                                @@ -1,2 +1,2 @@
+                                -(prompty.StreamStopReason) (len=13) "consumer_stop"
+                                +(prompty.StreamStopReason) ""
+
+                Test:           TestStreamObservationModelAndInterruptionCause/consumer_stop
+FAIL
+FAIL    github.com/skosovsky/prompty    0.674s
+FAIL

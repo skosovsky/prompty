@@ -1,0 +1,6 @@
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+adapter/anthropic/hosted_stream.go:111:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+    for index := int64(0); index < int64(len(s.blocks)); index++ {
+    ^
+1 issues:
+* intrange: 1

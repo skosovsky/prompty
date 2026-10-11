@@ -127,14 +127,14 @@ func TestPromptExecution_HelpersPreserveCachePolicy(t *testing.T) {
 		Messages: []ChatMessage{
 			{
 				Role:        RoleSystem,
-				CachePolicy: &CachePolicy{Type: "ephemeral"},
+				CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 				Content: []ContentPart{
-					TextPart{Text: "System", CachePolicy: &CachePolicy{Type: "ephemeral"}},
+					TextPart{Text: "System", CachePolicy: &CachePolicy{Mechanism: "block_marker"}},
 					MediaPart{
 						MediaType:   "image",
 						MIMEType:    "image/png",
 						Data:        []byte{0x89, 0x50, 0x4e, 0x47},
-						CachePolicy: &CachePolicy{Type: "ephemeral"},
+						CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 					},
 				},
 			},
@@ -144,47 +144,47 @@ func TestPromptExecution_HelpersPreserveCachePolicy(t *testing.T) {
 	history := []ChatMessage{
 		{
 			Role:        RoleUser,
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Content: []ContentPart{
-				TextPart{Text: "History", CachePolicy: &CachePolicy{Type: "ephemeral"}},
+				TextPart{Text: "History", CachePolicy: &CachePolicy{Mechanism: "block_marker"}},
 			},
 		},
 	}
 	withHistory := exec.WithHistory(history)
 	require.Len(t, withHistory.Messages, 2)
 	require.NotNil(t, withHistory.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", withHistory.Messages[0].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withHistory.Messages[0].CachePolicy.Mechanism)
 	require.NotNil(t, withHistory.Messages[0].Content[0].(TextPart).CachePolicy)
-	assert.Equal(t, "ephemeral", withHistory.Messages[0].Content[0].(TextPart).CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withHistory.Messages[0].Content[0].(TextPart).CachePolicy.Mechanism)
 	require.NotNil(t, withHistory.Messages[0].Content[1].(MediaPart).CachePolicy)
-	assert.Equal(t, "ephemeral", withHistory.Messages[0].Content[1].(MediaPart).CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withHistory.Messages[0].Content[1].(MediaPart).CachePolicy.Mechanism)
 	require.NotNil(t, withHistory.Messages[1].CachePolicy)
-	assert.Equal(t, "ephemeral", withHistory.Messages[1].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withHistory.Messages[1].CachePolicy.Mechanism)
 
 	extra := ChatMessage{
 		Role:        RoleAssistant,
-		CachePolicy: &CachePolicy{Type: "ephemeral"},
+		CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 		Content: []ContentPart{
-			TextPart{Text: "Extra", CachePolicy: &CachePolicy{Type: "ephemeral"}},
+			TextPart{Text: "Extra", CachePolicy: &CachePolicy{Mechanism: "block_marker"}},
 		},
 	}
 	withExtra := withHistory.AddMessage(extra)
 	require.Len(t, withExtra.Messages, 3)
 	require.NotNil(t, withExtra.Messages[2].CachePolicy)
-	assert.Equal(t, "ephemeral", withExtra.Messages[2].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withExtra.Messages[2].CachePolicy.Mechanism)
 	require.NotNil(t, withExtra.Messages[2].Content[0].(TextPart).CachePolicy)
-	assert.Equal(t, "ephemeral", withExtra.Messages[2].Content[0].(TextPart).CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withExtra.Messages[2].Content[0].(TextPart).CachePolicy.Mechanism)
 
 	replacement := []ChatMessage{
 		{
 			Role:        RoleUser,
-			CachePolicy: &CachePolicy{Type: "ephemeral"},
+			CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 			Content: []ContentPart{
 				MediaPart{
 					MediaType:   "document",
 					MIMEType:    "application/pdf",
 					Data:        []byte("%PDF-1.7"),
-					CachePolicy: &CachePolicy{Type: "ephemeral"},
+					CachePolicy: &CachePolicy{Mechanism: "block_marker"},
 				},
 			},
 		},
@@ -192,22 +192,22 @@ func TestPromptExecution_HelpersPreserveCachePolicy(t *testing.T) {
 	withMessages := withExtra.WithMessages(replacement)
 	require.Len(t, withMessages.Messages, 1)
 	require.NotNil(t, withMessages.Messages[0].CachePolicy)
-	assert.Equal(t, "ephemeral", withMessages.Messages[0].CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withMessages.Messages[0].CachePolicy.Mechanism)
 	require.NotNil(t, withMessages.Messages[0].Content[0].(MediaPart).CachePolicy)
-	assert.Equal(t, "ephemeral", withMessages.Messages[0].Content[0].(MediaPart).CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withMessages.Messages[0].Content[0].(MediaPart).CachePolicy.Mechanism)
 
 	cloned := withMessages.Clone()
 	require.Len(t, cloned.Messages, 1)
 	require.NotNil(t, cloned.Messages[0].CachePolicy)
 	require.NotNil(t, cloned.Messages[0].Content[0].(MediaPart).CachePolicy)
 
-	cloned.Messages[0].CachePolicy.Type = "mutated"
+	cloned.Messages[0].CachePolicy.Mechanism = "mutated"
 	media := cloned.Messages[0].Content[0].(MediaPart)
-	media.CachePolicy.Type = "mutated"
+	media.CachePolicy.Mechanism = "mutated"
 	cloned.Messages[0].Content[0] = media
 
-	assert.Equal(t, "ephemeral", withMessages.Messages[0].CachePolicy.Type)
-	assert.Equal(t, "ephemeral", withMessages.Messages[0].Content[0].(MediaPart).CachePolicy.Type)
+	assert.Equal(t, CacheBlockMarker, withMessages.Messages[0].CachePolicy.Mechanism)
+	assert.Equal(t, CacheBlockMarker, withMessages.Messages[0].Content[0].(MediaPart).CachePolicy.Mechanism)
 }
 
 func TestNewExecution_DefensiveCopy(t *testing.T) {

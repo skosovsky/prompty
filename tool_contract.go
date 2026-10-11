@@ -2,17 +2,18 @@ package prompty
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/skosovsky/prompty/internal/exactjson"
 )
 
 // ToolManifest is the runtime tool contract visible to prompt materialization.
 type ToolManifest struct {
 	Name         string       `json:"name"`
+	Dialect      string       `json:"dialect,omitempty"`
 	Description  string       `json:"description,omitempty"`
 	Parameters   JSONDocument `json:"parameters,omitempty"`
 	Capabilities []string     `json:"capabilities,omitempty"`
@@ -21,6 +22,7 @@ type ToolManifest struct {
 // ToolRequirement describes a tool that must be available in a runtime scope.
 type ToolRequirement struct {
 	Name         string       `json:"name"`
+	Dialect      string       `json:"dialect,omitempty"`
 	Parameters   JSONDocument `json:"parameters,omitempty"`
 	Capabilities []string     `json:"capabilities,omitempty"`
 }
@@ -95,6 +97,7 @@ func (e *ToolContractError) Unwrap() error {
 func ToolManifestFromDefinition(def ToolDefinition) ToolManifest {
 	return ToolManifest{
 		Name:         def.Name,
+		Dialect:      def.Dialect,
 		Description:  def.Description,
 		Parameters:   CloneJSONDocument(def.Parameters),
 		Capabilities: cloneStringSlice(def.Capabilities),
@@ -104,6 +107,7 @@ func ToolManifestFromDefinition(def ToolDefinition) ToolManifest {
 func toolRequirementFromDefinition(def ToolDefinition) ToolRequirement {
 	return ToolRequirement{
 		Name:         def.Name,
+		Dialect:      def.Dialect,
 		Parameters:   CloneJSONDocument(def.Parameters),
 		Capabilities: cloneStringSlice(def.Capabilities),
 	}
@@ -126,6 +130,7 @@ func toolScopeContract(scope ToolScope) ToolManifestContract {
 func cloneToolManifest(tool ToolManifest) ToolManifest {
 	return ToolManifest{
 		Name:         tool.Name,
+		Dialect:      tool.Dialect,
 		Description:  tool.Description,
 		Parameters:   CloneJSONDocument(tool.Parameters),
 		Capabilities: cloneStringSlice(tool.Capabilities),
@@ -135,6 +140,7 @@ func cloneToolManifest(tool ToolManifest) ToolManifest {
 func cloneToolRequirement(req ToolRequirement) ToolRequirement {
 	return ToolRequirement{
 		Name:         req.Name,
+		Dialect:      req.Dialect,
 		Parameters:   CloneJSONDocument(req.Parameters),
 		Capabilities: cloneStringSlice(req.Capabilities),
 	}
@@ -158,6 +164,9 @@ func ValidateExecutionManifestContract(
 	if exec == nil {
 		return errors.New("prompt contract: execution is nil")
 	}
+	if err := ValidateExecutionToolScope(exec); err != nil {
+		return toolContractErr(desc, "", "execution boundary", err)
+	}
 	if len(exec.RequiredTools) == 0 {
 		return nil
 	}
@@ -166,22 +175,12 @@ func ValidateExecutionManifestContract(
 	}
 	allowed := toolDefinitionsByName(exec.Tools)
 	for _, name := range exec.RequiredTools {
-		if name == "" {
-			return toolContractErr(desc, "", "required tool name is required", ErrToolContractMismatch)
-		}
-		expected, declared := allowed[name]
-		if len(exec.Tools) > 0 && !declared {
-			return toolContractErr(desc, name, "required tool is outside prompt allowed tools", ErrToolContractMismatch)
-		}
+		expected := allowed[name]
 		actual, ok := contract.ToolManifest(name)
 		if !ok {
 			return toolContractErr(desc, name, "runtime manifest is missing", ErrMissingRequiredTool)
 		}
-		requirement := ToolRequirement{Name: name, Parameters: nil, Capabilities: nil}
-		if declared {
-			requirement = toolRequirementFromDefinition(expected)
-		}
-		if err := validateToolManifestSatisfies(desc, requirement, actual); err != nil {
+		if err := validateToolManifestSatisfies(desc, toolRequirementFromDefinition(expected), actual); err != nil {
 			return err
 		}
 	}
@@ -201,7 +200,7 @@ func toolDefinitionsByName(tools []ToolDefinition) map[string]ToolDefinition {
 
 func validateToolManifestSatisfies(desc ManifestDescriptor, expected ToolRequirement, actual ToolManifest) error {
 	if expected.Name == "" {
-		return nil
+		return toolContractErr(desc, "", "required tool name is required", ErrToolContractMismatch)
 	}
 	if actual.Name != expected.Name {
 		return toolContractErr(
@@ -211,12 +210,15 @@ func validateToolManifestSatisfies(desc ManifestDescriptor, expected ToolRequire
 			ErrToolContractMismatch,
 		)
 	}
+	if expected.Dialect != "" && normalizedToolDialect(expected.Dialect) != normalizedToolDialect(actual.Dialect) {
+		return toolContractErr(desc, expected.Name, "schema dialect mismatch", ErrToolContractMismatch)
+	}
 	if len(expected.Parameters) > 0 && !jsonDocumentsEqual(expected.Parameters, actual.Parameters) {
 		return toolContractErr(desc, expected.Name, "parameters schema mismatch", ErrToolContractMismatch)
 	}
 	for _, capability := range expected.Capabilities {
 		if capability == "" {
-			continue
+			return toolContractErr(desc, expected.Name, "empty required capability", ErrToolContractMismatch)
 		}
 		if !slices.Contains(actual.Capabilities, capability) {
 			return toolContractErr(
@@ -243,15 +245,7 @@ func jsonDocumentsEqual(a, b JSONDocument) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}
-	var av any
-	if err := json.Unmarshal(a, &av); err != nil {
-		return string(a) == string(b)
-	}
-	var bv any
-	if err := json.Unmarshal(b, &bv); err != nil {
-		return false
-	}
-	return reflect.DeepEqual(av, bv)
+	return exactjson.Equal(a, b)
 }
 
 // ExecuteWithContract materializes the render plan and validates required tools before returning it.

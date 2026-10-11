@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prompty.invalid/remote-response-wire",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "identity", "account_binding", "provider_id", "status", "background", "store", "provider_state_required"],
+  "properties": {
+    "format": {"const": "prompty.remote_response"},
+    "identity": {"$ref": "https://prompty.invalid/wire-common#/$defs/identity"},
+    "account_binding": {"type": "string", "minLength": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["queued", "in_progress", "completed", "failed", "incomplete", "canceled", "unknown"]},
+    "background": {"type": "boolean"},
+    "store": {"type": "boolean"},
+    "provider_state_required": {"type": "boolean"},
+    "output_schema_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hosted_tools": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "tool_schema_digests": {"type": "object", "propertyNames": {"minLength": 1}, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "forced_tool": {"type": "string", "minLength": 1},
+    "tool_calls": {"type": "object", "propertyNames": {"minLength": 1}, "additionalProperties": {"type": "string", "minLength": 1}}
+  }
+}

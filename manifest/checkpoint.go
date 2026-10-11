@@ -4,179 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/skosovsky/prompty"
 )
 
-// CheckpointRecommend selects a single-file or compose-closure checkpoint descriptor.
-// Called by registry packages only; applications use ManifestCheckpointRegistry.
+// CheckpointRecommend returns the identity of one captured source generation.
 func CheckpointRecommend(
 	ctx context.Context,
 	id string,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
+	registry prompty.ManifestSnapshotRegistry,
 ) (prompty.ManifestDescriptor, error) {
-	return recommendManifestDescriptor(ctx, id, reader, u)
-}
-
-// CheckpointVerify verifies a descriptor against single-file or compose-closure digests.
-// Called by registry packages only; applications use ManifestCheckpointRegistry.
-func CheckpointVerify(
-	ctx context.Context,
-	desc prompty.ManifestDescriptor,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
-) error {
-	return verifyManifestDescriptor(ctx, desc, reader, u)
-}
-
-func recommendManifestDescriptor(
-	ctx context.Context,
-	id string,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
-) (prompty.ManifestDescriptor, error) {
-	if id == "" {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: id is required")
+	if registry == nil {
+		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: registry is required")
 	}
-	if reader == nil {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: reader is required")
-	}
-	if u == nil {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: unmarshaller is required")
-	}
-	if ctx.Err() != nil {
-		return prompty.ManifestDescriptor{}, ctx.Err()
-	}
-	raw, err := reader.ReadManifestBytes(ctx, id)
+	snapshot, err := registry.CaptureManifest(ctx, id)
 	if err != nil {
 		return prompty.ManifestDescriptor{}, err
 	}
-	if len(raw) == 0 {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: manifest bytes are empty")
+	if snapshot == nil || snapshot.Descriptor().ID != id {
+		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: nil snapshot")
 	}
-	usesCompose, peekErr := PeekComposeFieldsE(raw, u)
-	if peekErr != nil {
-		return prompty.ManifestDescriptor{}, fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
-	}
-	if usesCompose {
-		return newComposeManifestDescriptor(ctx, id, reader, u)
-	}
-	return prompty.ManifestDescriptor{ID: id, Digest: prompty.ManifestDigestSHA256(raw)}, nil
+	return snapshot.Descriptor(), nil
 }
 
-func newComposeManifestDescriptor(
-	ctx context.Context,
-	id string,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
-) (prompty.ManifestDescriptor, error) {
-	if id == "" {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: id is required")
-	}
-	if reader == nil {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: reader is required")
-	}
-	if u == nil {
-		return prompty.ManifestDescriptor{}, errors.New("manifest descriptor: unmarshaller is required")
-	}
-	if ctx.Err() != nil {
-		return prompty.ManifestDescriptor{}, ctx.Err()
-	}
-	read := func(importID string) ([]byte, error) {
-		return reader.ReadManifestBytes(ctx, importID)
-	}
-	digest, err := ComposeClosureDigestSHA256(id, read, u)
-	if err != nil {
-		return prompty.ManifestDescriptor{}, wrapCheckpointComposeDigestErr(err)
-	}
-	return prompty.ManifestDescriptor{ID: id, Digest: digest}, nil
-}
-
-func verifyComposeManifestDescriptor(
+// CheckpointVerify checks against the generation selected by the registry capture policy.
+// For verified execution use VerifiedManifestPlan, not a separate Verify/Plan pair.
+func CheckpointVerify(
 	ctx context.Context,
 	desc prompty.ManifestDescriptor,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
+	registry prompty.ManifestSnapshotRegistry,
 ) error {
-	if reader == nil {
-		return errors.New("manifest descriptor: reader is required")
-	}
-	if u == nil {
-		return errors.New("manifest descriptor: unmarshaller is required")
-	}
-	if desc.ID == "" {
-		return errors.New("manifest descriptor: id is required")
-	}
-	if desc.Digest == "" {
-		return errors.New("manifest descriptor: digest is required")
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	read := func(importID string) ([]byte, error) {
-		return reader.ReadManifestBytes(ctx, importID)
-	}
-	digest, err := ComposeClosureDigestSHA256(desc.ID, read, u)
-	if err != nil {
-		return wrapCheckpointComposeDigestErr(err)
-	}
-	if digest != desc.Digest {
-		return fmt.Errorf("%w: %q", prompty.ErrManifestDigestMismatch, desc.ID)
-	}
-	return nil
-}
-
-// wrapCheckpointComposeDigestErr maps compose-closure digest failures to checkpoint errors.
-// Missing deployable imports propagate as-is (typically ErrTemplateNotFound).
-func wrapCheckpointComposeDigestErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, prompty.ErrTemplateNotFound) {
+	if err := prompty.ValidateManifestDescriptor(desc); err != nil {
 		return err
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "compose digest: read import") {
-		return err
+	if registry == nil {
+		return errors.New("manifest descriptor: registry is required")
 	}
-	return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, err)
-}
-
-func verifyManifestDescriptor(
-	ctx context.Context,
-	desc prompty.ManifestDescriptor,
-	reader prompty.ManifestBytesReader,
-	u Unmarshaler,
-) error {
-	if reader == nil {
-		return errors.New("manifest descriptor: reader is required")
-	}
-	if u == nil {
-		return errors.New("manifest descriptor: unmarshaller is required")
-	}
-	if desc.ID == "" {
-		return errors.New("manifest descriptor: id is required")
-	}
-	if desc.Digest == "" {
-		return errors.New("manifest descriptor: digest is required")
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	raw, err := reader.ReadManifestBytes(ctx, desc.ID)
+	snapshot, err := registry.CaptureManifest(ctx, desc.ID)
 	if err != nil {
 		return err
 	}
-	usesCompose, peekErr := PeekComposeFieldsE(raw, u)
-	if peekErr != nil {
-		return fmt.Errorf("%w: %w", prompty.ErrInvalidManifest, peekErr)
-	}
-	if usesCompose {
-		return verifyComposeManifestDescriptor(ctx, desc, reader, u)
-	}
-	if prompty.ManifestDigestSHA256(raw) != desc.Digest {
+	if snapshot == nil || snapshot.Descriptor() != desc {
 		return fmt.Errorf("%w: %q", prompty.ErrManifestDigestMismatch, desc.ID)
 	}
 	return nil

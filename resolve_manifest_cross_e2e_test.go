@@ -295,7 +295,6 @@ func (r *crossComposeTamperReader) ReadManifestBytes(
 func TestE2ECrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	parser := yaml.New()
 	manifestID := "composed_conditional_main"
 
 	for _, tc := range crossComposeRegistryMatrix(t) {
@@ -381,10 +380,11 @@ func TestE2ECrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 					Query string `prompt:"query"`
 				}{Query: "runtime-off-" + tc.name})
 				require.NoError(t, err)
-				runtimeOffInput = prompty.PlanInputWithComposeContext(
+				runtimeOffInput, err = prompty.PlanInputWithComposeContext(
 					runtimeOffInput,
 					crossWorkspaceComposeContext{enabled: false},
 				)
+				require.NoError(t, err)
 				runtimeOffPlan, err := tc.plan.Plan(ctx, manifestID, runtimeOffInput)
 				require.NoError(t, err)
 				runtimeOffExec, err := runtimeOffPlan.Execute(ctx)
@@ -439,7 +439,7 @@ func TestE2ECrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 						"composed_child": tamperedComposedChildManifestBytes(),
 					},
 				}
-				err = manifest.CheckpointVerify(ctx, desc, tamperReader, parser)
+				err = manifest.CheckpointVerify(ctx, desc, tamperReader)
 				require.Error(t, err)
 				assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 			})
@@ -456,7 +456,7 @@ func TestE2ECrossRegistry_ConditionalCompose_Matrix(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, exec.Messages, 2)
 				require.NotNil(t, exec.Messages[0].CachePolicy)
-				assert.Equal(t, "ephemeral", exec.Messages[0].CachePolicy.Type)
+				assert.Equal(t, prompty.CacheBlockMarker, exec.Messages[0].CachePolicy.Mechanism)
 			})
 		})
 	}
@@ -564,7 +564,7 @@ func TestE2ECrossRegistry_FlatCheckpoint_Parity(t *testing.T) {
 						),
 					},
 				}
-				err := manifest.CheckpointVerify(ctx, desc, tamperReader, yaml.New())
+				err := manifest.CheckpointVerify(ctx, desc, tamperReader)
 				require.Error(t, err)
 				assert.ErrorIs(t, err, prompty.ErrManifestDigestMismatch)
 			})
@@ -672,7 +672,7 @@ func TestE2ECrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
 			plan, err := tc.reg.(prompty.Registry).Plan(ctx, "composed_main", input)
 			require.NoError(t, err)
 
-			cp, err := compiled.FromRenderPlanRegistry(ctx, plan, tc.reg, "composed_main")
+			cp, err := compiled.FromRenderPlan(ctx, plan)
 			require.NoError(t, err)
 
 			data, err := json.Marshal(cp)
@@ -680,7 +680,7 @@ func TestE2ECrossRegistry_ComposeProvenance_WireRoundTrip(t *testing.T) {
 
 			var wire map[string]any
 			require.NoError(t, json.Unmarshal(data, &wire))
-			assert.InDelta(t, 2, wire["format_version"], 0)
+			assert.InDelta(t, 3, wire["format_version"], 0)
 
 			var restored compiled.Prompt
 			require.NoError(t, json.Unmarshal(data, &restored))
@@ -955,4 +955,8 @@ func TestE2ECrossRegistry_LateBinding_OptionalLate(t *testing.T) {
 func tamperedComposedChildManifestBytes() []byte {
 	return []byte(`{"id":"composed_child","inputs":{"clinic_name":{"type":"string"}},` +
 		`"layers":[{"id":"child_rules","role":"system","content":"TAMPERED"}]}`)
+}
+
+func (r *crossComposeTamperReader) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, r, yaml.New(), nil, map[string]string{"resolution": "test-tamper.v1"})
 }

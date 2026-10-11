@@ -44,8 +44,9 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("OPENAI_API_KEY is not set")
 	}
-	openaiClient := openaisdk.NewClient(option.WithAPIKey(apiKey))
-	adp := openaiadapter.New(openaiadapter.WithClient(&openaiClient))
+	const endpoint = "https://api.openai.com/v1"
+	openaiClient := openaisdk.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(endpoint))
+	adp := openaiadapter.New(openaiadapter.WithClient(&openaiClient), openaiadapter.WithProfiles(endpoint))
 	client := adapter.NewClient(adp)
 	resp, err := client.Execute(ctx, exec)
 	if err != nil {

@@ -3,29 +3,32 @@ module github.com/skosovsky/prompty/examples/funcmap_tools
 go 1.27.2
 
 require (
-	github.com/openai/openai-go/v3 v3.24.0
+	github.com/openai/openai-go/v3 v3.73.0
 	github.com/skosovsky/prompty v0.0.0
 	github.com/skosovsky/prompty/adapter/openai v0.0.0
 )
 
 require (
-	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
-	github.com/go-playground/locales v0.14.1 // indirect
-	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.26.0 // indirect
-	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/coder/websocket v1.8.15 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/go-playground/locales v0.14.2 // indirect
+	github.com/go-playground/universal-translator v0.18.2 // indirect
+	github.com/go-playground/validator/v10 v10.30.5 // indirect
+	github.com/leodido/go-urn v1.5.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
+	github.com/tidwall/gjson v1.20.0 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
+	github.com/tidwall/pretty v1.2.2 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
-	golang.org/x/net v0.34.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace (
-	github.com/skosovsky/prompty => ../..
-	github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
-)
+// v0.16.1 regressed the published v0.16.0 API and omitted a module.
+retract v0.16.1
+
+replace github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
+
+replace github.com/skosovsky/prompty => ../..

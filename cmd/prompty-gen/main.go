@@ -57,31 +57,7 @@ func runGenerate(configPath string) error {
 		return err
 	}
 
-	for _, pkg := range cfg.Packages {
-		files, err := pkg.ResolveSources(configDir)
-		if err != nil {
-			return fmt.Errorf("package %q: %w", pkg.Name, err)
-		}
-
-		outDir := pkg.Path
-		if !filepath.IsAbs(outDir) {
-			outDir = filepath.Join(configDir, outDir)
-		}
-		if err := os.MkdirAll(outDir, 0750); err != nil {
-			return fmt.Errorf("package %q mkdir: %w", pkg.Name, err)
-		}
-
-		if pkg.IsConsts() {
-			if err := runConsts(configDir, files, &pkg, outDir); err != nil {
-				return fmt.Errorf("package %q: %w", pkg.Name, err)
-			}
-		} else {
-			if err := runTypes(configDir, files, &pkg, outDir); err != nil {
-				return fmt.Errorf("package %q: %w", pkg.Name, err)
-			}
-		}
-	}
-	return nil
+	return generatePackages(configDir, cfg)
 }
 
 // idFromRelativePath computes a fallback PromptID from file path relative to query bases.
@@ -143,60 +119,91 @@ func runConsts(configDir string, files []string, pkg *Package, outDir string) er
 	if err := outFile.Save(outPath); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	return nil
 }
 
 // runTypes generates shared _shared_gen.go plus per-manifest _gen.go (hybrid types mode).
-func indexManifests(files []string, configDir string, queries []string) (manifest.ManifestLoader, error) {
-	return manifest.IndexFileManifests(files, readRawManifestFile, manifest.IndexFileOptions{
-		IDFromPath: func(fpath string) string {
-			return manifest.PathIDFromFile(fpath, configDir, queries)
-		},
-	})
+type capturedManifestIndex struct {
+	loader manifest.ManifestLoader
+	byID   map[string][]byte
+	byPath map[string][]byte
 }
 
-type manifestPathIndex map[string]string
-
-func indexManifestPaths(files []string, configDir string, queries []string) (manifestPathIndex, error) {
-	byID := make(manifestPathIndex, len(files))
-	for _, fpath := range files {
-		raw, err := readRawManifestFile(fpath)
+func indexManifests(files []string, configDir string, queries []string) (*capturedManifestIndex, error) {
+	index := &capturedManifestIndex{loader: nil, byID: make(map[string][]byte), byPath: make(map[string][]byte)}
+	owners := make(map[string]string)
+	read := func(name string) (*manifest.RawManifest, error) {
+		data, ok := index.byPath[name]
+		if !ok {
+			var err error
+			data, err = os.ReadFile(name)
+			if err != nil {
+				return nil, err
+			}
+			index.byPath[name] = append([]byte(nil), data...)
+		}
+		raw, err := decodeRawManifestFile(name, data)
 		if err != nil {
 			return nil, err
 		}
+		pathID := manifest.PathIDFromFile(name, configDir, queries)
 		id := raw.ID
 		if id == "" {
-			id = manifest.PathIDFromFile(fpath, configDir, queries)
+			id = pathID
 		}
-		if id == "" {
-			return nil, fmt.Errorf("%s: manifest has no id field and could not derive id from path", fpath)
+		for _, alias := range []string{id, pathID} {
+			if alias == "" {
+				continue
+			}
+			if previous, exists := owners[alias]; exists && previous != name {
+				return nil, fmt.Errorf("manifest alias collision %q in %s and %s", alias, previous, name)
+			}
+			owners[alias] = name
+			index.byID[alias] = data
 		}
-		if prev, ok := byID[id]; ok {
-			return nil, fmt.Errorf("duplicate id %q in %s and %s", id, prev, fpath)
-		}
-		byID[id] = fpath
+		return raw, nil
 	}
-	return byID, nil
+	loader, err := manifest.IndexFileManifests(files, read, manifest.IndexFileOptions{
+		IDFromPath: func(name string) string { return manifest.PathIDFromFile(name, configDir, queries) },
+	})
+	if err != nil {
+		return nil, err
+	}
+	index.loader = loader
+	return index, nil
 }
 
-func (i manifestPathIndex) ReadManifestBytes(_ context.Context, id string) ([]byte, error) {
-	if i == nil {
-		return nil, errors.New("manifest path index is required")
+func (i *capturedManifestIndex) LoadByID(ctx context.Context, id string) (*manifest.RawManifest, error) {
+	return i.loader.LoadByID(ctx, id)
+}
+func (i *capturedManifestIndex) ReadManifestBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	fpath, ok := i[id]
-	if !ok || fpath == "" {
+	data, ok := i.byID[id]
+	if !ok {
 		return nil, fmt.Errorf("%w: %q", prompty.ErrTemplateNotFound, id)
 	}
-	return os.ReadFile(fpath)
+	return append([]byte(nil), data...), nil
+}
+func (i *capturedManifestIndex) CaptureManifest(ctx context.Context, id string) (*prompty.ManifestSnapshot, error) {
+	return manifest.CaptureSources(ctx, id, i, yaml.New(), nil, nil)
 }
 
+//nolint:gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
 func runTypes(configDir string, files []string, pkg *Package, outDir string) error {
-	loader, err := indexManifests(files, configDir, pkg.Queries)
-	if err != nil {
-		return err
+	// Inventory output paths before generating any file, including the shared file.
+	owners := map[string]string{
+		strings.ToLower(pkg.PackageName + "_shared_gen.go"): "shared package " + pkg.PackageName,
 	}
-	pathIndex, err := indexManifestPaths(files, configDir, pkg.Queries)
+	for _, source := range files {
+		name := strings.ToLower(manifestOutputName(source))
+		if previous, exists := owners[name]; exists {
+			return fmt.Errorf("output collision %q between %s and %s", name, previous, source)
+		}
+		owners[name] = source
+	}
+	loader, err := indexManifests(files, configDir, pkg.Queries)
 	if err != nil {
 		return err
 	}
@@ -217,7 +224,7 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 			return fmt.Errorf("duplicate id %q in %s and %s", spec.ID, prev, fpath)
 		}
 		seenIDs[spec.ID] = fpath
-		desc, descErr := manifest.CheckpointRecommend(context.Background(), spec.ID, pathIndex, yaml.New())
+		desc, descErr := manifest.CheckpointRecommend(context.Background(), spec.ID, loader)
 		if descErr != nil {
 			return fmt.Errorf("manifest %s descriptor: %w", fpath, descErr)
 		}
@@ -234,7 +241,6 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 	if err := sharedFile.Save(sharedPath); err != nil {
 		return fmt.Errorf("write %s: %w", sharedPath, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", sharedPath)
 
 	// Per-manifest files: const, Input/Output, prompt type, recipe API, RequiredTools, ID.
 	for i, fpath := range files {
@@ -242,13 +248,10 @@ func runTypes(configDir string, files []string, pkg *Package, outDir string) err
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", fpath, err)
 		}
-		base := strings.TrimSuffix(filepath.Base(fpath), filepath.Ext(fpath))
-		base = strings.ReplaceAll(base, "-", "_") // normalize full-mode output filename
-		outPath := filepath.Join(outDir, base+"_gen.go")
+		outPath := filepath.Join(outDir, manifestOutputName(fpath))
 		if err := manifestFile.Save(outPath); err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, "Generated %s\n", outPath)
 	}
 	return nil
 }
@@ -292,6 +295,10 @@ func readRawManifestFile(fpath string) (*manifest.RawManifest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeRawManifestFile(fpath, data)
+}
+
+func decodeRawManifestFile(fpath string, data []byte) (*manifest.RawManifest, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%s: %w: manifest bytes are empty", fpath, prompty.ErrInvalidManifest)
 	}
@@ -329,7 +336,13 @@ func loadSpec(
 	queries []string,
 	loader manifest.ManifestLoader,
 ) (*gen.PromptSpec, error) {
-	raw, err := readRawManifestFile(fpath)
+	var raw *manifest.RawManifest
+	var err error
+	if captured, ok := loader.(*capturedManifestIndex); ok {
+		raw, err = decodeRawManifestFile(fpath, captured.byPath[fpath])
+	} else {
+		raw, err = readRawManifestFile(fpath)
+	}
 	if err != nil {
 		return nil, err
 	}

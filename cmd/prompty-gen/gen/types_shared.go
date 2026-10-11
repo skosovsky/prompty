@@ -33,17 +33,13 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 	})
 
 	f.ImportName("github.com/skosovsky/prompty", "prompty")
-	f.ImportName("github.com/go-playground/validator/v10", "validator")
 	f.ImportName("bytes", "bytes")
 	f.ImportName("context", "context")
-	f.ImportName("encoding/json", "json")
+	f.ImportName("encoding/json", wireJSON)
 	f.ImportName("fmt", "fmt")
 	f.ImportName("io", "io")
 
 	f.Type().Id("PromptID").String()
-	f.Line()
-
-	f.Var().Id("validate").Op("=").Qual("github.com/go-playground/validator/v10", "New").Call()
 	f.Line()
 
 	f.Type().Id("Recipe").Interface(
@@ -56,11 +52,11 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 			Parens(jen.List(jen.Qual("github.com/skosovsky/prompty", "JSONDocument"), jen.Error())),
 		jen.Id("Execute").Params(
 			jen.Id("ctx").Qual("context", "Context"),
-			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())),
 		jen.Id("ExecuteWithContract").Params(
 			jen.Id("ctx").Qual("context", "Context"),
-			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestCheckpointRegistry"),
+			jen.Id("registry").Qual("github.com/skosovsky/prompty", "ManifestSnapshotRegistry"),
 			jen.Id("contract").Qual("github.com/skosovsky/prompty", "ToolManifestContract"),
 		).Parens(jen.List(jen.Op("*").Qual("github.com/skosovsky/prompty", "PromptExecution"), jen.Error())),
 	)
@@ -135,6 +131,7 @@ func GenerateSharedTypes(pkgName string, specs []*PromptSpec) (*jen.File, error)
 }
 
 func validateSharedPromptSpecs(specs []*PromptSpec) error {
+	owners := make(map[string]string)
 	for _, spec := range specs {
 		if spec == nil {
 			return errors.New("shared types: prompt spec is required")
@@ -142,9 +139,22 @@ func validateSharedPromptSpecs(specs []*PromptSpec) error {
 		if spec.ID == "" {
 			return errors.New("shared types: prompt id is required")
 		}
+		name := toPascal(spec.ID)
+		if previous, exists := owners[name]; exists {
+			return fmt.Errorf("go identifier collision %q between prompt IDs %q and %q", name, previous, spec.ID)
+		}
+		owners[name] = spec.ID
 		if spec.Descriptor.Digest == "" {
 			return fmt.Errorf("shared types: prompt %q descriptor digest is required", spec.ID)
 		}
+		descriptor := spec.Descriptor
+		if descriptor.ID == "" {
+			descriptor.ID = spec.ID
+		}
+		if err := prompty.ValidateManifestDescriptor(descriptor); err != nil {
+			return fmt.Errorf("shared types: prompt %q descriptor: %w", spec.ID, err)
+		}
+
 		if spec.Descriptor.ID != "" && spec.Descriptor.ID != spec.ID {
 			return fmt.Errorf(
 				"shared types: prompt %q descriptor id mismatch: %q",
@@ -466,6 +476,7 @@ func strictDecodeJSONBody(target string) []jen.Code {
 		jen.Id("decoder").Op(":=").Qual("encoding/json", "NewDecoder").Call(
 			jen.Qual("bytes", "NewReader").Call(jen.Id("payload")),
 		),
+		jen.Id("decoder").Dot("UseNumber").Call(),
 		jen.Id("decoder").Dot("DisallowUnknownFields").Call(),
 		jen.If(jen.Id("err").Op("=").Id("decoder").Dot("Decode").Call(jen.Op("&").Id(target)), jen.Id("err").Op("==").Nil()).
 			Block(

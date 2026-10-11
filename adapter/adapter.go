@@ -23,9 +23,30 @@ type ProviderAdapter[Req any, Resp any] interface {
 }
 
 // StreamerAdapter is an optional capability for adapters that support native streaming.
-// When implemented, Invoker.ExecuteStream uses it; otherwise a polyfill runs Execute and yields one chunk.
+// A native stream is never substituted with a sync call.
 type StreamerAdapter[Req any] interface {
-	ExecuteStream(ctx context.Context, req Req) iter.Seq2[*prompty.ResponseChunk, error]
+	StreamEvents(ctx context.Context, req Req) iter.Seq2[*prompty.ResponseChunk, error]
+}
+
+// ProfileStreamerAdapter binds native opaque state to the checked effective
+// profile, including caller-supplied model family. It never refreshes profiles.
+// Implementations also supply StreamerAdapter; this is not a fallback transport.
+type ProfileStreamerAdapter[Req any] interface {
+	StreamEventsForProfile(
+		ctx context.Context, req Req, destination prompty.ProfileIdentity,
+	) iter.Seq2[*prompty.ResponseChunk, error]
+}
+
+// ProviderStateAdapter validates provider-specific payload before Translate.
+// Implementing this port promises that Translate preserves the associated state.
+type ProviderStateAdapter interface {
+	ValidateProviderState(exec *prompty.PromptExecution, destination prompty.ProfileIdentity) error
+}
+
+// ProfileResponseParser binds response state to the effective request destination,
+// rather than the adapter's configured default model.
+type ProfileResponseParser[Resp any] interface {
+	ParseResponseForProfile(raw Resp, destination prompty.ProfileIdentity) (*prompty.Response, error)
 }
 
 // Sentinel errors for adapter implementations. Callers should use [errors.Is].
@@ -57,13 +78,90 @@ func ValidateExecution(exec *prompty.PromptExecution) error {
 	if exec == nil {
 		return ErrNilExecution
 	}
+	if err := prompty.ValidateHostedToolRequests(exec.HostedTools); err != nil {
+		return err
+	}
+	if err := prompty.ValidateRequestCachePolicy(exec.RequestCache); err != nil {
+		return err
+	}
+	if exec.CacheResource != nil {
+		if err := prompty.ValidateCacheResourceHandle(*exec.CacheResource); err != nil {
+			return err
+		}
+	}
+	if err := prompty.ValidateOutputMode(exec.Requirements.OutputMode, exec.ResponseFormat); err != nil {
+		return err
+	}
+	if err := prompty.ValidateSchemaPolicy(exec.Requirements.Schema); err != nil {
+		return err
+	}
+	if err := prompty.ValidateCaptureRequirement(exec.Requirements.Capture); err != nil {
+		return err
+	}
+	if err := prompty.ValidateCachePolicies(exec.Messages); err != nil {
+		return err
+	}
 	if exec.ForcedTool == "" {
-		return nil
+		return prompty.ValidateExecutionToolScope(exec)
 	}
 	for _, tool := range exec.Tools {
 		if tool.Name == exec.ForcedTool {
-			return nil
+			return prompty.ValidateExecutionToolScope(exec)
 		}
 	}
 	return fmt.Errorf("%w: %s", ErrForcedToolNotFound, exec.ForcedTool)
+}
+
+// ToolNameCorrelationAdapter establishes actual name-preserving result mapping.
+// Caller profile knowledge alone cannot implement this optional adapter port.
+type ToolNameCorrelationAdapter interface {
+	SupportsToolNameCorrelation() bool
+}
+
+// ForcedToolAdapter promises native named-tool selection in Translate.
+// A text instruction is not this mapping; profile knowledge is checked separately.
+type ForcedToolAdapter interface {
+	SupportsForcedTool() bool
+}
+
+// SyntheticOutputAdapter promises explicit dedicated output-tool mapping and
+// result extraction, never native decoding or ordinary local-tool execution.
+type SyntheticOutputAdapter interface {
+	SupportsSyntheticOutput() bool
+}
+
+// CacheResourceAdapter validates and maps a caller-selected remote cache handle.
+// Caller profile knowledge alone never provides this mapping or account binding.
+type CacheResourceAdapter interface {
+	ValidateCacheResource(prompty.CacheResourceHandle, prompty.ProfileIdentity) error
+}
+
+// RejectCacheResource prevents raw translators from silently ignoring a resource.
+func RejectCacheResource(exec *prompty.PromptExecution) error {
+	if exec.CacheResource != nil {
+		return ErrUnsupportedCapability
+	}
+	return nil
+}
+
+// RejectSyntheticOutput prevents raw native translators from ignoring selection.
+func RejectSyntheticOutput(exec *prompty.PromptExecution) error {
+	if exec.Requirements.OutputMode == prompty.OutputSyntheticTool {
+		return ErrStructuredOutputNotSupported
+	}
+	return nil
+}
+
+// RejectProviderState is used by low-level translators without state support.
+// Opaque state is never silently stripped even when callers bypass high-level preflight.
+func RejectProviderState(exec *prompty.PromptExecution) error {
+	for _, message := range exec.Messages {
+		if message.ContinuationUnavailable {
+			return prompty.ErrStateUnavailable
+		}
+		if len(message.ProviderState) != 0 || prompty.HasScopedMessageAnnotations(message.MessageAnnotations) {
+			return prompty.ErrProviderState
+		}
+	}
+	return nil
 }

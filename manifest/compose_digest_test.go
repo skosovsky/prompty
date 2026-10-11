@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,7 +22,7 @@ func TestComposeClosureDigest_CyclicImportsFails(t *testing.T) {
 			return nil, assert.AnError
 		}
 	}
-	_, err := ComposeClosureDigestSHA256("a", read, NewJSONParser())
+	_, err := CaptureSources(context.Background(), "a", &digestFuncReader{read: read}, NewJSONParser(), nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cyclic import")
 }
@@ -35,7 +36,7 @@ func TestComposeClosureDigest_EmptyImportIDFails(t *testing.T) {
 		}
 		return nil, assert.AnError
 	}
-	_, err := ComposeClosureDigestSHA256("main", read, NewJSONParser())
+	_, err := CaptureSources(context.Background(), "main", &digestFuncReader{read: read}, NewJSONParser(), nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "import id is required")
+	assert.Contains(t, err.Error(), "id must not be empty")
 }

@@ -1,0 +1,25 @@
+package main
+import (
+ "encoding/json"
+ "fmt"
+ sdk "github.com/anthropics/anthropic-sdk-go"
+ "github.com/skosovsky/prompty"
+ "github.com/skosovsky/prompty/adapter/anthropic"
+ "github.com/skosovsky/prompty/adapter/openai"
+)
+func main() {
+ var message sdk.Message
+ err := json.Unmarshal([]byte(`{"content":[{"type":"server_tool_use","id":"srv","name":"web_search","input":{"query":"fixture"}},{"type":"text","text":"paused"}],"stop_reason":"pause_turn"}`), &message)
+ if err != nil { panic(err) }
+ source := prompty.ProfileIdentity{Provider:"anthropic",Endpoint:"https://anthropic.fixture.invalid",Model:"fixture"}
+ response, err := anthropic.New().ParseResponseForProfile(&message,source)
+ if err != nil { panic(err) }
+ history, err := response.AssistantMessage()
+ if err != nil { panic(err) }
+ execution := prompty.SimplePrompt("fixture")
+ execution.Messages = append(execution.Messages,history)
+ destination := prompty.ProfileIdentity{Provider:"openai",Endpoint:"https://openai.fixture.invalid",Model:"fixture"}
+ adapter := openai.New(openai.WithModel("fixture"),openai.WithProfiles(destination.Endpoint,prompty.CapabilityProfile{Identity:destination,Provenance:"local reproduction",Capabilities:map[string]prompty.CapabilitySupport{}}))
+ translated, err := adapter.Translate(execution)
+ fmt.Printf("source annotations=%d, source part state=%d, foreign Translate accepted=%t, err=%v\n",len(history.MessageAnnotations),len(history.ProviderState),translated != nil,err)
+}

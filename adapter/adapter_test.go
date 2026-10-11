@@ -70,9 +70,7 @@ func TestNewClient_Execute(t *testing.T) {
 			return mockResp{text: "resp-" + req.text}, nil
 		},
 		parseResponse: func(raw mockResp) (*prompty.Response, error) {
-			return &prompty.Response{
-				Content: []prompty.ContentPart{prompty.TextPart{Text: raw.text}},
-			}, nil
+			return prompty.NewResponse([]prompty.ContentPart{prompty.TextPart{Text: raw.text}}), nil
 		},
 	}
 	client := NewClient(mock)
@@ -89,7 +87,7 @@ func TestNewClient_Execute(t *testing.T) {
 	assert.Equal(t, "resp-req", text)
 }
 
-func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
+func TestNewClient_ExecuteStream_ExplicitBuffered(t *testing.T) {
 	t.Parallel()
 	type mockReq struct{}
 	type mockResp struct{}
@@ -103,6 +101,7 @@ func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
 		parseResponse: func(_ mockResp) (*prompty.Response, error) {
 			return &prompty.Response{
 				Content: []prompty.ContentPart{prompty.TextPart{Text: "chunk"}},
+				Outcome: prompty.OutcomeCompleted,
 			}, nil
 		},
 	}
@@ -112,14 +111,16 @@ func TestNewClient_ExecuteStream_Polyfill(t *testing.T) {
 			{Role: prompty.RoleUser, Content: []prompty.ContentPart{prompty.TextPart{Text: "hi"}}},
 		},
 	}
-	seq := client.ExecuteStream(context.Background(), exec)
+	stream := client.ExecuteStream(context.Background(), exec, prompty.StreamBuffered)
 	var chunks []*prompty.ResponseChunk
-	for chunk, err := range seq {
+	for chunk, err := range stream.Events() {
 		require.NoError(t, err)
 		chunks = append(chunks, chunk)
 	}
-	require.Len(t, chunks, 1)
-	assert.True(t, chunks[0].IsFinished)
+	require.Len(t, chunks, 2)
+	assert.Equal(t, prompty.StreamFinish, chunks[0].Kind)
+	assert.Equal(t, prompty.StreamTerminal, chunks[1].Kind)
+	assert.Equal(t, prompty.StreamCompleted, stream.Status().State)
 	chunkText, err := prompty.StrictTextFromParts(chunks[0].Content)
 	require.NoError(t, err)
 	assert.Equal(t, "chunk", chunkText)
@@ -129,6 +130,10 @@ type mockAdapter[Req, Resp any] struct {
 	translate     func(*prompty.PromptExecution) (Req, error)
 	execute       func(context.Context, Req) (Resp, error)
 	parseResponse func(Resp) (*prompty.Response, error)
+}
+
+func (m *mockAdapter[Req, Resp]) RuntimeDescriptor() RuntimeDescriptor {
+	return RuntimeDescriptor{Name: "fixture", Endpoint: "https://fixture.invalid", DefaultModel: "fixture"}
 }
 
 func (m *mockAdapter[Req, Resp]) Translate(exec *prompty.PromptExecution) (Req, error) {

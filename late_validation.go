@@ -2,8 +2,6 @@ package prompty
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 
 	"github.com/go-playground/validator/v10"
 
@@ -11,7 +9,7 @@ import (
 	"github.com/skosovsky/prompty/internal/late"
 )
 
-//nolint:gochecknoglobals // shared validator for WithLateInput struct tags (matches prompty-gen codegen)
+//nolint:gochecknoglobals // caller-owned domain validation tags, separate from generated schema validation
 var lateInputValidator = validator.New()
 
 func inputPropertyIsLate(prop map[string]any) bool {
@@ -86,8 +84,8 @@ func validateRequiredLateVars(schema *SchemaDefinition, lateVars map[string]any,
 	}
 	merged := mapsCloneStringAny(lateVars)
 	for _, name := range required {
-		v, ok := merged[name]
-		if !ok || !lateBindingPresent(v) {
+		_, ok := merged[name]
+		if !ok {
 			return &VariableError{
 				Variable: name,
 				Template: templateID,
@@ -96,54 +94,6 @@ func validateRequiredLateVars(schema *SchemaDefinition, lateVars map[string]any,
 		}
 	}
 	return nil
-}
-
-func lateBindingPresent(v any) bool {
-	if v == nil {
-		return false
-	}
-	switch x := v.(type) {
-	case string:
-		return strings.TrimSpace(x) != ""
-	default:
-		rv := reflect.ValueOf(v)
-		switch rv.Kind() {
-		case reflect.String:
-			return strings.TrimSpace(rv.String()) != ""
-		case reflect.Pointer, reflect.Interface:
-			if rv.IsNil() {
-				return false
-			}
-			return lateBindingPresent(rv.Elem().Interface())
-		case reflect.Slice, reflect.Map:
-			return rv.Len() > 0
-		case reflect.Invalid,
-			reflect.Bool,
-			reflect.Int,
-			reflect.Int8,
-			reflect.Int16,
-			reflect.Int32,
-			reflect.Int64,
-			reflect.Uint,
-			reflect.Uint8,
-			reflect.Uint16,
-			reflect.Uint32,
-			reflect.Uint64,
-			reflect.Uintptr,
-			reflect.Float32,
-			reflect.Float64,
-			reflect.Complex64,
-			reflect.Complex128,
-			reflect.Array,
-			reflect.Chan,
-			reflect.Func,
-			reflect.Struct,
-			reflect.UnsafePointer:
-			fallthrough
-		default:
-			return true
-		}
-	}
 }
 
 func lateRequiredNames(doc map[string]any, props map[string]any) []string {
@@ -208,6 +158,16 @@ func validateLateInputStruct(input any) error {
 	_, val, ok := structTypeOf(input)
 	if !ok {
 		return nil
+	}
+	if check, ok := input.(interface{ ValidateSchema() error }); ok {
+		if err := check.ValidateSchema(); err != nil {
+			return err
+		}
+	}
+	if check, ok := input.(interface{ Validate() error }); ok {
+		if err := check.Validate(); err != nil {
+			return err
+		}
 	}
 	return lateInputValidator.Struct(val.Interface())
 }

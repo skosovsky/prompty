@@ -1,0 +1,6 @@
+ok      github.com/skosovsky/prompty    1.343s
+ok      github.com/skosovsky/prompty/adapter    0.684s
+ok      github.com/skosovsky/prompty/adapter/openai 3.719s
+ok      github.com/skosovsky/prompty/adapter/anthropic  3.572s
+ok      github.com/skosovsky/prompty/adapter/gemini 3.737s
+ok      github.com/skosovsky/prompty/adapter/ollama 0.520s

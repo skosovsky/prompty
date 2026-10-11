@@ -25,7 +25,7 @@ func ResponseFormatFromStruct[T any]() (*SchemaDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("structured output contract: %w", err)
 	}
-	return &SchemaDefinition{Name: "", Description: "", Schema: doc}, nil
+	return &SchemaDefinition{Name: "", Description: "", Schema: doc, Dialect: schemaDeclaredDialect(schemaMap)}, nil
 }
 
 // JSONSchemaFromStruct returns a JSON schema document for T.

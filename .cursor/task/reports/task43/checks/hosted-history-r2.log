@@ -1,0 +1,10 @@
+--- FAIL: TestHostedHistoryChangesFailBeforeIO (0.00s)
+    --- FAIL: TestHostedHistoryChangesFailBeforeIO/signature (0.07s)
+        hosted_replay_test.go:93:
+                Error Trace:    /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/prompty/adapter/anthropic/hosted_replay_test.go:93
+                Error:          Expected error with "prompty: invalid provider state" in chain but got nil.
+                Test:           TestHostedHistoryChangesFailBeforeIO/signature
+FAIL
+FAIL    github.com/skosovsky/prompty/adapter/anthropic  0.967s
+ok      github.com/skosovsky/prompty/adapter    1.734s
+FAIL

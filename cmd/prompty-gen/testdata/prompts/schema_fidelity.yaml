@@ -1,0 +1,31 @@
+id: schema_fidelity
+inputs:
+  amount:
+    type: number
+    required: true
+    maximum: 3.5
+  count:
+    type: integer
+    required: true
+  enabled:
+    type: boolean
+    required: true
+  text:
+    type: string
+    required: true
+  payload:
+    type: object
+    properties:
+      count:
+        type: integer
+    allOf:
+      - required: [count]
+    additionalProperties: false
+  late_amount:
+    type: number
+    late: true
+    required: true
+    maximum: 3.5
+messages:
+  - role: user
+    content: "{{ .Input.amount }} {{ .Input.count }} {{ .Input.enabled }} {{ .Input.text }} {{ .LateVars.late_amount }}"

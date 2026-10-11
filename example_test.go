@@ -100,15 +100,21 @@ func (exampleStructuredInvoker) Execute(context.Context, *prompty.PromptExecutio
 func (exampleStructuredInvoker) ExecuteStream(
 	ctx context.Context,
 	exec *prompty.PromptExecution,
-) iter.Seq2[*prompty.ResponseChunk, error] {
-	return func(yield func(*prompty.ResponseChunk, error) bool) {
-		resp, err := exampleStructuredInvoker{}.Execute(ctx, exec)
-		if err != nil {
-			yield(nil, err)
-			return
+	mode prompty.StreamMode,
+) *prompty.Stream {
+	return prompty.NewStream(ctx, mode, func(ctx context.Context) iter.Seq2[*prompty.ResponseChunk, error] {
+		return func(yield func(*prompty.ResponseChunk, error) bool) {
+			resp, err := exampleStructuredInvoker{}.Execute(ctx, exec)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			yield(&prompty.ResponseChunk{
+				Identity: prompty.StreamIdentity{MessageID: "", PartIDs: []string{"result:0"}},
+				Content:  resp.Content, Kind: prompty.StreamFinish, Outcome: resp.Outcome,
+			}, nil)
 		}
-		yield(&prompty.ResponseChunk{Content: resp.Content, IsFinished: true}, nil)
-	}
+	})
 }
 
 // ExampleGenerateStructured shows a single structured call. For multiple attempts with

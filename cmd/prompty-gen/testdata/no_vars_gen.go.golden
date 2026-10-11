@@ -26,9 +26,6 @@ func NewNoVarsRecipeFromCheckpoint(checkpoint prompty.PromptRecipeNoLateCheckpoi
 		return NoVarsRecipe{}, fmt.Errorf("%s checkpoint descriptor id mismatch: %q", string(NoVars), checkpoint.Descriptor.ID)
 	}
 	input := checkpoint.Input
-	if err := validate.Struct(&input); err != nil {
-		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
-	}
 	checkpoint.Input = input
 	inner, err := prompty.PromptRecipeNoLateFromCheckpoint[NoVarsInput](checkpoint)
 	if err != nil {
@@ -69,11 +66,11 @@ func (r NoVarsRecipe) JSONSchema() (prompty.JSONDocument, error) {
 	return prompty.CloneJSONDocument(format.Schema), nil
 }
 
-func (r NoVarsRecipe) Execute(ctx context.Context, registry prompty.ManifestCheckpointRegistry) (*prompty.PromptExecution, error) {
+func (r NoVarsRecipe) Execute(ctx context.Context, registry prompty.ManifestSnapshotRegistry) (*prompty.PromptExecution, error) {
 	return r.inner.Execute(ctx, registry)
 }
 
-func (r NoVarsRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestCheckpointRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
+func (r NoVarsRecipe) ExecuteWithContract(ctx context.Context, registry prompty.ManifestSnapshotRegistry, contract prompty.ToolManifestContract) (*prompty.PromptExecution, error) {
 	return r.inner.ExecuteWithContract(ctx, registry, contract)
 }
 
@@ -84,9 +81,6 @@ func (p *NoVarsPrompt) NewRecipe(ctx context.Context, input NoVarsInput) (NoVars
 func (p *NoVarsPrompt) newRecipe(ctx context.Context, input NoVarsInput, options ...prompty.PromptRuntimeOptions) (NoVarsRecipe, error) {
 	if p.registry == nil {
 		return NoVarsRecipe{}, fmt.Errorf("%s recipe requires registry", string(NoVars))
-	}
-	if err := validate.Struct(&input); err != nil {
-		return NoVarsRecipe{}, fmt.Errorf("validate input: %w", err)
 	}
 	desc, err := p.registry.RecommendManifestDescriptor(ctx, string(NoVars))
 	if err != nil {

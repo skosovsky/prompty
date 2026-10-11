@@ -107,7 +107,8 @@ func TestGenerateStructured_DefaultRetriesAreDisabled(t *testing.T) {
 
 	got, err := GenerateStructured[result](context.Background(), invoker, "extract name")
 	var valErr *ValidationError
-	require.ErrorAs(t, err, &valErr)
+	require.NotErrorAs(t, err, &valErr)
+	require.ErrorIs(t, err, ErrSchemaJSONDecode)
 	assert.Zero(t, got)
 	assert.Equal(t, 1, callNum)
 }

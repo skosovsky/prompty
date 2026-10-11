@@ -1,0 +1,6 @@
+level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
+stream_message_state_test.go:12:1: cognitive complexity 21 of func `TestStreamScopedMetadataOnlyFailureRevokesContinuation` is high (> 20) (gocognit)
+func TestStreamScopedMetadataOnlyFailureRevokesContinuation(t *testing.T) {
+^
+1 issues:
+* gocognit: 1

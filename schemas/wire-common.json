@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prompty.invalid/wire-common",
+  "$defs": {
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "endpoint", "model"],
+      "properties": {"provider": {"type": "string"}, "endpoint": {"type": "string", "pattern": "^[^?#]*$", "not": {"pattern": "^([a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/]*@"}}, "model": {"type": "string"}, "model_family": {"type": "string"}}
+    },
+    "envelope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "scope", "codec", "payload", "required"],
+      "properties": {
+        "format": {"const": "prompty.provider-state"}, "scope": {"$ref": "#/$defs/identity"},
+        "codec": {"type": "string", "minLength": 1}, "payload": {"type": "string", "minLength": 1, "contentEncoding": "base64"},
+        "required": {"type": "boolean"}, "expires_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "state": {
+      "type": "object", "additionalProperties": false, "required": ["part_index", "envelope"],
+      "properties": {"part_index": {"type": "integer", "minimum": 0}, "envelope": {"$ref": "#/$defs/envelope"}}
+    },
+    "annotation": {
+      "type": "object", "additionalProperties": false, "required": ["part_index", "kind", "value"],
+      "properties": {"part_index": {"type": "integer", "minimum": 0}, "kind": {"type": "string", "minLength": 1}, "value": true}
+    },
+    "message_annotation": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "value"],
+      "properties": {"kind": {"type": "string", "minLength": 1, "pattern": "\\S"}, "value": true, "scope": {"$ref": "#/$defs/identity"}, "required": {"type": "boolean"}},
+      "if": {"properties": {"required": {"const": true}}, "required": ["required"]},
+      "then": {"required": ["scope"]}
+    },
+    "cache": {"type": "object", "additionalProperties": false, "required": ["mechanism"], "properties": {
+      "mechanism": {"enum": ["implicit_prefix", "block_marker", "omit"]}, "mode": {"enum": ["advisory", "required"]},
+      "provider": {"type": "string"}, "controls": {"type": "object"}},
+      "dependentRequired": {"controls": ["provider"]},
+      "if": {"properties": {"mechanism": {"const": "omit"}}},
+      "then": {"propertyNames": {"enum": ["mechanism"]}}},
+    "part": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "oneOf": [
+        {"properties": {"type": {"const": "text"}}, "propertyNames": {"enum": ["type", "text", "cache_policy"]}},
+        {"properties": {"type": {"const": "reasoning"}}, "propertyNames": {"enum": ["type", "text", "cache_policy"]}},
+        {"properties": {"type": {"const": "media"}}, "propertyNames": {"enum": ["type", "media_type", "mime_type", "url", "data", "cache_policy"]}},
+        {"properties": {"type": {"const": "tool_call"}}, "propertyNames": {"enum": ["type", "tool_call_id", "name", "args", "args_chunk", "cache_policy"]}},
+        {"properties": {"type": {"const": "tool_result"}}, "propertyNames": {"enum": ["type", "tool_call_id", "name", "content", "is_error", "cache_policy"]}}
+      ],
+      "properties": {
+        "type": {"enum": ["text", "reasoning", "media", "tool_call", "tool_result"]},
+        "text": {"type": "string"}, "media_type": {"type": "string"}, "mime_type": {"type": "string"},
+        "url": {"type": "string"}, "data": {"type": "string", "contentEncoding": "base64"},
+        "tool_call_id": {"type": "string"}, "name": {"type": "string"}, "args": {"type": "string"}, "args_chunk": {"type": "string"},
+        "content": {"type": "array", "items": {"$ref": "#/$defs/part"}}, "is_error": {"type": "boolean"}, "cache_policy": {"$ref": "#/$defs/cache"}
+      }
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["prompt_tokens", "completion_tokens", "total_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens"],
+      "properties": {
+        "prompt_tokens": {"type": "integer", "minimum": 0}, "completion_tokens": {"type": "integer", "minimum": 0},
+        "total_tokens": {"type": "integer", "minimum": 0}, "cache_read_tokens": {"type": "integer", "minimum": 0},
+        "cache_write_tokens": {"type": "integer", "minimum": 0}, "reasoning_tokens": {"type": "integer", "minimum": 0},
+        "known": {"type": "array", "uniqueItems": true, "items": {"enum": ["prompt", "completion", "total", "cache_read", "cache_write", "reasoning"]}},
+        "mode": {"enum": ["cumulative", "delta"]}
+      }
+    },
+    "diagnostics": {
+      "type": "object", "additionalProperties": false, "required": ["profile", "snapshot"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/identity"}, "snapshot": {"type": "string"}, "provenance": {"type": "string"}, "override": {"type": "boolean"},
+        "schemas": {"type": "array", "items": {"$ref": "#/$defs/schema_report"}},
+		"cache": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+		  "required": ["path", "mechanism", "disposition", "reason"], "properties": {
+		    "path": {"type": "string"}, "mechanism": {"enum": ["implicit_prefix", "block_marker", "omit"]},
+		    "disposition": {"enum": ["accepted", "unsupported", "not_applicable", "unknown"]}, "reason": {"type": "string"}}}},
+		"capture": {"$ref": "#/$defs/capture_report"},
+        "checks": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["requirement", "status"],
+          "properties": {"requirement": {"type": "string"}, "status": {"enum": ["supported", "unsupported", "unknown"]}, "reason": {"type": "string"}}}}
+      }
+    },
+    "schema_report": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "role", "dialect", "guarantee", "source_digest", "translated_digest"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/identity"}, "role": {"enum": ["output", "tool_input"]}, "name": {"type": "string"},
+        "dialect": {"type": "string"}, "guarantee": {"enum": ["strict", "lowering"]},
+        "source_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "translated_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "transformations": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["id", "pointer", "reason"], "properties": {"id": {"type": "string", "minLength": 1}, "pointer": {"type": "string"}, "reason": {"type": "string", "minLength": 1}}}}
+      }
+    },
+    "profile": {
+      "type": "object", "additionalProperties": false, "required": ["identity", "provenance", "capabilities"],
+      "properties": {
+        "identity": {"allOf": [{"$ref": "#/$defs/identity"}, {"properties": {
+          "provider": {"pattern": "\\S"}, "endpoint": {"pattern": "\\S"}, "model": {"pattern": "\\S"}
+        }}]}, "provenance": {"type": "string", "pattern": "\\S"},
+        "capabilities": {"type": ["object", "null"], "propertyNames": {"pattern": "\\S"}, "additionalProperties": {"enum": ["supported", "unsupported", "unknown"]}},
+        "forbidden_combinations": {"type": "array", "items": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "\\S"}}},
+        "input_mime": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "\\S"}}, "output_mime": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "\\S"}},
+        "model_options_schema": {"type": ["object", "boolean"]}
+      }
+    },
+    "requirements": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"output_mode": {"enum": ["native", "synthetic_tool"]}, "capabilities": {"type": "array", "items": {"type": "string"}}, "output_mime": {"type": "array", "items": {"type": "string"}}, "override": {"$ref": "#/$defs/profile"},
+		"capture": {"type": "object", "additionalProperties": false, "properties": {
+		  "stages": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capture_stage"}},
+		  "accuracy": {"enum": ["metadata", "semantic", "bytes"]},
+		  "durable": {"type": "boolean"}, "physical_attempts": {"type": "boolean"}}},
+        "schema": {"type": "object", "additionalProperties": false,
+          "properties": {"mode": {"enum": ["strict", "lowering"]},
+            "allowed_transforms": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}},
+          "allOf": [{"if": {"required": ["allowed_transforms"], "properties": {"allowed_transforms": {"minItems": 1}}},
+            "then": {"required": ["mode"], "properties": {"mode": {"const": "lowering"}}}}]
+        }
+      }
+    },
+	"capture_stage": {"enum": ["canonical_execution", "translated_request", "transport_request", "transport_response", "provider_response", "provider_chunk", "canonical_parts", "canonical_terminal"]},
+	"capture_report": {"type": "object", "additionalProperties": false,
+	  "required": ["invocation_id", "closed", "complete"], "properties": {
+		"invocation_id": {"type": "string", "minLength": 1}, "sdk_build": {"type": "string"},
+		"coverage": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+		  "required": ["stage", "accuracy"], "properties": {
+			"stage": {"$ref": "#/$defs/capture_stage"}, "accuracy": {"enum": ["metadata", "semantic", "bytes"]}}}},
+		"closed": {"type": "boolean"}, "complete": {"type": "boolean"},
+		"observed": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capture_stage"}},
+		"failures": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+		  "required": ["stage", "after_dispatch", "kind"], "properties": {
+			"stage": {"$ref": "#/$defs/capture_stage"}, "after_dispatch": {"type": "boolean"}, "kind": {"type": "string"}}}}}}
+  }
+}

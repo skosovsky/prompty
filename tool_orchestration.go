@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
-// ToolInvoker validates and executes typed tool calls.
+// ToolInvoker is a JSON-only one-shot handler port. It does not receive call IDs
+// or interpret lifecycle controls; use a full Response for host-owned dispatch.
 type ToolInvoker interface {
 	ToolValidator
-	InvokeTool(name string, argsJSON string) (json.RawMessage, error)
+	InvokeTool(ctx context.Context, name string, argsJSON string) (json.RawMessage, error)
 }
 
 // ExecuteWithTypedTools performs one model call, validates tool args, and invokes handlers.
@@ -31,57 +34,215 @@ func ExecuteWithTypedTools(
 	}
 
 	workExec := clonePromptExecution(exec)
-	resp, err := invoker.Execute(ctx, workExec)
-	if err != nil {
-		return nil, err
+	if contextErr := ctx.Err(); contextErr != nil {
+		return workExec, contextErr
 	}
-	if resp == nil {
-		return nil, errors.New("typed tools: nil response")
+	if err := ValidateExecutionToolScope(workExec); err != nil {
+		return workExec, err
 	}
-
-	assistantMsg := newAssistantMessageWithContent(resp.Content)
-	toolCalls, err := toolCallsFromContent(resp.Content)
+	schemas, err := compileToolSchemas(workExec)
 	if err != nil {
-		return nil, err
+		return workExec, err
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return workExec, contextErr
+	}
+	if scopeErr := ValidateExecutionToolScope(workExec); scopeErr != nil {
+		return workExec, scopeErr
+	}
+	resp, err := invoker.Execute(ctx, workExec.Clone())
+	if dispatchErr := errors.Join(err, ctx.Err()); dispatchErr != nil {
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: dispatchErr}
+	}
+	toolCalls, err := admitToolCalls(ctx, workExec, cloneResponse(resp), tools, schemas)
+	if err != nil {
+		return workExec, err
+	}
+	assistantMsg, err := resp.AssistantMessage()
+	if err != nil {
+		return workExec, &ToolDispatchError{Response: cloneResponse(resp), Err: err}
 	}
 	if len(toolCalls) == 0 {
-		return workExec.AddMessage(assistantMsg), nil
+		return workExec.AddMessage(assistantMsg), ctx.Err()
 	}
 
-	callErrs := make([]error, len(toolCalls))
-	invalidErrs := make([]error, 0, len(toolCalls))
-	for i, toolCall := range toolCalls {
-		callErrs[i] = tools.ValidateToolCall(toolCall.Name, toolCall.Args)
-		if callErrs[i] != nil {
-			invalidErrs = append(invalidErrs, callErrs[i])
-		}
-	}
-	if len(invalidErrs) > 0 {
-		return workExec, &ToolCallError{
-			RawAssistantMessage: &assistantMsg,
-			ToolResults:         toolValidationResults(toolCalls, callErrs),
-			Err:                 errors.Join(invalidErrs...),
-		}
-	}
+	return invokeToolBatch(ctx, workExec.AddMessage(assistantMsg), toolCalls, tools)
+}
 
-	updated := workExec.AddMessage(assistantMsg)
-	invokeErrs := make([]error, len(toolCalls))
-	for i, toolCall := range toolCalls {
-		result, invokeErr := tools.InvokeTool(toolCall.Name, toolCall.Args)
+func invokeToolBatch(
+	ctx context.Context,
+	updated *PromptExecution,
+	toolCalls []ToolCallPart,
+	tools ToolInvoker,
+) (*PromptExecution, error) {
+	invokeErrs := make([]error, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		if err := ctx.Err(); err != nil {
+			return updated, errors.Join(append(invokeErrs, err)...)
+		}
+		if err := ValidateExecutionToolScope(updated); err != nil {
+			return updated, errors.Join(append(invokeErrs, err)...)
+		}
+		result, invokeErr := tools.InvokeTool(ctx, toolCall.Name, toolCall.Args)
+		invokeErr = errors.Join(invokeErr, ctx.Err())
+		invokeErrs = append(invokeErrs, invokeErr)
 		var resultPart ContentPart
 		if invokeErr != nil {
-			invokeErrs[i] = invokeErr
-			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, invokeErr.Error(), true)
+			text := toolResultText(result)
+			if len(result) == 0 {
+				text = invokeErr.Error()
+			}
+			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, text, true)
 		} else {
 			text := toolResultText(result)
 			resultPart = newToolResultPart(toolCall.ID, toolCall.Name, text, false)
 		}
 		updated = updated.AddMessage(newToolMessageWithContent([]ContentPart{resultPart}))
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return updated, errors.Join(append(invokeErrs, cancelErr)...)
+		}
 	}
 	if joined := errors.Join(invokeErrs...); joined != nil {
 		return updated, fmt.Errorf("typed tools: invoke failed: %w", joined)
 	}
 	return updated, nil
+}
+
+func validateToolBatch(calls []ToolCallPart, schemas map[string]ValueValidator, tools ToolValidator) ([]error, error) {
+	callErrs := make([]error, len(calls))
+	for i, call := range calls {
+		validator, exists := schemas[call.Name]
+		if !exists || validator == nil {
+			callErrs[i] = &ToolScopeError{Tool: call.Name, Reason: "missing execution schema"}
+			continue
+		}
+		callErrs[i] = validator.ValidateJSON(JSONDocument(call.Args))
+		if callErrs[i] == nil {
+			callErrs[i] = tools.ValidateToolCall(call.Name, call.Args)
+		}
+	}
+	return callErrs, errors.Join(callErrs...)
+}
+
+// A definition without parameter constraints still requires a JSON object.
+// Every declared schema is compiled before invocation; registry schemas cannot
+// substitute for the execution's original, caller-owned constraints.
+func compileToolSchemas(exec *PromptExecution) (map[string]ValueValidator, error) {
+	compiler := exec.Validator
+	if compiler == nil {
+		compiler = NewJSONSchemaValidator(nil)
+	}
+	compiled := make(map[string]ValueValidator, len(exec.Tools))
+	for _, definition := range exec.Tools {
+		if definition.Name == "" {
+			return nil, &ToolScopeError{Tool: "", Reason: "empty tool definition name"}
+		}
+		if _, exists := compiled[definition.Name]; exists {
+			return nil, &ToolScopeError{Tool: definition.Name, Reason: "duplicate tool definition"}
+		}
+		source := definition.Parameters
+		if len(source) == 0 {
+			source = JSONDocument(`{"type":"object"}`)
+		}
+		validator, err := compileSchemaSnapshot(compiler, source, definition.Dialect)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q schema: %w", definition.Name, err)
+		}
+		if validator == nil {
+			return nil, ErrSchemaValidatorRequired
+		}
+		compiled[definition.Name] = validator
+	}
+	return compiled, nil
+}
+
+// ErrToolScope indicates that definitions or calls violate the execution boundary.
+var ErrToolScope = errors.New("prompty: tool call violates execution scope")
+
+// ToolScopeError describes an execution-scoped contract violation, not an authorization decision.
+type ToolScopeError struct {
+	Tool   string
+	Reason string
+}
+
+func (e *ToolScopeError) Error() string {
+	return fmt.Sprintf("%v: %q: %s", ErrToolScope, e.Tool, e.Reason)
+}
+func (*ToolScopeError) Unwrap() error { return ErrToolScope }
+
+func validateResponseToolScope(exec *PromptExecution, response *Response) error {
+	parts := response.Content
+	names := make(map[string]int)
+	for _, part := range parts {
+		if call, ok := toolCallPartValue(part); ok {
+			names[call.Name]++
+		}
+	}
+	allowed := toolDefinitionsByName(exec.Tools)
+	seen := make(map[string]bool)
+	for _, part := range parts {
+		call, ok := toolCallPartValue(part)
+		if !ok {
+			continue
+		}
+		if _, exists := allowed[call.Name]; !exists {
+			return &ToolScopeError{Tool: call.Name, Reason: "tool is outside execution scope"}
+		}
+		if exec.ForcedTool != "" && call.Name != exec.ForcedTool {
+			return &ToolScopeError{Tool: call.Name, Reason: "tool conflicts with forced tool"}
+		}
+		if call.ID == "" && (!checkedToolNameCorrelation(exec, response.Diagnostics) || names[call.Name] != 1 ||
+			call.Args == "" || call.ArgsChunk != "") {
+			return &ToolScopeError{Tool: call.Name, Reason: "unconfirmed or ambiguous ID-less tool correlation"}
+		}
+		// Full responses contain complete calls, not stream fragments. Never merge
+		// duplicate full calls, which could hide an unexpected second side effect.
+		if call.ID != "" {
+			if seen[call.ID] {
+				return &ToolScopeError{Tool: call.Name, Reason: "duplicate tool call ID"}
+			}
+			seen[call.ID] = true
+		}
+	}
+	return nil
+}
+
+func checkedToolNameCorrelation(exec *PromptExecution, report ExecutionDiagnostics) bool {
+	if !slices.Contains(exec.Requirements.Capabilities, CapabilityToolNameCorrelation) {
+		return false
+	}
+	for _, value := range []string{report.Profile.Provider, report.Profile.Endpoint, report.Profile.Model,
+		report.Provenance, report.Snapshot} {
+		if strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	if exec.ModelOptions != nil && exec.ModelOptions.Model != "" && exec.ModelOptions.Model != report.Profile.Model {
+		return false
+	}
+	if profile := exec.Requirements.Override; profile != nil {
+		if ValidateCapabilityProfile(*profile) != nil || profile.Identity != report.Profile ||
+			profile.Capabilities[CapabilityTools] != CapabilitySupported ||
+			profile.Capabilities[CapabilityToolNameCorrelation] != CapabilitySupported {
+			return false
+		}
+	}
+	return checkedToolCapability(report, CapabilityTools) &&
+		checkedToolCapability(report, CapabilityToolNameCorrelation)
+}
+
+func checkedToolCapability(report ExecutionDiagnostics, capability string) bool {
+	checks := 0
+	for _, check := range report.Checks {
+		if check.Requirement != capability {
+			continue
+		}
+		if check.Status != CapabilitySupported {
+			return false
+		}
+		checks++
+	}
+	return checks == 1
 }
 
 func toolResultText(raw json.RawMessage) string {
