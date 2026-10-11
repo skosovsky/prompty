@@ -72,9 +72,9 @@ func TestTransportFailureCaptureKeepsOutcomeUnknownWithoutReplay(t *testing.T) {
 				require.Empty(t, status.Result.Content)
 			}
 			// Assert: separate SDK/capture errors, no success/not-executed fabrication or replay.
-			var transportErr *openai.Error
-			require.ErrorAs(t, err, &transportErr)
-			require.Equal(t, http.StatusServiceUnavailable, transportErr.StatusCode)
+			require.ErrorIs(t, err, adapter.ErrInvalidResponse)
+			require.NotContains(t, err.Error(), "private-provider-body")
+			require.NotContains(t, err.Error(), "private-credential")
 			require.ErrorIs(t, err, sentinel)
 			var captureErr *prompty.CaptureError
 			require.ErrorAs(t, err, &captureErr)
@@ -87,8 +87,8 @@ func TestTransportFailureCaptureKeepsOutcomeUnknownWithoutReplay(t *testing.T) {
 			require.NotContains(t, string(terminals[0].Projection.Payload), "private")
 			var terminal map[string]any
 			require.NoError(t, json.Unmarshal(terminals[0].Projection.Payload, &terminal))
-			// The generic classifier does not interpret provider SDK status errors as net errors.
-			require.Equal(t, "operation", terminal["error_kind"])
+			// The sanitized provider failure has a safe parse category, without raw status text.
+			require.Equal(t, "parse", terminal["error_kind"])
 			require.Nil(t, terminal["response"])
 		})
 	}

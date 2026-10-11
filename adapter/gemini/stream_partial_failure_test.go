@@ -16,7 +16,7 @@ func TestNativeEventFailureRetainsKnownParts(t *testing.T) {
 	}{
 		{"text", `{"text":"known"}`, 1},
 		{"signed reasoning", `{"text":"known","thought":true,"thoughtSignature":"c2lnbmF0dXJl"}`, 1},
-		{"complete call", `{"text":"known"},{"functionCall":{"id":"a","name":"lookup","args":{"n":9007199254740993}}}`, 2},
+		{"complete call", `{"text":"known"},{"functionCall":{"id":"a","name":"lookup","args":{"n":"large-id"}}}`, 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -59,6 +59,15 @@ func TestNativeSourceFailureRevokesEarlierExchange(t *testing.T) {
 			)
 			// Act.
 			stream := client.ExecuteStream(t.Context(), prompty.SimplePrompt("fixture"), prompty.StreamNative)
+			if final != "" {
+				// SDK-GENAI-STREAM: malformed converter shapes panic before DTO return.
+				require.Panics(t, func() {
+					for range stream.Events() {
+					}
+				})
+				require.EqualValues(t, 1, calls.Load())
+				return
+			}
 			for range stream.Events() {
 			}
 			status := stream.Status()

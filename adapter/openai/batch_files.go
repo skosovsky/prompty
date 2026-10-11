@@ -76,13 +76,14 @@ func (f *BatchFiles) Upload(
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
+	}
 	result := &prompty.BatchFileUploadResult{Resource: prompty.BatchResourceRef{Kind: "", ProviderID: ""},
 		SourceJSON: prompty.CloneJSONDocument(source.data),
 		HTTPStatus: source.status,
 	}
-	if identity := batchAcceptedIdentity(source); identity != "" {
-		result.Resource = prompty.BatchResourceRef{Kind: wireInput, ProviderID: identity}
-	}
+
 	if callErr != nil {
 		cause := prompty.ErrBatchFileUnknown
 		if batchMutationRejected(source.status) {

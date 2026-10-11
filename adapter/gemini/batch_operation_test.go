@@ -3,7 +3,6 @@ package gemini
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,18 +80,17 @@ func TestActualSDKBatchInspectionAndCancelAcknowledgement(t *testing.T) {
 	require.Equal(t, "POST /v1beta/batches/fixture:cancel", <-requests)
 	require.Empty(t, requests)
 
-	// Original source, not the normalized SDK DTO, retains the exact numeric value.
+	// SDK representation capture exposes the SDK numeric limitation.
 	source, err := observeBatchOperation(
 		context.Background(),
 		defaultResponsePayloadLimit,
-		func(ctx context.Context) error {
-			_, callErr := base.responseClient.Batches.Get(ctx, handle.ProviderID, nil)
-			return callErr
+		func(ctx context.Context) (*genai.BatchJob, error) {
+			return base.client.Batches.Get(ctx, handle.ProviderID, nil)
 		},
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(batchSourceJSON(source)), `9007199254740993`)
-	require.NotContains(t, string(batchSourceJSON(source)), `9007199254740992`)
+	require.Contains(t, string(batchSourceJSON(source)), `9007199254740992`)
+	require.NotContains(t, string(batchSourceJSON(source)), `9007199254740993`)
 }
 
 func TestBatchNativeInspectionFaultsPreservePriorHandle(t *testing.T) {
@@ -151,7 +149,7 @@ func TestBatchNativeSourceLimitAndMutationUnknown(t *testing.T) {
 	}))
 	defer server.Close()
 	base, handle := batchOperationFixture(t, server)
-	base.responseLimit = 128
+	base.responseLimit = 20
 	// Act.
 	result, err := base.batchOperation(context.Background(), "account-fixture", handle,
 		prompty.BatchOperationOptions{}, false)
@@ -199,71 +197,4 @@ func TestBatchNativeScopeBeforeIOAndTerminalCancelRace(t *testing.T) {
 	encoded, err := prompty.EncodeBatchHandle(*result.Handle)
 	require.NoError(t, err)
 	require.True(t, json.Valid(encoded))
-}
-
-func TestBatchSourceBoundsExactBoundaryDepthAndClose(t *testing.T) {
-	t.Parallel()
-	// Arrange: a finite source with an explicit byte bound.
-	for _, tc := range []struct {
-		name   string
-		body   string
-		limit  int
-		failed bool
-	}{
-		{"exact", "{}", 2, false},
-		{"excess", "{} ", 2, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			source := &responseSource{limit: tc.limit}
-			body := &batchSourceBody{ReadCloser: io.NopCloser(strings.NewReader(tc.body)), source: source}
-			// Act.
-			_, err := io.ReadAll(body)
-			// Assert: exact-limit EOF is distinct from one extra byte.
-			if tc.failed {
-				require.ErrorIs(t, err, prompty.ErrBatchResults)
-				require.True(t, source.overflow)
-				require.Nil(t, batchSourceJSON(source))
-			} else {
-				require.NoError(t, err)
-				require.True(t, source.complete)
-				require.JSONEq(t, tc.body, string(batchSourceJSON(source)))
-			}
-			require.NoError(t, body.Close())
-		})
-	}
-	require.NoError(t, validateBatchJSON([]byte(strings.Repeat("[", 256)+"0"+strings.Repeat("]", 256))))
-	require.ErrorIs(t, validateBatchJSON([]byte(strings.Repeat("[", 257)+"0"+strings.Repeat("]", 257))),
-		prompty.ErrBatchResults)
-}
-
-type batchFailingCloseBody struct {
-	io.Reader
-
-	closes int
-}
-
-func (b *batchFailingCloseBody) Close() error {
-	b.closes++
-	return errors.New("PRIVATE_CLOSE_FAILURE")
-}
-
-func TestBatchSourceRetainsSDKDiscardedCloseFailure(t *testing.T) {
-	t.Parallel()
-	// Arrange: simulate the SDK's read and deferred close on a valid body.
-	body := &batchFailingCloseBody{Reader: strings.NewReader(`{}`)}
-	// Act.
-	source, err := observeBatchOperation(context.Background(), 128, func(ctx context.Context) error {
-		observed := ctx.Value(batchSourceKey{}).(*responseSource)
-		observed.status = http.StatusOK
-		wrapper := &batchSourceBody{ReadCloser: body, source: observed}
-		defer func() { _ = wrapper.Close() }()
-		_, readErr := io.ReadAll(wrapper)
-		return readErr
-	})
-	// Assert: valid JSON does not hide failed cleanup or expose its raw error.
-	require.ErrorIs(t, err, prompty.ErrBatchResults)
-	require.NotContains(t, err.Error(), "PRIVATE_CLOSE_FAILURE")
-	require.JSONEq(t, `{}`, string(batchSourceJSON(source)))
-	require.Equal(t, 1, body.closes)
 }

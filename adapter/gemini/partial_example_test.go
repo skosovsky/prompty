@@ -17,7 +17,7 @@ func ExampleAdapter_StreamEvents_incrementalArguments() {
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, event := range []string{
 			`{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","willContinue":true}}]}}]}`,
-			`{"candidates":[{"content":{"parts":[{"functionCall":{"partialArgs":[{"jsonPath":"$.n","numberValue":1}]}}]},"finishReason":"STOP"}]}`,
+			`{"candidates":[{"content":{"parts":[{"functionCall":{"partialArgs":[{"jsonPath":"$.n","stringValue":"one"}]}}]},"finishReason":"STOP"}]}`,
 		} {
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
 		}
@@ -62,6 +62,6 @@ func ExampleAdapter_StreamEvents_incrementalArguments() {
 	fmt.Println(status.State)
 	// Output:
 	// provisional
-	// {"n":1}
+	// {"n":"one"}
 	// completed
 }

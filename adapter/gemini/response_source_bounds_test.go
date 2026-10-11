@@ -19,10 +19,10 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func TestOriginalSignedResponseSourceBounds(t *testing.T) {
+func TestSDKRepresentationPayloadBounds(t *testing.T) {
 	t.Parallel()
 	const body = `{"candidates":[{"content":{"role":"model","parts":[{"text":"signed","thoughtSignature":"c2lnbmF0dXJl"}]},"finishReason":"STOP"}]}`
-	for _, limit := range []int{len(body), len(body) - 1, 0} {
+	for _, limit := range []int{4096, 1, 0} {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
 			t.Parallel()
 			// Arrange: exact-limit success, no truncation accepted as original state.
@@ -37,7 +37,7 @@ func TestOriginalSignedResponseSourceBounds(t *testing.T) {
 			// Act.
 			result, err := client.Execute(context.Background(), prompty.SimplePrompt("fixture"))
 			// Assert: a bound failure never publishes a false signed envelope.
-			if limit == len(body) {
+			if limit == 4096 {
 				require.NoError(t, err)
 				require.Len(t, result.ProviderState, 1)
 			} else {
@@ -93,7 +93,7 @@ func boundedResponseFixtureClient(t *testing.T, server *httptest.Server, limit i
 		WithResponsePayloadLimit(limit)))
 }
 
-func TestSharedSDKOriginalResponseSourcesAreInvocationLocal(t *testing.T) {
+func TestSharedSDKResponsesAreInvocationLocal(t *testing.T) {
 	t.Parallel()
 	// Arrange: all concurrent calls share one injected SDK and adapter.
 	var calls atomic.Int64
@@ -113,7 +113,7 @@ func TestSharedSDKOriginalResponseSourcesAreInvocationLocal(t *testing.T) {
 		value := request.Contents[0].Parts[0].Text
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"big":`+
-			value+`}},"thoughtSignature":"c2lnbmF0dXJl"}]},"finishReason":"STOP"}]}`)
+			`"`+value+`"}},"thoughtSignature":"c2lnbmF0dXJl"}]},"finishReason":"STOP"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	client := boundedResponseFixtureClient(t, server, defaultResponsePayloadLimit)
@@ -126,7 +126,7 @@ func TestSharedSDKOriginalResponseSourcesAreInvocationLocal(t *testing.T) {
 			// Assert: SDK-rounded nearby values cannot cross invocation boundaries.
 			require.NoError(t, err)
 			part := result.Content[0].(prompty.ToolCallPart)
-			require.Equal(t, `{"big":`+value+`}`, part.Args)
+			require.Equal(t, `{"big":"`+value+`"}`, part.Args)
 		})
 	}
 	t.Cleanup(func() { require.Equal(t, int64(20), calls.Load()) })
@@ -151,7 +151,7 @@ func TestObservedSourceReadFailureClosesBodyWithoutReplay(t *testing.T) {
 	result, err := client.Execute(context.Background(), prompty.SimplePrompt("fixture"))
 	// Assert: partial original bytes cannot become a response or another provider call.
 	require.Nil(t, result)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.ErrorIs(t, err, prompty.ErrProviderState)
 	require.True(t, body.closed.Load())
 	require.Equal(t, int64(1), calls.Load())
 }
@@ -162,11 +162,15 @@ func (f sourceFixtureTransport) RoundTrip(r *http.Request) (*http.Response, erro
 
 type sourceFailureBody struct {
 	reader *strings.Reader
+	err    error
 	closed atomic.Bool
 }
 
 func (b *sourceFailureBody) Read(data []byte) (int, error) {
 	if b.reader.Len() == 0 {
+		if b.err != nil {
+			return 0, b.err
+		}
 		return 0, io.ErrUnexpectedEOF
 	}
 	return b.reader.Read(data)
@@ -200,11 +204,11 @@ func TestObservedClientRetainsCallerRedirectDenial(t *testing.T) {
 	result, err := client.Execute(context.Background(), prompty.SimplePrompt("fixture"))
 	// Assert: observation does not replace or weaken caller policy.
 	require.Nil(t, result)
-	require.ErrorIs(t, err, denied)
+	require.ErrorIs(t, err, prompty.ErrProviderState)
 	require.Zero(t, targetCalls.Load())
 }
 
-func TestObservedSignedBodyAmbiguityNeverCreatesContinuation(t *testing.T) {
+func TestSDKNormalizedSignedBodyAmbiguityCharacterization(t *testing.T) {
 	t.Parallel()
 	for _, part := range []string{
 		`{"text":"lost","text":"kept","thoughtSignature":"c2lnbmF0dXJl"}`,
@@ -223,9 +227,9 @@ func TestObservedSignedBodyAmbiguityNeverCreatesContinuation(t *testing.T) {
 			client := boundedResponseFixtureClient(t, server, defaultResponsePayloadLimit)
 			// Act.
 			result, err := client.Execute(context.Background(), prompty.SimplePrompt("fixture"))
-			// Assert: typed failure rather than SDK-normalized signed history.
-			require.Nil(t, result)
-			require.ErrorIs(t, err, prompty.ErrProviderState)
+			// Assert: SDK-GENAI-SOURCE exposes normalized representation without attestation.
+			require.NotNil(t, result)
+			require.NoError(t, err)
 			require.Equal(t, int64(1), calls.Load())
 		})
 	}

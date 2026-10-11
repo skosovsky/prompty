@@ -33,15 +33,8 @@ func WithModel(m string) Option {
 
 // WithClient injects the Ollama SDK client for Execute. Required for Execute/Invoker flow.
 func WithClient(c ChatClient) Option {
-	switch client := c.(type) {
-	case *api.Client:
-		if client == nil {
-			c = nil
-		}
-	case *HTTPChatClient:
-		if client == nil {
-			c = nil
-		}
+	if client, ok := c.(*api.Client); ok && client == nil {
+		c = nil
 	}
 	return func(a *Adapter) { a.client = c }
 }
@@ -158,17 +151,13 @@ func (a *Adapter) Execute(ctx context.Context, req *api.ChatRequest) (*api.ChatR
 	err := a.client.Chat(ctx, &request, func(r api.ChatResponse) error {
 		callbacks++
 		if callbacks != 1 {
-			return adapter.ErrInvalidResponse
+			return &chatCallbackError{cause: adapter.ErrInvalidResponse}
 		}
 		lastResp = r
 		return nil
 	})
 	if err != nil {
-		if partial, ok := errors.AsType[*partialChatDecodeError](err); ok {
-			// Defer this parse failure to ParseResponse, which returns the known prefix.
-			return &partial.response, nil
-		}
-		return nil, err
+		return nil, safeChatError(ctx, err)
 	}
 	if callbacks != 1 {
 		return nil, adapter.ErrInvalidResponse
@@ -544,14 +533,14 @@ func ollamaThinking(parts []prompty.ContentPart) (string, error) {
 }
 
 func partialOllamaFailure(raw *api.ChatResponse, parts []prompty.ContentPart, cause error) (*prompty.Response, error) {
-	if len(parts) == 0 {
-		return nil, cause
+	usage, err := usageFromOllama(raw)
+	if len(parts) == 0 && len(usage.Known) == 0 {
+		return nil, errors.Join(cause, err)
 	}
 	response := prompty.NewResponse(parts)
 	response.Model = raw.Model
 	response.Outcome = "" // Failed argument decoding cannot confirm completion.
 	response.ContinuationUnavailable = true
-	usage, err := usageFromOllama(raw)
 	response.Usage = usage
 	return response, errors.Join(cause, err)
 }

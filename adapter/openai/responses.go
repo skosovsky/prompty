@@ -264,8 +264,10 @@ func (r *Responses) Create(
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
+	}
 	if callErr != nil {
-		retainUnknownResponseIdentity(source, handle, result)
 		return capture.finish(ctx, result, errors.Join(prompty.ErrRemoteResponseUnknown, ctx.Err()))
 	}
 	result, err = parseRemoteResponse(raw, handle, result, prepared.schema, prepared.tools)
@@ -393,6 +395,9 @@ func (r *Responses) observe(
 			ctx, handle.ProviderID, query,
 			option.WithMaxRetries(0), option.WithMiddleware(source.observe),
 		)
+	}
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
 	}
 	if err != nil {
 		var apiErr *sdk.Error

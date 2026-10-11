@@ -125,7 +125,7 @@ func (c *cacheOperationCapture) finish(
 	var providerErr error
 	if c.dispatched {
 		if c.source == nil || c.source.overflow || !c.source.complete || !json.Valid(c.source.data.Bytes()) {
-			if c.source != nil && c.source.status > 0 {
+			if c.source != nil && (c.source.status > 0 || c.source.cache != nil) {
 				providerErr = c.providerMetadata(ctx)
 			} else {
 				providerErr = c.session.RecordFailure(prompty.CaptureProviderResponse, true,
@@ -172,11 +172,17 @@ func (c *cacheOperationCapture) providerMetadata(ctx context.Context) error {
 			RequestID:          "",
 			Usage:              nil,
 			Outcome:            "",
-			HTTPStatus:         &status,
+			HTTPStatus:         nil,
 			SchemaDigests:      prompty.CaptureSchemaDigests(c.report.Schemas),
 		},
 		Accuracy: prompty.CaptureMetadata,
 		Complete: false,
+	}
+	if status > 0 {
+		record.Projection.Metadata.HTTPStatus = &status
+	}
+	if c.source.cache != nil && cacheResourceName.MatchString(c.source.cache.Name) {
+		record.Projection.Metadata.ProviderResponseID = c.source.cache.Name
 	}
 	return c.session.Emit(ctx, record)
 }

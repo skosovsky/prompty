@@ -134,7 +134,7 @@ func TestCallerExactSDKDTOAndSourceMustAgree(t *testing.T) {
 	for _, mismatch := range []bool{false, true} {
 		t.Run(map[bool]string{false: "matching", true: "rounded integer conflict"}[mismatch], func(t *testing.T) {
 			t.Parallel()
-			// Arrange: typed integers cannot be justified by SDK float normalization.
+			// Arrange: exact caller-owned typed integers are SDK DTO mapping input; Body is ignored.
 			number := int64(9007199254740993)
 			if mismatch {
 				number--
@@ -163,14 +163,11 @@ func TestCallerExactSDKDTOAndSourceMustAgree(t *testing.T) {
 			// Act.
 			response, err := New().ParseResponse(raw)
 			// Assert.
-			if mismatch {
-				require.ErrorIs(t, err, prompty.ErrProviderState)
-				require.Nil(t, response)
-			} else {
-				require.NoError(t, err)
-				require.Len(t, response.Content, 1)
-				require.Equal(t, `{"number":9007199254740993}`, response.Content[0].(prompty.ToolCallPart).Args)
-			}
+			require.NoError(t, err)
+			require.Len(t, response.Content, 1)
+			expected, marshalErr := json.Marshal(map[string]any{"number": number})
+			require.NoError(t, marshalErr)
+			require.Equal(t, string(expected), response.Content[0].(prompty.ToolCallPart).Args)
 		})
 	}
 }

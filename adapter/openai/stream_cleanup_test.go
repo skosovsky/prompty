@@ -137,7 +137,7 @@ func TestNativeSDKReadFailureAfterTwoDeltasPreservesPartialAndClosesBody(t *test
 	for event, err := range stream.Events() {
 		if event.Kind == prompty.StreamTerminal {
 			terminals++
-			require.ErrorIs(t, err, errCleanupFixtureRead)
+			require.ErrorIs(t, err, adapter.ErrInvalidResponse)
 		} else if len(event.Content) != 0 {
 			deltas++
 		}

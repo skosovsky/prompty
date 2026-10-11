@@ -42,9 +42,7 @@ per-item outcomes/partial content/usage. DownloadComplete and CorrelationComplet
 are separate from the observed remote ended status and from success of all items.
 Missing/duplicate/unexpected IDs and partial retrieval return ErrBatchResults with
 the observed prefix. Body closure/read errors do not change known execution to
-unknown. Results uses a bounded original-line reader over the SDK request rather
-than the SDK JSONL scanner, whose Err hides scanner failures. MaxLineBytes/MaxBytes
-are explicit per-call limits; zero selects 4 MiB/64 MiB, negative limits fail
+unknown. Results uses the official SDK Results iterator: Next/Current.RawJSON/Err. The pinned v1.78.0 scanner exposes read errors and has a 32 MiB line buffer; the old hidden-error workaround is removed. Generic total-byte/EOF telemetry does not decode records. MaxLineBytes checks each returned SDK record after decoding and is not an allocation bound; MaxBytes bounds generic reads. Both are explicit per-call limits; zero selects 4 MiB/64 MiB, negative limits fail
 before I/O. No source result URL is fetched outside the SDK endpoint.
 
 SDK mutation retries are disabled. Known request rejection is ErrBatchRejected;

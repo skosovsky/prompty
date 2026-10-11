@@ -41,8 +41,7 @@ func nativeFixture(t *testing.T, lines []string, capabilities ...string) (prompt
 	for _, capability := range capabilities {
 		profile.Capabilities[capability] = prompty.CapabilitySupported
 	}
-	chat, err := NewHTTPChatClient(endpoint, server.Client(), 4*1024*1024)
-	require.NoError(t, err)
+	chat := api.NewClient(endpoint, server.Client())
 	return adapter.NewClient(New(WithModel("fixture"), WithClient(chat),
 		WithProfiles(server.URL, profile))), &calls
 }
@@ -52,8 +51,8 @@ func TestNativeSnapshotsAndLateUsage(t *testing.T) {
 	// Arrange: tools are complete snapshots, not JSON argument deltas.
 	client, calls := nativeFixture(t, []string{
 		`{"message":{"role":"assistant","content":"early"},"done":false}`,
-		`{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":1}}},{"id":"b","function":{"name":"lookup","arguments":{"x":2}}}]},"done":false}`,
-		`{"message":{"tool_calls":[{"id":"b","function":{"name":"lookup","arguments":{"x":2}}}]},"done":false}`,
+		`{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":"one"}}},{"id":"b","function":{"name":"lookup","arguments":{"x":"two"}}}]},"done":false}`,
+		`{"message":{"tool_calls":[{"id":"b","function":{"name":"lookup","arguments":{"x":"two"}}}]},"done":false}`,
 		`{"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":2}`,
 	})
 	// Act.
@@ -74,8 +73,8 @@ func TestNativeSnapshotsAndLateUsage(t *testing.T) {
 	require.Equal(t, 5, status.Result.Usage.TotalTokens)
 	require.Len(t, status.Result.Content, 3)
 	require.Equal(t, "early", status.Result.Content[0].(prompty.TextPart).Text)
-	require.JSONEq(t, `{"x":1}`, status.Result.Content[1].(prompty.ToolCallPart).Args)
-	require.JSONEq(t, `{"x":2}`, status.Result.Content[2].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, `{"x":"one"}`, status.Result.Content[1].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, `{"x":"two"}`, status.Result.Content[2].(prompty.ToolCallPart).Args)
 }
 
 func TestNativeFaultsRetainPartial(t *testing.T) {
@@ -84,14 +83,14 @@ func TestNativeFaultsRetainPartial(t *testing.T) {
 		"EOF":                  "",
 		"transport error":      `{"error":"fixture"}`,
 		"malformed frame":      `{`,
-		"conflicting snapshot": `{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":2}}}]},"done":true,"done_reason":"stop"}`,
+		"conflicting snapshot": `{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":"two"}}}]},"done":true,"done_reason":"stop"}`,
 		"after finish":         `{"done":true,"done_reason":"stop"}` + "\n" + `{"message":{"content":"late"},"done":false}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			// Arrange.
 			client, calls := nativeFixture(t, []string{
-				`{"message":{"content":"partial","tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":1}}}]},"done":false}`,
+				`{"message":{"content":"partial","tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"x":"one"}}}]},"done":false}`,
 				final,
 			})
 			// Act.
@@ -227,7 +226,7 @@ func TestCompleteSnapshotAndNameResultMapping(t *testing.T) {
 	require.Empty(t, request.Messages[0].ToolCallID)
 }
 
-func TestNativeHTTPPreservesOriginalPrecision(t *testing.T) {
+func TestNativeSDKUnverifiedPrecisionRejected(t *testing.T) {
 	t.Parallel()
 	// Arrange: actual SDK HTTP decoding precedes the adapter callback.
 	client, _ := nativeFixture(t, []string{
@@ -238,8 +237,7 @@ func TestNativeHTTPPreservesOriginalPrecision(t *testing.T) {
 	stream := client.ExecuteStream(context.Background(), prompty.SimplePrompt("fixture"), prompty.StreamNative)
 	for range stream.Events() {
 	}
-	// Assert: original JSON number survives canonical/native assembly unchanged.
-	require.Equal(t, prompty.StreamCompleted, stream.Status().State)
-	args := stream.Status().Result.Content[0].(prompty.ToolCallPart).Args
-	require.JSONEq(t, `{"id":9007199254740993}`, args)
+	// Assert: SDK-OLLAMA-NUM cannot certify the rounded numeric call.
+	require.Equal(t, prompty.StreamFailed, stream.Status().State)
+	require.ErrorIs(t, stream.Status().Err, adapter.ErrMalformedArgs)
 }

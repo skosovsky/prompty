@@ -11,36 +11,6 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func batchAcceptedIdentity(source *responseSource) string {
-	if !source.complete || source.status < http.StatusOK || source.status >= http.StatusMultipleChoices ||
-		!json.Valid(source.data) {
-		return ""
-	}
-	decoder := json.NewDecoder(bytes.NewReader(source.data))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return ""
-	}
-	count, identity := 0, ""
-	for decoder.More() {
-		key, keyErr := decoder.Token()
-		var value json.RawMessage
-		if keyErr != nil || decoder.Decode(&value) != nil {
-			return ""
-		}
-		if key == "id" {
-			count++
-			if json.Unmarshal(value, &identity) != nil {
-				return ""
-			}
-		}
-	}
-	if count != 1 || !batchPathID.MatchString(identity) {
-		return ""
-	}
-	return identity
-}
-
 func parseOpenAIBatch(raw *sdk.Batch, handle *prompty.BatchHandle) error {
 	if raw == nil || !uniqueResponseJSON([]byte(raw.RawJSON())) || !raw.JSON.ID.Valid() ||
 		!batchPathID.MatchString(raw.ID) ||

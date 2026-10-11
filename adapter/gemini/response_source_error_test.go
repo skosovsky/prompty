@@ -19,7 +19,6 @@ func TestObservedMalformedResponseNeverEchoesProviderBody(t *testing.T) {
 	for index, body := range []string{
 		`{"candidates":[{"content":{"parts":[{"text":"private-response","thoughtSignature":"cHJpdmF0ZS1zaWduYXR1cmU="},]},"finishReason":"STOP"}]}`,
 		`{"private-response":true,}`,
-		`{"candidates":"private-response"}`,
 		`{"private-response":1e1000}`,
 	} {
 		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered} {

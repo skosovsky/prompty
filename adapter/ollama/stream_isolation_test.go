@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/ollama/ollama/api"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/prompty"
@@ -19,8 +21,7 @@ func TestNativeParallelCancellationKeepsCorrelationRequestLocal(t *testing.T) {
 	streamtest.CancellationIsolation(t, func(server *httptest.Server) prompty.Invoker {
 		endpoint, err := url.Parse(server.URL)
 		require.NoError(t, err)
-		chat, err := NewHTTPChatClient(endpoint, server.Client(), 4*1024*1024)
-		require.NoError(t, err)
+		chat := api.NewClient(endpoint, server.Client())
 		profile := prompty.CapabilityProfile{
 			Identity:   prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
 			Provenance: "local concurrent NDJSON fixture, not live conformance",

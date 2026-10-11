@@ -31,7 +31,7 @@ run lint, fresh unit tests, integration and e2e sequentially.
 
 ## Project content
 
-`examples/` contains runnable consumer examples. All 12 discovered modules are
+`examples/` contains runnable consumer examples. All 13 discovered modules are
 checked and published, including examples, provider adapters, `cmd/prompty-gen`,
 `ext/otelprompty` and `remoteregistry/git`. No separate publication inventory exists.
 
@@ -49,3 +49,9 @@ for optional local Linux verification on macOS. Paid runnable examples require t
 provider credentials and are executed manually. No live-provider tests currently exist.
 
 Performance measurements, fuzz campaigns and paid provider calls remain separate.
+
+## SDK upgrade verification
+
+The [migration register](official-sdk-migration.md) records exact pins and dependency behavior. For each official published upgrade, inspect public API/union changes and rerun numeric/schema, signed-state normalization, malformed identity, stream scanner/logging/panic, iterator errors, host retry/cancellation and both genai backend fixtures. A changed characterization requires revising the register and replacing it with a corrected-behavior regression; passing characterization never means upstream fixed.
+
+Run `make test`, `make lint`, `make test-integration`, and `make test-e2e` with GOWORK=off (Make exports it). Modules with no profile tests are reported as empty, not as integration evidence. Run offline adapter Examples with `GOWORK=off go test -run '^Example' ./...` inside each adapter module. Run `scripts/verify-sdk-consumer.sh` for an independent temporary consumer module that imports all four optional adapters with workspace disabled and runs local official-SDK fixtures. SDK pins must remain in optional modules, never root. Live paid examples and release targets are outside these checks.

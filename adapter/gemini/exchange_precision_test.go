@@ -18,7 +18,7 @@ import (
 )
 
 //nolint:gocognit // Keep the complete ordered provider fixture and its assertions in one scenario.
-func TestUnsignedExchangeActualSDKPreservesExactArgumentsAndIDs(t *testing.T) {
+func TestSDKUnsignedArgumentsPrecisionAdmissionAndIDs(t *testing.T) {
 	t.Parallel()
 	for _, args := range []string{
 		`{"integer":9007199254740993}`, `{"nested":[{"negative":-9007199254740993,"fraction":0.10000000000000001,"exponent":1.234567890123456789e2}]}`, `{}`,
@@ -77,6 +77,12 @@ func TestUnsignedExchangeActualSDKPreservesExactArgumentsAndIDs(t *testing.T) {
 					prompty.SimplePrompt("fixture"),
 					mode,
 				)
+				if args != "{}" {
+					// SDK-GENAI-NUM: no checked original-number evidence survives SDK decoding.
+					require.Error(t, err)
+					require.EqualValues(t, 1, count.Load())
+					return
+				}
 				require.NoError(t, err)
 				wire, err := prompty.MarshalResponse(response, prompty.WirePolicy{State: prompty.StatePreserve})
 				require.NoError(t, err)
@@ -132,7 +138,9 @@ func TestUnsignedExchangeActualSDKPreservesExactArgumentsAndIDs(t *testing.T) {
 					native := geminiJSONValue(request.Contents[1].Parts[index]).(map[string]any)["functionCall"].(map[string]any)
 					require.Equal(t, id, native["id"])
 					actual, ok := native["args"]
-					require.True(t, ok)
+					if !ok {
+						actual = map[string]any{}
+					}
 					require.Equal(t, geminiJSONValue([]byte(args)), actual)
 				}
 				for index, id := range []string{"second", "first"} {

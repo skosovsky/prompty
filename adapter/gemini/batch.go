@@ -75,10 +75,10 @@ func (b *Batches) prepareItem(
 	if strings.TrimSpace(b.account) == "" {
 		return nil, nil, prompty.ErrBatchScope
 	}
-	if b.base.responseClient == nil {
+	if b.base.client == nil {
 		return nil, nil, adapter.ErrNoClient
 	}
-	if b.base.responseClient.ClientConfig().Backend != genai.BackendGeminiAPI {
+	if b.base.client.ClientConfig().Backend != genai.BackendGeminiAPI {
 		return nil, nil, adapter.ErrUnsupportedCapability
 	}
 	original := exec.Clone()
@@ -207,28 +207,27 @@ func (b *Batches) Submit(ctx context.Context, input prompty.BatchSubmitRequest) 
 	}
 	result.SubmissionAttempted = true
 	capture.MarkDispatched()
-	encoding := batchExactContents(requests)
-	source, operationErr := observeBatchOperation(ctx, b.base.responseLimit, func(callCtx context.Context) error {
-		_, callErr := b.base.responseClient.Batches.Create(
-			callCtx,
-			handle.Items[0].Identity.Model,
-			//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-			&genai.BatchJobSource{
-				InlinedRequests: requests,
-			},
-			&genai.CreateBatchJobConfig{ //nolint:exhaustruct_v5 // SDK DTO: omitted optional fields and other union arms retain their zero values.
+	source, operationErr := observeBatchOperation(
+		ctx,
+		b.base.responseLimit,
+		func(callCtx context.Context) (*genai.BatchJob, error) {
+			return b.base.client.Batches.Create(
+				callCtx,
+				handle.Items[0].Identity.Model,
 				//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-				HTTPOptions: &genai.HTTPOptions{
-					ExtrasRequestProvider: encoding.provider,
+				&genai.BatchJobSource{
+					InlinedRequests: requests,
 				},
-			},
-		)
-		return callErr
-	})
-	if encoding.rejected {
-		result.SubmissionAttempted = false
-		return capture.Finish(ctx, result, prompty.ErrBatch)
-	}
+				&genai.CreateBatchJobConfig{
+					HTTPOptions:   noRetryHTTPOptions(nil),
+					DisplayName:   "",
+					Dest:          nil,
+					WebhookConfig: nil,
+				},
+			)
+		},
+	)
+
 	observed, parseErr := parseBatchSource(source, handle)
 	if observed.ProviderID != "" {
 		result.Handle = &observed
@@ -246,58 +245,4 @@ func (b *Batches) Submit(ctx context.Context, input prompty.BatchSubmitRequest) 
 	}
 	providerErr := capture.Provider(ctx, batchSourceJSON(source), source.status, source.complete && !source.overflow)
 	return capture.Finish(ctx, result, errors.Join(operationErr, providerErr))
-}
-
-// The SDK deepMarshal step rounds interface numbers. Restore already checked
-// content DTOs after native protocol conversion, before the actual JSON encoder.
-type batchContentEncoding struct {
-	provider genai.ExtrasRequestProvider
-	rejected bool
-}
-
-func batchExactContents(requests []*genai.InlinedRequest) *batchContentEncoding {
-	encoding := new(batchContentEncoding)
-	exact := make([]any, len(requests))
-	for i, request := range requests {
-		encoded, _ := encodeExactGeminiContents(request.Contents) // Prepared canonical content is serializable.
-		exact[i] = geminiJSONValue(encoded)
-	}
-	encoding.provider = func(body map[string]any) map[string]any {
-		batch, _ := body["batch"].(map[string]any)
-		input, _ := batch["inputConfig"].(map[string]any)
-		group, _ := input["requests"].(map[string]any)
-		var items []map[string]any
-		switch values := group["requests"].(type) {
-		case []map[string]any:
-			items = values // Native SDK converters return a typed map slice.
-		case []any:
-			for _, value := range values {
-				entry, ok := value.(map[string]any)
-				if !ok {
-					encoding.rejected = true
-					return map[string]any{wireInvalidBatchEncoding: json.Number("invalid")}
-				}
-				items = append(items, entry)
-			}
-		}
-		if len(items) != len(exact) {
-			encoding.rejected = true
-			return map[string]any{wireInvalidBatchEncoding: json.Number("invalid")}
-		}
-		for i, item := range items {
-			request, _ := item["request"].(map[string]any)
-			if request == nil {
-				encoding.rejected = true
-				return map[string]any{wireInvalidBatchEncoding: json.Number("invalid")}
-			}
-			request["contents"] = exact[i]
-		}
-		encoded, err := json.Marshal(body)
-		if err != nil || len(encoded)+1 >= batchInlineMaxBytes {
-			encoding.rejected = true
-			return map[string]any{wireInvalidBatchEncoding: json.Number("invalid")}
-		}
-		return body
-	}
-	return encoding
 }

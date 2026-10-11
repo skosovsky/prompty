@@ -76,7 +76,7 @@ func TestFileBatchActualSDKSubmitInspectAndResults(t *testing.T) {
 		}
 		_, _ = io.WriteString(
 			w,
-			`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED"},"response":{"responsesFile":"files/output"}}`,
+			`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED","output":{"responsesFile":"files/output"}}}`,
 		)
 	}))
 	defer server.Close()
@@ -213,20 +213,6 @@ func TestFileBatchDownloadFailuresRetainKnownPrefix(t *testing.T) {
 			require.Equal(t, "batches/fixture", result.Handle.ProviderID)
 			require.Equal(t, 1, files.closes)
 		})
-	}
-}
-
-func TestBatchOutputSourceIsExplicitAndUnambiguous(t *testing.T) {
-	t.Parallel()
-	// Arrange/Act/Assert: REST and SDK source forms; reject ambiguous union/source.
-	for _, payload := range []string{`{"response":{"responsesFile":"files/output"}}`, `{"metadata":{"output":{"responsesFile":"files/output"}}}`} {
-		output, err := observedBatchOutput([]byte(payload))
-		require.NoError(t, err)
-		require.Equal(t, "files/output", output.File)
-	}
-	for _, payload := range []string{`{"response":{"responsesFile":"files/one"},"metadata":{"output":{"responsesFile":"files/two"}}}`, `{"response":{"responsesFile":"files/one","inlinedResponses":{"inlinedResponses":[]}}}`} {
-		_, err := observedBatchOutput([]byte(payload))
-		require.ErrorIs(t, err, prompty.ErrBatchResults)
 	}
 }
 

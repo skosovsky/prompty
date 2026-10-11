@@ -217,65 +217,6 @@ func (graph *nativeSchemaGraph) validate(schema map[string]any, pointer string) 
 	return nil
 }
 
-// preserveNativeSchemaNumbers restores schema bytes after genai's float64 DTO conversion.
-// Only schema-bearing fields are restored; caller extras and transport policy stay intact.
-func preserveNativeSchemaNumbers(config *genai.GenerateContentConfig, fallback genai.ExtrasRequestProvider) error {
-	hasSchema := config.ResponseJsonSchema != nil
-	hasTools := len(config.Tools) > 0
-	schema, err := json.Marshal(config.ResponseJsonSchema)
-	if err != nil {
-		return err
-	}
-	tools, err := json.Marshal(config.Tools)
-	if err != nil {
-		return err
-	}
-	//nolint:exhaustruct_v5 // SDK DTO: copy caller HTTP options when present.
-	options := genai.HTTPOptions{}
-	if config.HTTPOptions != nil {
-		options = *config.HTTPOptions
-		options.Headers = options.Headers.Clone()
-	}
-	previous := options.ExtrasRequestProvider
-	if previous == nil {
-		previous = fallback
-	}
-	options.ExtrasRequestProvider = func(body map[string]any) map[string]any {
-		if previous != nil {
-			body = previous(body)
-		}
-		if body == nil {
-			return map[string]any{"invalid_native_request": json.RawMessage(`!`)}
-		}
-		if hasSchema {
-			generation, ok := body["generationConfig"].(map[string]any)
-			if !ok {
-				generation = map[string]any{}
-			}
-			generation["responseJsonSchema"] = json.RawMessage(schema)
-			delete(generation, "responseSchema")
-			body["generationConfig"] = generation
-		}
-		if hasTools {
-			body["tools"] = json.RawMessage(tools)
-		}
-		return body
-	}
-	config.HTTPOptions = &options
-	return nil
-}
-
-func (a *Adapter) preserveSchemaNumbers(config *genai.GenerateContentConfig) error {
-	if !a.nativeJSONSchema {
-		return nil
-	}
-	var fallback genai.ExtrasRequestProvider
-	if a.client != nil {
-		fallback = a.client.ClientConfig().HTTPOptions.ExtrasRequestProvider
-	}
-	return preserveNativeSchemaNumbers(config, fallback)
-}
-
 // Native nullable types use exactly one concrete JSON type and null.
 func nativeSchemaType(value any) bool {
 	valid := func(value any) bool {

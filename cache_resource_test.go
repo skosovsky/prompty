@@ -92,3 +92,28 @@ func TestCacheResourceInvalidWireAndExpiry(t *testing.T) {
 	require.NoError(t, ValidateCacheResourceExpiry(CacheResourceExpiry{TTL: time.Second}, now))
 	require.NoError(t, ValidateCacheResourceExpiry(CacheResourceExpiry{ExpiresAt: now.Add(time.Hour)}, now))
 }
+
+func TestUnknownCacheResourceCanPersistUnknownExpiryForReconciliation(t *testing.T) {
+	t.Parallel()
+	// Arrange: SDK returned identity while expiration remained unknown.
+	handle := cacheHandleFixture()
+	handle.State = CacheResourceUnknown
+	handle.ExpiresAt = time.Time{}
+	// Act.
+	encoded, err := EncodeCacheResourceHandle(handle)
+	require.NoError(t, err)
+	restored, err := DecodeCacheResourceHandle(encoded)
+	// Assert: persist evidence, never authorize generation reuse or invent an active lease.
+	require.NoError(t, err)
+	require.Equal(t, handle, restored)
+	require.ErrorIs(
+		t,
+		ValidateCacheResourceReuse(restored, handle.Identity, handle.AccountBinding, time.Now()),
+		ErrCacheResourceExpired,
+	)
+	for _, state := range []CacheResourceState{CacheResourceActive, CacheResourceExpired, CacheResourceDeleted} {
+		invalid := handle
+		invalid.State = state
+		require.ErrorIs(t, ValidateCacheResourceHandle(invalid), ErrCacheResource)
+	}
+}

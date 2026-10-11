@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strings"
 
+	"google.golang.org/genai"
+
 	"github.com/skosovsky/prompty"
 )
-
-type batchSourceKey struct{}
 
 const batchJSONDepthLimit = 256
 
@@ -30,66 +30,42 @@ func validateBatchResources(resources []prompty.BatchResourceRef) error {
 	return nil
 }
 
-// The observer bounds SDK consumption, not just retained capture data.
-type batchSourceBody struct {
-	io.ReadCloser
-
-	source *responseSource
-}
-
-func (b *batchSourceBody) Read(data []byte) (int, error) {
-	if b.source.overflow {
-		return 0, prompty.ErrBatchResults
-	}
-	remaining := b.source.limit - b.source.data.Len()
-	if len(data) > remaining {
-		data = data[:remaining+1]
-	}
-	n, err := b.ReadCloser.Read(data)
-	_, _ = b.source.data.Write(data[:min(n, remaining)])
-	if n > remaining {
-		b.source.overflow = true
-		return n, prompty.ErrBatchResults
-	}
-	if err == io.EOF {
-		b.source.complete = true
-	}
-	return n, err
-}
-
-func (b *batchSourceBody) Close() error {
-	err := b.ReadCloser.Close()
-	b.source.closeFailure = err
-	return err
-}
-
-func observeBatchOperation(ctx context.Context, limit int, call func(context.Context) error) (*responseSource, error) {
+// SDK-MUTATION-ID: SDK-owned acquisition, no body identity recovery or panic catch.
+func observeBatchOperation(
+	ctx context.Context,
+	limit int,
+	call func(context.Context) (*genai.BatchJob, error),
+) (*responseSource, error) {
 	source := &responseSource{
-		data:         bytes.Buffer{},
-		overflow:     false,
-		complete:     false,
-		status:       0,
-		closeFailure: nil,
-		limit:        limit,
+		limit:    limit,
+		data:     bytes.Buffer{},
+		overflow: false,
+		complete: false,
+		status:   0,
+		job:      nil,
+		cache:    nil,
 	}
 	if limit <= 0 {
 		return source, prompty.ErrBatch
 	}
-	var err error
-	func() {
-		defer func() {
-			if failure := recover(); failure != nil {
-				if !source.complete || source.status < 200 || source.status >= 300 {
-					panic(failure)
-				}
-				err = prompty.ErrBatchResults
-			}
-		}()
-		err = call(context.WithValue(ctx, batchSourceKey{}, source))
-	}()
-	if err != nil || source.closeFailure != nil || !source.complete || source.overflow ||
-		source.status < 200 || source.status >= 300 {
+	job, err := call(ctx)
+	source.job = job
+	source.status = sdkOperationHTTPStatus(err)
+	if job != nil {
+		encoded, encodingErr := json.Marshal(job)
+		if encodingErr == nil && len(encoded) <= limit {
+			_, _ = source.data.Write(encoded)
+			source.complete = true
+		} else {
+			source.overflow = true
+		}
+	}
+	if err != nil || source.overflow {
 		return source, errors.Join(prompty.ErrBatchResults, ctx.Err())
+	}
+	// Cancel returns a public acknowledgement with no job DTO.
+	if job == nil {
+		source.complete = true
 	}
 	return source, nil
 }
@@ -104,40 +80,32 @@ func batchSourceJSON(source *responseSource) prompty.JSONDocument {
 //nolint:gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
 func parseBatchSource(source *responseSource, previous prompty.BatchHandle) (prompty.BatchHandle, error) {
 	handle := prompty.CloneBatchHandle(previous)
-	payload := batchSourceJSON(source)
-	if len(payload) == 0 || validateBatchJSON(payload) != nil {
-		return handle, prompty.ErrBatchResults
-	}
-	var root map[string]json.RawMessage
-	if json.Unmarshal(payload, &root) != nil {
-		return handle, prompty.ErrBatchResults
-	}
-	var name string
-	if json.Unmarshal(root[wireName], &name) != nil || !batchResourceName.MatchString(name) ||
-		(handle.ProviderID != "" && name != handle.ProviderID) {
+	job := source.job
+	if job == nil || !batchResourceName.MatchString(job.Name) ||
+		(handle.ProviderID != "" && job.Name != handle.ProviderID) {
 		return handle, prompty.ErrBatchScope
 	}
-	handle.ProviderID = name
-	var metadata struct {
-		State string `json:"state"`
-		Model string `json:"model"`
-	}
-	if json.Unmarshal(root["metadata"], &metadata) != nil || len(handle.Items) == 0 ||
-		(metadata.Model != "" && strings.TrimPrefix(metadata.Model, "models/") !=
-			strings.TrimPrefix(handle.Items[0].Identity.Model, "models/")) {
+	handle.ProviderID = job.Name
+	if len(handle.Items) == 0 ||
+		job.Model != "" &&
+			strings.TrimPrefix(job.Model, "models/") != strings.TrimPrefix(handle.Items[0].Identity.Model, "models/") {
 		return handle, prompty.ErrBatchResults
 	}
-	status, err := geminiBatchStatus(metadata.State)
+	status, err := geminiBatchStatus(string(job.State))
 	if err != nil {
 		return handle, err
 	}
-	handle.Status, handle.ProviderStatus = status, metadata.State
-	output, outputErr := observedBatchOutput(payload)
-	if outputErr != nil {
-		return handle, outputErr
+	handle.Status, handle.ProviderStatus = status, string(job.State)
+	var outputFile string
+	// SDK-GENAI-BATCH-DEST: map only the returned SDK destination; no REST recovery.
+	if job.Dest != nil {
+		outputFile = job.Dest.FileName
+		if outputFile != "" && job.Dest.InlinedResponses != nil {
+			return handle, prompty.ErrBatchResults
+		}
 	}
-	if output.File != "" {
-		if !batchFileName.MatchString(output.File) {
+	if outputFile != "" {
+		if !batchFileName.MatchString(outputFile) {
 			return handle, prompty.ErrBatchScope
 		}
 		resources := make([]prompty.BatchResourceRef, 0, len(handle.Resources)+1)
@@ -145,53 +113,14 @@ func parseBatchSource(source *responseSource, previous prompty.BatchHandle) (pro
 			if resource.Kind == wireInput {
 				resources = append(resources, resource)
 			}
-			if resource.Kind == wireOutput && resource.ProviderID != output.File {
+			if resource.Kind == wireOutput && resource.ProviderID != outputFile {
 				return handle, prompty.ErrBatchScope
 			}
 		}
-		resources = append(resources, prompty.BatchResourceRef{Kind: wireOutput, ProviderID: output.File})
+		resources = append(resources, prompty.BatchResourceRef{Kind: wireOutput, ProviderID: outputFile})
 		handle.Resources = resources
 	}
 	return handle, nil
-}
-
-type batchObservedOutput struct {
-	File   string `json:"responsesFile"`
-	Inline *struct {
-		Records []json.RawMessage `json:"inlinedResponses"`
-	} `json:"inlinedResponses"`
-}
-
-// REST operations expose response; the pinned SDK fixtures expose metadata.output.
-// Accept only an explicitly observed source, never infer one from status or IDs.
-func observedBatchOutput(payload []byte) (batchObservedOutput, error) {
-	var root struct {
-		Response json.RawMessage `json:"response"`
-		Metadata struct {
-			Output json.RawMessage `json:"output"`
-		} `json:"metadata"`
-	}
-	var output batchObservedOutput
-	if json.Unmarshal(payload, &root) != nil {
-		return output, prompty.ErrBatchResults
-	}
-	responsePresent := len(root.Response) > 0 && !bytes.Equal(bytes.TrimSpace(root.Response), []byte(wireNull))
-	metadataPresent := len(root.Metadata.Output) > 0 &&
-		!bytes.Equal(bytes.TrimSpace(root.Metadata.Output), []byte(wireNull))
-	if responsePresent && metadataPresent {
-		return output, prompty.ErrBatchResults
-	}
-	raw := root.Metadata.Output
-	if responsePresent {
-		raw = root.Response
-	}
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte(wireNull)) {
-		return output, nil
-	}
-	if json.Unmarshal(raw, &output) != nil || (output.File != "" && output.Inline != nil) {
-		return batchObservedOutput{}, prompty.ErrBatchResults
-	}
-	return output, nil
 }
 
 func validateBatchJSON(payload []byte) error {

@@ -169,12 +169,12 @@ func TestMessageBatchesCorrelationGapsAndPartialDownload(t *testing.T) {
 	}
 }
 
-func TestMessageBatchesReaderExceedsSDKScannerLimitWithoutLosingEOFErrors(t *testing.T) {
+func TestSDKMessageBatchIteratorLargeLinesAndReadErrors(t *testing.T) {
 	t.Parallel()
 	for _, limited := range []bool{false, true} {
 		t.Run(strconv.FormatBool(limited), func(t *testing.T) {
 			t.Parallel()
-			// Arrange: SDK Scanner stops at 64 KiB and its Err hides that failure.
+			// Arrange: the pinned SDK supports >64 KiB records; adapter line policy remains explicit.
 			large := strings.Replace(batchSuccessLine, "answer", strings.Repeat("a", 70000), 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/results") {
@@ -342,4 +342,23 @@ func TestMessageBatchesNativeTruncationCancellationAndUnknownUsage(t *testing.T)
 	require.Equal(t, "max_tokens", result.Items[2].Response.FinishReason)
 	require.Equal(t, prompty.OutcomeIncomplete, result.Items[2].Response.Outcome)
 	require.Equal(t, 7, result.Items[2].Response.Usage.TotalTokens)
+}
+
+// SDK-MUTATION-ID: bytes containing an ID are not SDK-returned identity evidence.
+func TestSDKMalformedBatchIdentityUnavailableCharacterization(t *testing.T) {
+	t.Parallel()
+	// Arrange: accepted response cannot be decoded by the pinned official SDK.
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		_, _ = io.WriteString(w, `{"id":"msgbatch_accepted",`)
+	}))
+	defer server.Close()
+	// Act.
+	result, err := batchFixtureManager(server).Submit(t.Context(), batchFixtureInput())
+	// Assert: unknown acceptance, no body recovery, no retry.
+	require.ErrorIs(t, err, prompty.ErrBatchUnknown)
+	require.True(t, result.SubmissionAttempted)
+	require.Nil(t, result.Handle)
+	require.Equal(t, int32(1), attempts.Load())
 }

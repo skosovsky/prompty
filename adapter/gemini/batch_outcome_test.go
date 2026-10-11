@@ -37,7 +37,7 @@ func TestBatchNativeTruncationUnknownUsageAndUnmappedItemCancellation(t *testing
 				if fileMode {
 					_, _ = io.WriteString(
 						w,
-						`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED"},"response":{"responsesFile":"files/output"}}`,
+						`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED","output":{"responsesFile":"files/output"}}}`,
 					)
 					return
 				}
@@ -78,7 +78,11 @@ func TestBatchNativeTruncationUnknownUsageAndUnmappedItemCancellation(t *testing
 			require.True(t, result.Completeness.CorrelationComplete)
 			require.Len(t, result.Items, 3)
 			require.Equal(t, prompty.BatchItemError, result.Items[0].Outcome)
-			require.Contains(t, string(result.Items[0].SourceJSON), `"status":"CANCELLED"`)
+			if fileMode {
+				require.Contains(t, string(result.Items[0].SourceJSON), `"status":"CANCELLED"`)
+			} else {
+				require.NotContains(t, string(result.Items[0].SourceJSON), `"status":"CANCELLED"`)
+			}
 			require.Nil(t, result.Items[0].Response)
 			require.Equal(t, prompty.BatchItemSuccess, result.Items[1].Outcome)
 			require.Equal(t, prompty.UsageUnknown, result.Items[1].Response.Usage.Availability())

@@ -113,13 +113,16 @@ func (a *Adapter) StreamEvents(ctx context.Context, req *api.ChatRequest) iter.S
 				stopped = true
 				return errNativeConsumerStop
 			}
-			return errors.Join(parseErr, captureErr)
+			if callbackErr := errors.Join(parseErr, captureErr); callbackErr != nil {
+				return &chatCallbackError{cause: callbackErr}
+			}
+			return nil
 		})
 		if stopped {
 			return
 		}
 		if err != nil {
-			yield(nil, err)
+			yield(nil, safeChatError(ctx, err))
 		} else if !state.finished {
 			yield(nil, prompty.ErrStreamProtocol)
 		}
@@ -143,10 +146,10 @@ func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.Re
 		return nil, prompty.ErrStreamProtocol
 	}
 	parts, err := a.ParseStreamChunk(&raw)
-	if err != nil && len(parts) == 0 {
-		return nil, err
-	}
 	usage, usageErr := usageFromOllama(&raw)
+	if err != nil && len(parts) == 0 && len(usage.Known) == 0 {
+		return nil, errors.Join(err, usageErr)
+	}
 	frame := &prompty.ResponseChunk{
 		Identity:                prompty.StreamIdentity{MessageID: "", PartIDs: nil},
 		ProviderState:           nil,
@@ -173,7 +176,7 @@ func (s *nativeStreamState) frame(a *Adapter, raw api.ChatResponse) (*prompty.Re
 		Content:      parts,
 		Usage:        usage,
 	}
-	if !hasContent {
+	if len(parts) == 0 {
 		frame.Kind = prompty.StreamUsage
 	}
 	for _, part := range parts {

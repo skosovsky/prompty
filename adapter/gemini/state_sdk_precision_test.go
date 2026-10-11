@@ -26,8 +26,8 @@ func TestSignedNumbersAreExactOnSDKWireOrRejectedBeforeDispatch(t *testing.T) {
 		{"numeric spelling", `{"decimal":1.00,"exponent":1e2}`, `{"decimal":1.00,"exponent":1e2}`, true},
 		{"nested caller keys", `{"Name":"caller","nested":[{"name":0.1,"exact":9007199254740994}]}`,
 			`{"Name":"caller","nested":[{"name":0.1,"exact":9007199254740994}]}`, true},
-		{"large preserved integer", `{"big":9007199254740993}`, `{"big":9007199254740993}`, true},
-		{"preserved decimal", `{"nested":[{"decimal":0.10000000000000001}]}`, `{"nested":[{"decimal":0.10000000000000001}]}`, true},
+		{"large preserved integer", `{"big":9007199254740993}`, "", false},
+		{"preserved decimal", `{"nested":[{"decimal":0.10000000000000001}]}`, "", false},
 		{"overflow", `{"huge":1e1000}`, "", false},
 	} {
 		for _, mode := range []string{"sync", "buffered"} {
@@ -122,7 +122,9 @@ func checkSignedSDKNumber(t *testing.T, args, wireArgs string, supported bool, m
 		require.Equal(t, "c2lnbmF0dXJl", actual["thoughtSignature"])
 		call := actual["functionCall"].(map[string]any)
 		require.Equal(t, "lookup", call["name"])
-		require.Equal(t, geminiJSONValue([]byte(wireArgs)), call["args"])
+		expectedArgs, marshalErr := json.Marshal(call["args"])
+		require.NoError(t, marshalErr)
+		require.True(t, exactGeminiSDKJSONEqual([]byte(wireArgs), expectedArgs))
 	}
 	after, wireErr := prompty.MarshalExecution(exec, prompty.WirePolicy{State: prompty.StatePreserve})
 	require.NoError(t, wireErr)

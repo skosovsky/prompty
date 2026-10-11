@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
 
 	"github.com/skosovsky/prompty"
@@ -607,7 +608,11 @@ func (a *Adapter) Execute(ctx context.Context, req *anthropic.MessageNewParams) 
 	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	return a.client.Messages.New(ctx, *req)
+	if req == nil {
+		return nil, adapter.ErrNilExecution
+	}
+	raw, err := a.client.Messages.New(ctx, *req, option.WithMaxRetries(0))
+	return raw, adapter.SafeProviderError(ctx, err)
 }
 
 // ParseResponse converts *anthropic.Message into *prompty.Response.

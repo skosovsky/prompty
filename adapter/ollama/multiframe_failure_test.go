@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/ollama/ollama/api"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/prompty"
@@ -25,8 +27,7 @@ func TestLaterMalformedHTTPFrameDisablesContinuation(t *testing.T) {
 	t.Cleanup(server.Close)
 	endpoint, err := url.Parse(server.URL)
 	require.NoError(t, err)
-	transport, err := NewHTTPChatClient(endpoint, server.Client(), 4096)
-	require.NoError(t, err)
+	transport := api.NewClient(endpoint, server.Client())
 	profile := prompty.CapabilityProfile{
 		Identity:     prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
 		Provenance:   "local fixture",
@@ -39,7 +40,7 @@ func TestLaterMalformedHTTPFrameDisablesContinuation(t *testing.T) {
 	}
 	status := stream.Status()
 	// Assert: the known valid call is retained, but the incomplete exchange cannot be replayed.
-	require.ErrorIs(t, status.Err, adapter.ErrMalformedArgs)
+	require.ErrorIs(t, status.Err, adapter.ErrInvalidResponse)
 	require.NotNil(t, status.Result)
 	require.Len(t, status.Result.Content, 3)
 	require.True(t, status.Result.ContinuationUnavailable)

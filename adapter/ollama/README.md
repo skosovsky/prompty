@@ -10,12 +10,12 @@ go get github.com/skosovsky/prompty/adapter/ollama
 
 ## Configuration
 
-- **Endpoint:** prefer the number-preserving `NewHTTPChatClient(endpointURL, hostHTTPClient, positiveFrameByteLimit)` port. For the installed SDK, `api.NewClient(endpointURL, hostHTTPClient)` also implements ChatClient with the documented numeric limitations. Configure endpoint authentication in your host HTTP transport; the precision port does not inherit SDK auth.
+- **Endpoint:** inject the official `api.NewClient(endpointURL, hostHTTPClient)` with `WithClient`. Host owns authentication, transport, redirects, timeout and lifecycle.
 - **Default model:** `New()` uses `llama3.2` as an example convenience, not capability evidence. Select your deployed model explicitly with WithModel. Override with `WithModel(modelName)`, or set per execution via `exec.ModelOptions.Model`.
 
 ## Implemented mappings
 
-For exact numeric arguments, construct `NewHTTPChatClient(endpointURL, hostHTTPClient, positiveFrameByteLimit)` and inject it with `WithClient`. The client snapshots public HTTP configuration, keeps host transport/redirect/timeout policy, and does not acquire SDK authentication; configure auth in the host transport. ChatClient is a provider-specific operation port, not a core SDK dependency. The installed SDK client still satisfies it, but floating-point arguments from its already-decoded response fail with ErrMalformedArgs instead of being published as original values. Use json.Number in caller-constructed SDK argument maps too. Do not repair rounded floats after the fact. The new transport bounds each response frame, closes body on stop/error/cancel, and omits provider error bodies from its errors.
+Chat uses the official `api.Client.Chat` for synchronous and native callback execution. `ChatClient` is an optional provider boundary for injection, not a core dependency. Inbound SDK float arguments fail with ErrMalformedArgs because their original numeric value cannot be attested. Caller-constructed exact arguments can use json.Number. There is no replacement NDJSON parser or frame-limit constructor. SDK frame/decode behavior and numeric limitations are recorded in the [migration contract](../../docs/official-sdk-migration.md).
 
 Ordinary tools are mapped, but native named-tool selection is not implemented. ForcedTool now fails with `adapter.ErrUnsupportedCapability`, including raw Translate, instead of adding a system instruction. A profile override cannot create that mapping; use ordinary tools without the forced guarantee or a supported adapter.
 
@@ -39,4 +39,4 @@ See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama)
 
 The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
 
-Sync Chat requires exactly one callback; native Chat owns correlated multi-frame lifecycle. Zero/multiple sync responses fail explicitly. ErrInvalidHTTPConfig reports constructor configuration failures. Redirect/transport policy belongs to the host, so an explicit Chat call is not proof of exactly one physical HTTP request. EstimateTokens/EstimateTokensStrict use an approximate message counter, exclude tools/schema/native wrapping and do not certify a context window.
+Sync Chat requires exactly one callback; native Chat owns correlated multi-frame lifecycle. Zero/multiple sync responses fail explicitly. Redirect/transport policy belongs to the host, so an explicit Chat call is not proof of exactly one physical HTTP request. EstimateTokens/EstimateTokensStrict use an approximate message counter, exclude tools/schema/native wrapping and do not certify a context window.

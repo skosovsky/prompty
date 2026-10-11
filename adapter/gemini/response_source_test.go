@@ -16,7 +16,7 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func TestActualSDKIngressPreservesSignedNumbersBeforeContinuation(t *testing.T) {
+func TestSDKIngressSignedNumbersRejectedBeforeContinuation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, args  string
@@ -81,6 +81,13 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 	client := adapter.NewClient(New(WithClient(sdk), WithModel("fixture"), WithProfiles(server.URL, profile)))
 	// Act: parse → both wires → checked continuation, not a constructed SDK DTO.
 	response, err := checkedIngressInvoke(context.Background(), client, prompty.SimplePrompt("fixture"), mode)
+	// SDK-GENAI-NUM: numeric SDK arguments cannot establish exact checked state.
+	if args != "{}" {
+		require.ErrorIs(t, err, prompty.ErrProviderState)
+		require.EqualValues(t, 1, calls.Load())
+		require.Same(t, originalTransport, httpClient.Transport)
+		return
+	}
 	require.NoError(t, err)
 	require.Equal(t, int64(1), calls.Load())
 	require.Equal(t, geminiJSONValue([]byte(signed)), geminiJSONValue(response.ProviderState[0].Envelope.Payload))
@@ -109,7 +116,11 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 			} `json:"contents"`
 		}
 		require.NoError(t, json.Unmarshal(<-requests, &request))
-		require.Equal(t, geminiJSONValue([]byte(signed)), geminiJSONValue(request.Contents[1].Parts[0]))
+		expectedState := signed
+		if args == "{}" {
+			expectedState = `{"functionCall":{"name":"lookup"},"thoughtSignature":"c2lnbmF0dXJl"}`
+		}
+		require.Equal(t, geminiJSONValue([]byte(expectedState)), geminiJSONValue(request.Contents[1].Parts[0]))
 	} else {
 		require.ErrorIs(t, err, prompty.ErrProviderState)
 		require.Equal(t, int64(1), calls.Load())

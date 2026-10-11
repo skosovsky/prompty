@@ -2,7 +2,6 @@ package openai
 
 import (
 	"iter"
-	"net/http"
 	"sync"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -70,8 +69,10 @@ func (h *responseStreamHandle) observeResponse(raw *responses.Response) error {
 	if raw == nil {
 		return prompty.ErrRemoteResponseUnknown
 	}
-	source := responseSource{data: []byte(raw.RawJSON()), status: http.StatusOK, complete: true}
-	identity := source.acceptedIdentity()
+	identity := ""
+	if raw.JSON.ID.Valid() && responseResourceID.MatchString(raw.ID) && uniqueResponseJSON([]byte(raw.RawJSON())) {
+		identity = raw.ID
+	}
 	if identity != "" && (!h.known || h.handle.ProviderID == identity) {
 		h.handle.ProviderID = identity
 		h.known = true

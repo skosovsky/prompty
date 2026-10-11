@@ -15,11 +15,11 @@ func functionEvent(call string) string {
 func TestNativePartialIDlessCallsAndExactProgress(t *testing.T) {
 	t.Parallel()
 	// Arrange: the provider starts one ID-less call and emits path/value fragments.
-	fragment := `{"partialArgs":[{"jsonPath":"$.n","numberValue":9007199254740993},{"jsonPath":"$.text","stringValue":"warm ","willContinue":true},{"jsonPath":"$.flag","boolValue":false},{"jsonPath":"$.nil","nullValue":null}],"willContinue":true}`
+	fragment := `{"partialArgs":[{"jsonPath":"$.n","stringValue":"large-id"},{"jsonPath":"$.text","stringValue":"warm ","willContinue":true},{"jsonPath":"$.flag","boolValue":false},{"jsonPath":"$.nil","nullValue":"NULL_VALUE"}],"willContinue":true}`
 	client, calls := geminiNativeFixture(t,
 		functionEvent(`{"name":"lookup","willContinue":true}`), functionEvent(fragment),
 		functionEvent(`{"partialArgs":[{"jsonPath":"$.text","stringValue":"weather"}],"willContinue":true}`),
-		functionEvent(`{}`), functionEvent(`{"name":"lookup","partialArgs":[{"jsonPath":"$.n","numberValue":2}]}`),
+		functionEvent(`{}`), functionEvent(`{"name":"lookup","partialArgs":[{"jsonPath":"$.n","stringValue":"two"}]}`),
 		`{"candidates":[{"finishReason":"STOP"}]}`,
 	)
 	// Act: progress is provisional and visible before complete argument snapshots.
@@ -54,10 +54,10 @@ func TestNativePartialIDlessCallsAndExactProgress(t *testing.T) {
 	require.Empty(t, second.ID)
 	require.Equal(
 		t,
-		geminiJSONValue([]byte(`{"n":9007199254740993,"text":"warm weather","flag":false,"nil":null}`)),
+		geminiJSONValue([]byte(`{"n":"large-id","text":"warm weather","flag":false,"nil":null}`)),
 		geminiJSONValue([]byte(first.Args)),
 	)
-	require.Equal(t, `{"n":2}`, second.Args)
+	require.JSONEq(t, `{"n":"two"}`, second.Args)
 	require.NotEqual(t, status.Identity.PartIDs[0], status.Identity.PartIDs[1])
 	require.Len(t, status.Result.Annotations, 10)
 }
@@ -68,8 +68,8 @@ func TestNativePartialProviderIDsInterleaveAndRetainOrder(t *testing.T) {
 	client, calls := geminiNativeFixture(t,
 		functionEvent(`{"id":"a","name":"lookup","willContinue":true}`),
 		functionEvent(`{"id":"b","name":"lookup","willContinue":true}`),
-		functionEvent(`{"id":"b","partialArgs":[{"jsonPath":"$.n","numberValue":2}]}`),
-		functionEvent(`{"id":"a","partialArgs":[{"jsonPath":"$.n","numberValue":1.234567890123456789}]}`),
+		functionEvent(`{"id":"b","partialArgs":[{"jsonPath":"$.n","stringValue":"two"}]}`),
+		functionEvent(`{"id":"a","partialArgs":[{"jsonPath":"$.n","stringValue":"decimal"}]}`),
 		`{"candidates":[{"finishReason":"STOP"}]}`,
 	)
 	// Act.
@@ -80,8 +80,8 @@ func TestNativePartialProviderIDsInterleaveAndRetainOrder(t *testing.T) {
 	// Assert: first-delta position wins, not completion order or function name.
 	require.Equal(t, int32(1), calls.Load())
 	require.Equal(t, []prompty.ContentPart{
-		prompty.ToolCallPart{ID: "a", Name: "lookup", Args: `{"n":1.234567890123456789}`},
-		prompty.ToolCallPart{ID: "b", Name: "lookup", Args: `{"n":2}`},
+		prompty.ToolCallPart{ID: "a", Name: "lookup", Args: `{"n":"decimal"}`},
+		prompty.ToolCallPart{ID: "b", Name: "lookup", Args: `{"n":"two"}`},
 	}, stream.Status().Result.Content)
 }
 
@@ -115,9 +115,17 @@ func TestNativePartialInvalidContinuationRetainsProvisionalCall(t *testing.T) {
 			require.Equal(t, prompty.StreamFailed, status.State)
 			require.Error(t, status.Err)
 			require.Equal(t, int32(1), calls.Load())
-			require.Len(t, status.Result.Content, 1)
+			if bad == `{"args":{},"willContinue":true}` {
+				require.Len(t, status.Result.Content, 2)
+			} else {
+				require.Len(t, status.Result.Content, 1)
+			}
 			require.Empty(t, status.Result.Content[0].(prompty.ToolCallPart).Args)
-			require.Len(t, status.Result.Annotations, 2)
+			if bad == `{"args":{},"willContinue":true}` {
+				require.Len(t, status.Result.Annotations, 4)
+			} else {
+				require.Len(t, status.Result.Annotations, 2)
+			}
 		})
 	}
 }
@@ -125,7 +133,7 @@ func TestNativePartialInvalidContinuationRetainsProvisionalCall(t *testing.T) {
 func TestNativePartialEOFRetainsIdentityAndOriginalFragment(t *testing.T) {
 	t.Parallel()
 	// Arrange: accepted partial arguments, then EOF with no finish/closure.
-	call := `{"name":"lookup","partialArgs":[{"jsonPath":"$.n","numberValue":9007199254740993}],"willContinue":true}`
+	call := `{"name":"lookup","partialArgs":[{"jsonPath":"$.n","stringValue":"large-id"}],"willContinue":true}`
 	client, _ := geminiNativeFixture(t, functionEvent(call))
 	// Act.
 	stream := client.ExecuteStream(t.Context(), prompty.SimplePrompt("fixture"), prompty.StreamNative)

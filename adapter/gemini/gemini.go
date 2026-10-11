@@ -32,7 +32,6 @@ type Request struct {
 type Adapter struct {
 	defaultModel        string
 	client              *genai.Client
-	responseClient      *genai.Client
 	responseLimit       int
 	endpoint            string
 	profiles            []prompty.CapabilityProfile
@@ -43,7 +42,8 @@ type Adapter struct {
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
 
-// WithNativeJSONSchema selects exact JSON Schema transport for the documented subset.
+// WithNativeJSONSchema selects the public SDK JSON Schema port for the documented subset.
+// SDK-GENAI-NUM in docs/official-sdk-migration.md limits numeric serialization.
 // Endpoint/model support must be declared through the existing capability profiles.
 func WithNativeJSONSchema() Option {
 	return func(a *Adapter) { a.nativeJSONSchema = true }
@@ -58,14 +58,12 @@ func WithModel(m string) Option {
 func WithClient(c *genai.Client) Option {
 	return func(a *Adapter) {
 		a.client = c
-		a.responseClient = isolatedResponseClient(c)
 	}
 }
 
-// WithResponsePayloadLimit bounds original response observation. Nonpositive
-// limits fail before dispatch. Signed state cannot use a truncated payload.
-// Sync SDK body reads are not capped by this retention limit. Native observation
-// bounds each SSE line including framing, not the whole response.
+// WithResponsePayloadLimit bounds serialized SDK response representations (default
+// 4 MiB), not original HTTP bodies or SSE lines. Nonpositive limits reject before
+// dispatch. Configure generic transport IO limits in the host HTTP client.
 func WithResponsePayloadLimit(limit int) Option {
 	return func(a *Adapter) { a.responseLimit = limit }
 }
@@ -74,7 +72,6 @@ func WithResponsePayloadLimit(limit int) Option {
 func New(opts ...Option) *Adapter {
 	a := &Adapter{
 		client:              nil,
-		responseClient:      nil,
 		endpoint:            "",
 		profiles:            nil,
 		cacheAccountBinding: "",
@@ -186,9 +183,6 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		} else {
 			return nil, errors.New("prompty/adapter/gemini: empty contents and no system instructions")
 		}
-	}
-	if err := a.preserveSchemaNumbers(config); err != nil {
-		return nil, err
 	}
 	return &Request{Model: model, Contents: contents, Config: config}, nil
 }

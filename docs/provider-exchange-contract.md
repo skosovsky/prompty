@@ -2,24 +2,15 @@
 
 ## Gemini arguments and continuation
 
-The checked generation paths use google.golang.org/genai v1.72.0. Its `deepMarshal` converts interface JSON numbers to float64. The adapter observes the original HTTP response and native SSE event source; batch inline/JSONL parsing likewise uses original JSON with `UseNumber`. Signed and unsigned complete calls share the exact source restoration and SDK-shape checks. Source ordinals, part count, signature bytes, scope, partial-state completion and canonical binding remain enforced. Unknown or incomplete precision fails explicitly; incremental args remain provisional until completion.
+The checked generation paths use google.golang.org/genai v1.72.0 through its public GenerateContent/GenerateContentStream APIs. The SDK owns HTTP/SSE decoding; the adapter maps returned DTOs and serializes SDK part representations for scoped continuation. It cannot attest original source spelling, duplicate keys, unknown fields or numeric precision lost during decoding. Part order, count, signature bytes, scope, partial-state completion and canonical binding remain enforced on available SDK representations. Incremental args remain provisional until completion.
 
-Before the final SDK JSON encoder, existing sync, buffered/native streaming, inline/file batch submission and cache creation restore checked native contents through the SDK `ExtrasRequestProvider` hook. This preserves nested integer/decimal/exponent values and explicit empty argument objects. These encoding guarantees apply to adapter-owned dispatch. A host calling the raw SDK directly with translated DTOs owns its subsequent serialization pipeline. The native SDK must still be able to perform its intermediate conversion: values outside its finite numeric range (for example `1e1000`) are rejected rather than rounded, repaired or retried. Exact content is derived from the translated request; an arbitrary host callback cannot replace it later in the hook chain.
+Sync, buffered/native streaming, inline/file batch submission and cache creation use public SDK serialization unchanged. No ExtrasRequestProvider repair hook restores native contents, numbers or empty argument objects. Dynamic JSON values can round through float64; SDK encoding can omit an empty args object. Signed caller state that changes numerically through SDK encoding is rejected before IO. Native ResponseJsonSchema/ParametersJsonSchema ports remain supported for their documented structural subset, including supported local references. Numeric constraints can round; final checked validation uses the original exact schema. See [the versioned migration register](official-sdk-migration.md) and [schema contract](schema-data-contract.md).
 
-For direct `ParseResponse` on a caller-supplied SDK DTO without original source, string/bool/null, Go integer values and `json.Number` retain their declared JSON representation. Float32/float64 anywhere in maps, arrays/slices, exported struct fields or pointers cannot attest original provider precision and are rejected. Unserializable/cyclic JSON arguments fail explicitly; recursive numeric inspection tracks visited containers without an arbitrary nesting policy. This limitation does not replace the exact observed IO path. Runtime Go callbacks and supplied DTO provenance remain host-owned. With an original source, SDK rounding is accepted only at corresponding float leaves; every exact integer and all other native fields must agree independently. Custom JSON projections whose float leaves cannot be bound are rejected when the exact projection differs.
+For direct ParseResponse on a caller-supplied SDK DTO, string/bool/null, Go integer values and json.Number retain their declared JSON representation. Float32/float64 anywhere in maps, arrays/slices, exported struct fields or pointers cannot attest original provider precision and are rejected. Unserializable/cyclic JSON arguments fail explicitly; recursive numeric inspection tracks visited containers without an arbitrary nesting policy. Actual SDK numeric arguments likewise fail exact admission. Caller-supplied HTTPResponse.Body is ignored; there is no original-source restoration path. Runtime Go callbacks and supplied DTO provenance remain host-owned.
 
-Gemini WithResponsePayloadLimit bounds retained original-source observation, not
-the sync SDK body read: the wrapped reader still returns all bytes to the SDK.
-Native observation instead limits each SSE line including framing, without a
-whole-response byte bound. Oversize/unavailable exact source fails fidelity checks;
-these limits do not promise protection against all SDK allocation. Exact original
-parts, numeric leaves, signatures and scoped state/ExtrasRequestProvider restoration
-remain deliberately separate guards, not a generic repair layer.
+Gemini WithResponsePayloadLimit bounds the serialized SDK DTO after SDK decoding and allocation. It does not bound HTTP body reads, SSE lines, original source bytes or SDK allocation. Positive limit overflow retains known usage in a failed usage-only result without content/state; absent counters remain unknown. No source observer or request rewrite is installed.
 
-Gemini typed schema mapping accepts only type/properties/required/items/description
-and string enum under the existing shape constraints. Other keywords fail closed
-with a JSON pointer, rather than disappearing. Extend this subset only with a
-concrete pinned SDK representation and original-contract conformance fixtures.
+Gemini typed Schema mapping accepts type/properties/required/items/description and string enum under existing shape constraints. Other typed-schema keywords fail with a JSON pointer rather than disappearing. The separate native JSON Schema ports support their documented subset; neither path promises complete provider schema support.
 Managed cache Create/Get/UpdateExpiry/Delete remain explicit scoped provider
 operations; renewal workers, recaching, memory storage and retry policy belong to
 the host.
@@ -35,7 +26,7 @@ Ollama ParseStreamChunk is a raw parts-only callback decoder. It does not admit
 finish/correlation/lifecycle semantics; use StreamEvents or checked ExecuteStream
 for authoritative outcomes and lifecycle ownership.
 
-When a later Gemini/Ollama part fails decoding, already accepted canonical parts remain available together with the error. The partial response has unknown outcome/finish and unavailable continuation; it cannot be treated as successful completion. No automatic retry occurs. Failed or canceled checked streams conservatively mark a retained exchange unavailable for continuation, including malformed whole frames, transport errors, missing finish, conflicting call assembly and consumer stop. Observed finish metadata, when already known, remains evidence rather than a success guarantee. Source/SDK errors before any accepted canonical part produce no invented partial response. The Ollama HTTP decoder preserves ordinary reasoning/text and preceding valid calls on an argument failure; sync and buffered/native parsing publish this prefix without a successful finish. Duplicate argument keys, including nested or escaped equivalents, are rejected before decoding into maps.
+When a later Gemini/Ollama part fails decoding, already accepted canonical parts remain available together with the error. The partial response has unknown outcome/finish and unavailable continuation; it cannot be treated as successful completion. No automatic retry occurs. Failed or canceled checked streams conservatively mark a retained exchange unavailable for continuation, including malformed whole frames, transport errors, missing finish, conflicting call assembly and consumer stop. Observed finish metadata, when already known, remains evidence rather than a success guarantee. SDK errors before any accepted content or known usage produce no invented partial response. Ollama maps official api.Client callbacks and preserves ordinary reasoning/text and preceding valid calls on downstream argument admission failure; sync and buffered/native parsing publish this prefix without a successful finish. An undecodable SDK frame cannot be salvaged. SDK map decoding can lose duplicate keys and original numeric spelling; the adapter cannot claim duplicate-key rejection before decoding.
 
 Gemini `FunctionResponse.ID` receives the canonical `ToolCallID`. Parallel repeated function names are correlated by distinct native IDs. Duplicate calls/results, changed names, unknown results within supplied call history and ambiguous ID-less/mixed correlation fail instead of guessing. A result-only low-level request can carry explicit native IDs without a preceding call in that request; its earlier provider history is host-owned. No ID is generated from a function name.
 
@@ -47,13 +38,13 @@ Ollama v0.40.0 continuation maps a contiguous canonical reasoning prefix to `Mes
 
 | Existing result path | IsError | Content shapes |
 |---|---|---|
-| Gemini | Native `error` or `output` response key; native call ID retained | Existing text results; unsupported multimodal forms rejected |
+| Gemini | Native `error` or `output` response key; native call ID retained | Existing text and supported SDK multimodal result mappings; unsupported forms rejected |
 | Anthropic | Existing native `is_error` retained | Existing text/image mappings; other shapes rejected |
 | OpenAI Chat | Explicit unsupported error before dispatch | Existing text-only tool result mapping |
 | OpenAI Responses | Existing explicit unsupported error | Existing checked result shapes |
 | Ollama | Explicit unsupported error before dispatch | Existing text-only results; unsupported multimodal forms rejected |
 
-An error result is never silently encoded as success. New multimodal or provider features belong to task43. Ollama has no batch path in this library; Gemini's existing inline/file batch parsing uses the same argument contract. No new provider number/state types enter core, and existing incompatible state/wire formats remain rejected.
+An error result is never silently encoded as success. Additional provider features require an explicit capability contract. Ollama has no batch path in this library; Gemini's existing inline/file batch parsing uses the same argument contract. No new provider number/state types enter core, and existing incompatible state/wire formats remain rejected.
 
 Protocol references checked against the pinned local SDKs: [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling), [Ollama tool calling and follow-up fields](https://docs.ollama.com/capabilities/tool-calling), [Ollama thinking](https://docs.ollama.com/capabilities/thinking). Actual local HTTP/SSE/JSONL fixtures establish serialization conformance; they are not live model capability evidence.
 
@@ -98,7 +89,7 @@ whole stream bytes or upstream SDK allocation. No mutable package-wide limit exi
 
 ## Raw and observed ingress boundaries (task45)
 
-Public raw parsers reject untyped nil, typed nil and wrong SDK input types with an invalid-response typed/sentinel error rather than dereferencing them. Raw caller-constructed SDK DTOs have no source-presence attestation; their documented low-level behavior does not replace checked wire-backed validation. Observed consumed text/tool identity/usage fields are checked before trusting SDK coercion; unknown optional fields do not imply exhaustive top-level rejection. Foreign explicit Gemini/Ollama roles fail, omitted roles remain allowed by the agreed DTO contract, and unsupported Ollama images fail rather than disappearing. Sync, buffered and native modes follow the same admissible envelopes while preserving their different lifecycle guarantees.
+Public raw parsers reject untyped nil, typed nil and wrong SDK input types with an invalid-response typed/sentinel error rather than dereferencing them. Raw caller-constructed SDK DTOs have no source-presence attestation; their documented low-level behavior does not replace checked admission. SDK-available consumed text/tool identity/usage fields are validated; public RawJSON/field metadata supports exact checks where available, while Gemini/Ollama DTO losses remain accepted dependency limits; unknown optional fields do not imply exhaustive top-level rejection. Foreign explicit Gemini/Ollama roles fail, omitted roles remain allowed by the agreed DTO contract, and unsupported Ollama images fail rather than disappearing. Sync, buffered and native modes follow the same admissible envelopes while preserving their different lifecycle guarantees.
 
 OpenAI Chat preserves distinct system/developer roles and ordering through the native role mapping, with no model-name-based collapse. Inline PDF uses a filename and reversible application/pdf base64 data URI; unimplemented inline formats fail explicitly. Media fetching/uploading and endpoint capability knowledge remain host-owned. These are wire mapping requirements, not live model certification.
 
@@ -106,11 +97,11 @@ Chat inline audio accepts explicit mp3 (audio/mp3, audio/mpeg) and wav (audio/wa
 
 Part and message metadata use the same nonblank identifier rule: Provider, Codec, annotation Kind and at least one of Model/ModelFamily must contain non-whitespace text. Identifiers are validated without trimming or rewriting their original values. PartIndex is a canonical index in the associated content frame, not a provider block ordinal: a provider text block at ordinal 7 can yield frame Content[0] and therefore PartIndex 0. Finalizations and StateUpdates retain their separate immutable identity/scope checks; they are not arbitrary patches.
 
-Sync, buffered and native terminal capture share a cause classifier. Wrapped cancellation/deadline, schema, parse, capture and protocol causes retain their safe categories. An arbitrary executor error is `operation`; entry into Execute proves only dispatch possibility, not transport IO. Typed URL/network operation errors provide transport evidence. Categories contain no raw error text; original error identity remains available separately. `AfterDispatch` is independent of category and does not prove a physical attempt or remote rejection.
+Sync, buffered and native terminal capture share a cause classifier. Wrapped cancellation/deadline, schema, parse, capture and protocol causes retain their safe categories. An arbitrary executor error is `operation`; entry into Execute proves only dispatch possibility, not transport IO. Typed URL/network operation errors provide transport evidence. Categories contain no raw error text; safe domain error identity remains available separately; sanitized SDK-origin errors do not retain private provider causes. `AfterDispatch` is independent of category and does not prove a physical attempt or remote rejection.
 
 Structured parser diagnostic suffix remains byte-for-byte bounded to the last 1 KiB, including its legacy sensitive error preview. A fixed ring implements that suffix without copying it per input byte. Anthropic text history accumulates privately until block close, then materializes the complete source once; canonical deltas and citation order are unchanged, and incomplete/private state is never published as verified continuation.
 
-Ollama synchronous Chat requires exactly one response callback with stream=false. Zero or multiple callbacks fail with ErrInvalidResponse rather than fabricating an empty result or replacing earlier evidence with the last frame. HTTP chat constructor failures use ErrInvalidHTTPConfig, before response IO exists. Host http.Client redirects/transports can cause multiple physical requests; one explicit Chat operation is not a physical-attempt guarantee.
+Ollama synchronous Chat requires exactly one response callback with stream=false. Zero or multiple callbacks fail with ErrInvalidResponse rather than fabricating an empty result or replacing earlier evidence with the last frame. Host http.Client redirects/transports can cause multiple physical requests; one explicit Chat operation is not a physical-attempt guarantee.
 
 ## Capture callback policy
 
@@ -130,8 +121,11 @@ identifiable cancellation, without SDK bodies or raw causes. Unknown means the
 remote mutation may have occurred; inspect explicit resource identity rather than
 retrying automatically. Safe structured status diagnostics remain a future API
 change, not a reason to expose provider text. Usage presence is conservative:
-Ollama scalar zeros remain unknown without SDK presence, whereas matching Gemini
-original source metadata can establish known zero. Profiles remain caller-owned
+Ollama and Gemini scalar zeros remain unknown without SDK presence metadata. Profiles remain caller-owned
 knowledge bound to the actual endpoint/model; raw Translate representability is
 separate from checked Preflight admission. Ollama IsError tool results are rejected
 because this mapping has no faithful native error-result representation.
+
+Provider response acquisition belongs to official SDKs. Public RawJSON/event metadata may drive canonical validation; no independent body parser or request rewrite restores lost SDK data. Gemini signed parts are SDK representations, with limits in [the migration register](official-sdk-migration.md). Known nonzero usage survives downstream mapping failure even when no content is publishable. SDK-origin errors are sanitized without blanket panic recovery; the genai process logger limitation is explicitly accepted.
+
+An unknown cache handle may retain a valid SDK resource ID with unknown expiration for persistence and explicit Get/Delete reconciliation. Active/expired/deleted handles require expiration evidence; generation reuse always rejects unknown state. Genai successful HTTP status is unknown in DTO-only resource capture; public APIError.Code retains known rejection evidence. Positive DTO-limit failure keeps usage-only failed results rather than discarding counters.

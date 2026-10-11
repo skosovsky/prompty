@@ -381,3 +381,23 @@ func TestResponsesTerminalOutcomesAndOriginalValidation(t *testing.T) {
 		})
 	}
 }
+
+// SDK-MUTATION-ID: malformed body identity is unavailable without an SDK DTO.
+func TestSDKMalformedResponseIdentityUnavailableCharacterization(t *testing.T) {
+	t.Parallel()
+	// Arrange: accepted response cannot be decoded by the pinned official SDK.
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		_, _ = io.WriteString(w, `{"id":"resp_accepted",`)
+	}))
+	defer server.Close()
+	// Act.
+	result, err := responseFixtureAdapter(
+		server,
+	).Create(t.Context(), prompty.RemoteResponseRequest{Execution: prompty.SimplePrompt("fixture"), Store: new(true)})
+	// Assert: unknown acceptance, no raw-body recovery/retry.
+	require.ErrorIs(t, err, prompty.ErrRemoteResponseUnknown)
+	require.Nil(t, result.Handle)
+	require.Equal(t, int32(1), attempts.Load())
+}

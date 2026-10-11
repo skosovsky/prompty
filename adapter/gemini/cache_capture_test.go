@@ -91,7 +91,7 @@ func TestCacheCapturePartialSourceMetadataAndSemanticRequirement(t *testing.T) {
 	for _, accuracy := range []prompty.CaptureAccuracy{prompty.CaptureMetadata, prompty.CaptureSemantic} {
 		t.Run(string(accuracy), func(t *testing.T) {
 			t.Parallel()
-			// Arrange: SDK response observation overflows; HTTP status is still observed.
+			// Arrange: SDK representation overflows; resource identity remains known, HTTP status unknown.
 			var calls atomic.Int32
 			server := cacheCaptureServer(t, &calls)
 			manager := cacheResourceFixtureManager(t, server)
@@ -124,7 +124,7 @@ func TestCacheCapturePartialSourceMetadataAndSemanticRequirement(t *testing.T) {
 				require.Empty(t, provider.Projection.Payload)
 				require.Equal(t, prompty.CaptureMetadata, provider.Projection.Accuracy)
 				require.False(t, provider.Projection.Complete)
-				require.Equal(t, http.StatusOK, *provider.Projection.Metadata.HTTPStatus)
+				require.Nil(t, provider.Projection.Metadata.HTTPStatus)
 			}
 		})
 	}
@@ -198,8 +198,8 @@ func TestCacheCreateCaptureStagesAndOriginalSource(t *testing.T) {
 		require.Empty(t, record.Profile.Endpoint)
 		require.Equal(t, i >= 2, record.AfterDispatch)
 	}
-	require.Contains(t, string(sink.records[2].Projection.Payload), `"provider_extension":"original"`)
-	require.Equal(t, http.StatusOK, *sink.records[2].Projection.Metadata.HTTPStatus)
+	require.NotContains(t, string(sink.records[2].Projection.Payload), `"provider_extension":"original"`)
+	require.Nil(t, sink.records[2].Projection.Metadata.HTTPStatus)
 	require.Contains(t, string(sink.records[0].Projection.Payload), "immutable sensitive source")
 	require.Contains(t, string(sink.records[1].Projection.Payload), `"ttl":"3600s"`)
 	var terminal struct {

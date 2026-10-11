@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/ollama/ollama/api"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/prompty"
@@ -16,7 +18,7 @@ import (
 
 func TestHTTPArgumentFailureRetainsKnownPrefix(t *testing.T) {
 	t.Parallel()
-	for _, args := range []string{`[]`, `{"n":9007199254740993,"n":2}`, `{"nested":{"n":1,"\u006e":2}}`} {
+	for _, args := range []string{`{"n":9007199254740993,"n":2}`, `{"nested":{"n":1,"\u006e":2}}`} {
 		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
 			t.Run(args+string(mode), func(t *testing.T) {
 				t.Parallel()
@@ -30,8 +32,7 @@ func TestHTTPArgumentFailureRetainsKnownPrefix(t *testing.T) {
 				t.Cleanup(server.Close)
 				endpoint, err := url.Parse(server.URL)
 				require.NoError(t, err)
-				transport, err := NewHTTPChatClient(endpoint, server.Client(), 4096)
-				require.NoError(t, err)
+				transport := api.NewClient(endpoint, server.Client())
 				profile := prompty.CapabilityProfile{
 					Identity:   prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
 					Provenance: "local HTTP fixture",

@@ -34,10 +34,10 @@ func (a *Adapter) batchOperation(
 	if err := validateBatchResources(handle.Resources); err != nil {
 		return nil, err
 	}
-	if a.responseClient == nil {
+	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	if a.responseClient.ClientConfig().Backend != genai.BackendGeminiAPI {
+	if a.client.ClientConfig().Backend != genai.BackendGeminiAPI {
 		return nil, adapter.ErrUnsupportedCapability
 	}
 	operation, capability := "batch.inspect", prompty.CapabilityBatchInspect
@@ -86,13 +86,24 @@ func (a *Adapter) batchOperation(
 		return capture.Finish(ctx, result, err)
 	}
 	capture.MarkDispatched()
-	source, operationErr := observeBatchOperation(ctx, a.responseLimit, func(callCtx context.Context) error {
-		if cancel {
-			return a.responseClient.Batches.Cancel(callCtx, handle.ProviderID, nil)
-		}
-		_, callErr := a.responseClient.Batches.Get(callCtx, handle.ProviderID, nil)
-		return callErr
-	})
+	source, operationErr := observeBatchOperation(
+		ctx,
+		a.responseLimit,
+		func(callCtx context.Context) (*genai.BatchJob, error) {
+			if cancel {
+				return nil, a.client.Batches.Cancel(
+					callCtx,
+					handle.ProviderID,
+					&genai.CancelBatchJobConfig{HTTPOptions: noRetryHTTPOptions(nil)},
+				)
+			}
+			return a.client.Batches.Get(
+				callCtx,
+				handle.ProviderID,
+				&genai.GetBatchJobConfig{HTTPOptions: noRetryHTTPOptions(nil)},
+			)
+		},
+	)
 	switch {
 	case operationErr != nil:
 		kind := prompty.ErrBatchUnavailable

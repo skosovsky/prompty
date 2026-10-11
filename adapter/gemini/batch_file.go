@@ -114,7 +114,7 @@ func (b *Batches) submitFile(ctx context.Context, input prompty.BatchSubmitReque
 			AttemptID: item.AttemptID, ParentAttemptID: item.ParentAttemptID, Identity: prepared.Diagnostics.Profile,
 			ExecutionDigest: digest})
 		result.Diagnostics = append(result.Diagnostics, prepared.Diagnostics)
-		request, err := encodeFileGeneration(ctx, b.base.responseClient, prepared.Request, maxLine)
+		request, err := encodeFileGeneration(ctx, b.base.client, prepared.Request, maxLine)
 		if err != nil {
 			return nil, err
 		}
@@ -214,10 +214,23 @@ func (b *Batches) submitFile(ctx context.Context, input prompty.BatchSubmitReque
 		return capture.Finish(ctx, result, err)
 	}
 	result.SubmissionAttempted = true
-	source, operationErr := observeBatchOperation(ctx, b.base.responseLimit, func(callCtx context.Context) error {
-		_, callErr := b.base.responseClient.Batches.Create(callCtx, handle.Items[0].Identity.Model, params, nil)
-		return callErr
-	})
+	source, operationErr := observeBatchOperation(
+		ctx,
+		b.base.responseLimit,
+		func(callCtx context.Context) (*genai.BatchJob, error) {
+			return b.base.client.Batches.Create(
+				callCtx,
+				handle.Items[0].Identity.Model,
+				params,
+				&genai.CreateBatchJobConfig{
+					HTTPOptions:   noRetryHTTPOptions(nil),
+					DisplayName:   "",
+					Dest:          nil,
+					WebhookConfig: nil,
+				},
+			)
+		},
+	)
 	observed, parseErr := parseBatchSource(source, handle)
 	if observed.ProviderID != "" {
 		result.Handle = &observed
@@ -271,18 +284,8 @@ func encodeFileGeneration(
 	if err != nil {
 		return nil, errors.Join(prompty.ErrBatch, ctx.Err())
 	}
-	contents, err := encodeExactGeminiContents(request.Contents)
-	if err != nil {
-		return nil, prompty.ErrBatch
-	}
 	cfg := *request.Config
-	//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-	cfg.HTTPOptions = &genai.HTTPOptions{
-		ExtrasRequestProvider: func(body map[string]any) map[string]any {
-			body["contents"] = geminiJSONValue(contents)
-			return body
-		},
-	}
+	// SDK-GENAI-NUM: use the official converter as-is; no request-body rewrite.
 	_, err = isolated.Models.GenerateContent(ctx, request.Model, request.Contents, &cfg)
 	if err != nil || !json.Valid(encoder.payload) {
 		return nil, errors.Join(prompty.ErrBatch, ctx.Err())

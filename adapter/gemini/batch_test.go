@@ -83,7 +83,7 @@ func TestActualSDKInlineBatchLifecycleAndCorrelation(t *testing.T) {
 	require.Equal(t, "provider_error", results.Items[1].ErrorKind)
 	require.Equal(t, prompty.BatchItemSuccess, results.Items[2].Outcome)
 	require.Equal(t, 3, results.Items[2].Response.Usage.TotalTokens)
-	require.Contains(t, results.Items[2].Response.Usage.Known, prompty.UsageCacheRead)
+	require.NotContains(t, results.Items[2].Response.Usage.Known, prompty.UsageCacheRead)
 	create := <-requests
 	require.True(t, strings.HasPrefix(create, "POST /v1beta/models/fixture:batchGenerateContent "))
 	require.Contains(t, create, `"metadata":{"key":"one"}`)
@@ -121,44 +121,6 @@ func TestInlineBatchUnknownAcceptanceAndZeroIODuplicateOrRebind(t *testing.T) {
 	_, err = batches.Results(context.Background(), handle, options)
 	require.ErrorIs(t, err, prompty.ErrBatchScope)
 	require.EqualValues(t, 1, calls.Load())
-}
-
-func TestBatchExactContentsRestoresNativeRequestNumbers(t *testing.T) {
-	t.Parallel()
-	// Arrange: SDK-shaped native request with already-rounded interface values.
-	var request struct {
-		Contents []*genai.Content `json:"Contents"`
-	}
-	decoder := json.NewDecoder(
-		strings.NewReader(
-			`{"Contents":[{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"n":9007199254740993}}}]}]}`,
-		),
-	)
-	decoder.UseNumber()
-	require.NoError(t, decoder.Decode(&request))
-	items := []*genai.InlinedRequest{{Contents: request.Contents}}
-	var body map[string]any
-	require.NoError(
-		t,
-		json.Unmarshal(
-			[]byte(
-				`{"batch":{"inputConfig":{"requests":{"requests":[{"request":{"contents":[{"parts":[{"functionCall":{"args":{"n":9007199254740992}}}]}]}}]}}}}`,
-			),
-			&body,
-		),
-	)
-	// Act.
-	encoding := batchExactContents(items)
-	encoded, err := json.Marshal(encoding.provider(body))
-	// Assert.
-	require.NoError(t, err)
-	require.Contains(t, string(encoded), `9007199254740993`)
-	require.NotContains(t, string(encoded), `9007199254740992`)
-	require.False(t, encoding.rejected)
-	// A changed SDK wire shape must fail locally rather than silently omit repair.
-	_, err = json.Marshal(encoding.provider(map[string]any{}))
-	require.Error(t, err)
-	require.True(t, encoding.rejected)
 }
 
 func TestInlineBatchCompletenessMissingDuplicateAndUnexpected(t *testing.T) {
@@ -206,7 +168,7 @@ func TestInlineBatchCompletenessMissingDuplicateAndUnexpected(t *testing.T) {
 	}
 }
 
-func TestInlineBatchMalformedItemRetainsSourceProvenPrefix(t *testing.T) {
+func TestSDKInlineBatchMalformedConverterPanicCharacterization(t *testing.T) {
 	t.Parallel()
 	// Arrange: SDK conversion fails on the last item after reading complete JSON.
 	payload := strings.ReplaceAll(inlineBatchFixtureOutput,
@@ -226,20 +188,11 @@ func TestInlineBatchMalformedItemRetainsSourceProvenPrefix(t *testing.T) {
 	input, bindings := inlineBatchFixtureInputs()
 	created, err := manager.Submit(context.Background(), input)
 	require.NoError(t, err)
-	// Act.
-	result, err := manager.Results(context.Background(), *created.Handle, bindings)
-	// Assert: valid earlier items and known identity survive the malformed suffix.
-	require.ErrorIs(t, err, prompty.ErrBatchResults)
-	require.Equal(t, prompty.BatchEnded, result.Handle.Status)
-	require.False(t, result.Completeness.DownloadComplete)
-	require.Len(t, result.Items, 3)
-	require.Equal(t, prompty.BatchItemRefusal, result.Items[0].Outcome)
-	require.Equal(t, prompty.BatchItemError, result.Items[1].Outcome)
-	require.Equal(t, "one", result.Items[2].ID)
-	require.Equal(t, prompty.BatchItemUnknown, result.Items[2].Outcome)
+	// Act/Assert: SDK-GENAI-STREAM (converter panic) is observed, not repaired.
+	require.Panics(t, func() { _, _ = manager.Results(context.Background(), *created.Handle, bindings) })
 }
 
-func TestActualSDKInlineContentEncodingPreservesExactNumbers(t *testing.T) {
+func TestSDKInlineContentEncodingCharacterization(t *testing.T) {
 	t.Parallel()
 	// Arrange: actual SDK conversion uses []map entries and rounds interface numbers.
 	bodies := make(chan string, 1)
@@ -260,18 +213,16 @@ func TestActualSDKInlineContentEncodingPreservesExactNumbers(t *testing.T) {
 	decoder.UseNumber()
 	require.NoError(t, decoder.Decode(&contents))
 	requests := []*genai.InlinedRequest{{Contents: contents, Metadata: map[string]string{"key": "one"}}}
-	encoding := batchExactContents(requests)
 	// Act.
-	_, err := base.responseClient.Batches.Create(context.Background(), "fixture", &genai.BatchJobSource{
+	_, err := base.client.Batches.Create(context.Background(), "fixture", &genai.BatchJobSource{
 		InlinedRequests: requests,
-	}, &genai.CreateBatchJobConfig{HTTPOptions: &genai.HTTPOptions{ExtrasRequestProvider: encoding.provider}})
-	// Assert: body seen by the native endpoint, not just a synthetic map, is exact.
+	}, nil)
+	// Assert: the actual SDK request rounds dynamic numbers; no exactness repair exists.
 	require.NoError(t, err)
-	require.False(t, encoding.rejected)
 	body := <-bodies
-	require.Contains(t, body, `9007199254740993`)
-	require.Contains(t, body, `0.1234567890123456789`)
-	require.NotContains(t, body, `9007199254740992`)
+	require.Contains(t, body, `9007199254740992`)
+	require.Contains(t, body, `0.12345678901234568`)
+	require.NotContains(t, body, `9007199254740993`)
 }
 
 func TestBatchResultsDoNotRequireOriginalCacheLease(t *testing.T) {

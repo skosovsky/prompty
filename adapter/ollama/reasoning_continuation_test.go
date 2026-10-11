@@ -42,8 +42,7 @@ func TestThinkingWireContinuationActualHTTP(t *testing.T) {
 			t.Cleanup(server.Close)
 			endpoint, err := url.Parse(server.URL)
 			require.NoError(t, err)
-			transport, err := NewHTTPChatClient(endpoint, server.Client(), 4096)
-			require.NoError(t, err)
+			transport := api.NewClient(endpoint, server.Client())
 			profile := prompty.CapabilityProfile{
 				Identity:   prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
 				Provenance: "local actual HTTP conformance",

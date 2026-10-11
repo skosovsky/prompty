@@ -199,7 +199,11 @@ func (a *Adapter) Execute(ctx context.Context, req *openai.ChatCompletionNewPara
 	if a.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	return a.client.Chat.Completions.New(ctx, *req, option.WithMaxRetries(0))
+	if req == nil {
+		return nil, adapter.ErrNilExecution
+	}
+	raw, err := a.client.Chat.Completions.New(ctx, *req, option.WithMaxRetries(0))
+	return raw, adapter.SafeProviderError(ctx, err)
 }
 
 func (a *Adapter) messageToUnions(msg prompty.ChatMessage) ([]openai.ChatCompletionMessageParamUnion, error) {
@@ -691,7 +695,7 @@ func (a *Adapter) StreamEvents(
 			}
 		}
 		if err := stream.Err(); err != nil {
-			yield(nil, err)
+			yield(nil, adapter.SafeProviderError(ctx, err))
 		}
 	}
 }

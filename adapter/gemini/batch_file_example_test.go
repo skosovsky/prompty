@@ -81,7 +81,7 @@ func ExampleNewFileBatches() {
 		}
 		_, _ = io.WriteString(
 			w,
-			`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED"},"response":{"responsesFile":"files/output"}}`,
+			`{"name":"batches/fixture","metadata":{"state":"JOB_STATE_SUCCEEDED","output":{"responsesFile":"files/output"}}}`,
 		)
 	}))
 	defer server.Close()

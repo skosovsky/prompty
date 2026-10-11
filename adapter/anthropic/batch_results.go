@@ -1,8 +1,6 @@
 package anthropic
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,15 +17,54 @@ import (
 
 const defaultBatchResultsMaxBytes int64 = 64 * 1024 * 1024
 
+// Generic IO evidence; no JSONL framing, decoding or request mutation.
 type batchResultsSource struct {
-	body   io.ReadCloser
-	status int
+	status    int
+	complete  bool
+	failure   bool
+	remaining int64
+}
+type batchResultsBody struct {
+	io.ReadCloser
+
+	source *batchResultsSource
+}
+
+func (b *batchResultsBody) Read(dst []byte) (int, error) {
+	if b.source.failure || b.source.remaining < 0 {
+		return 0, prompty.ErrBatchResults
+	}
+	if b.source.remaining < int64(len(dst)) {
+		dst = dst[:b.source.remaining+1]
+	}
+	n, err := b.ReadCloser.Read(dst)
+	b.source.remaining -= int64(n)
+	if b.source.remaining < 0 {
+		b.source.failure = true
+		return n, prompty.ErrBatchResults
+	}
+	if errors.Is(err, io.EOF) {
+		b.source.complete = true
+	} else if err != nil {
+		b.source.failure = true
+	}
+	return n, err
+}
+func (b *batchResultsBody) Close() error {
+	err := b.ReadCloser.Close()
+	if err != nil {
+		b.source.failure = true
+	}
+	return err
 }
 
 func (s *batchResultsSource) observe(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	response, err := next(request)
 	if err == nil && response != nil {
-		s.body, s.status = response.Body, response.StatusCode
+		s.status = response.StatusCode
+		if response.Body != nil {
+			response.Body = &batchResultsBody{ReadCloser: response.Body, source: s}
+		}
 	}
 	return response, err
 }
@@ -135,7 +172,7 @@ func (b *MessageBatches) Results(
 		return capture.Finish(ctx, result, err)
 	}
 	capture.MarkDispatched()
-	source := new(batchResultsSource)
+	source := &batchResultsSource{remaining: totalLimit, status: 0, complete: false, failure: false}
 	var params sdk.MessageBatchResultsParams
 	stream := b.base.client.Messages.Batches.ResultsStreaming(
 		ctx,
@@ -144,13 +181,12 @@ func (b *MessageBatches) Results(
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
-	if err = stream.Err(); err != nil || source.body == nil {
+	if err = stream.Err(); err != nil {
 		providerErr := capture.Provider(ctx, nil, source.status, false)
 		return capture.Finish(ctx, result, errors.Join(prompty.ErrBatchUnavailable, ctx.Err(), providerErr))
 	}
-	// Do not use SDK Next/Err: its JSONL Err omits scanner.Err, accepting truncation.
-	// SDK dispatch/auth remain unchanged; own bounded source decoder sees actual EOF.
-	reader := bufio.NewReaderSize(io.LimitReader(source.body, totalLimit+1), min(lineLimit, batchMetadataMaxBytes))
+	// The pinned SDK exposes scanner failures through Next/Err and owns JSONL
+	// framing. Generic IO evidence and policy limits remain separate from parsing.
 	bindings := make(map[string]prompty.BatchItemBinding, len(handle.Items))
 	for _, binding := range handle.Items {
 		bindings[binding.ID] = binding
@@ -158,34 +194,29 @@ func (b *MessageBatches) Results(
 	var consumed int64
 	sourceLines := make([]json.RawMessage, 0)
 	var readErr error
-	for {
-		line, complete, lineErr := readBatchLine(reader, lineLimit, totalLimit-consumed)
+	for stream.Next() {
+		record := stream.Current()
+		line := []byte(record.RawJSON())
 		consumed += int64(len(line))
-		if len(bytes.TrimSpace(line)) != 0 {
-			if lineErr != nil && !complete {
-				readErr = prompty.ErrBatchResults
-				break
-			}
-			if !uniqueSyntheticJSON(line) {
-				readErr = prompty.ErrBatchResults
-				break
-			}
-			item := b.parseResult(line, bindings, prepared)
-			result.Items = append(result.Items, item)
-			sourceLines = append(sourceLines, prompty.CloneJSONDocument(line))
-		}
-		if lineErr != nil {
-			if errors.Is(lineErr, io.EOF) {
-				result.Completeness.DownloadComplete = true
-			} else {
-				readErr = prompty.ErrBatchResults
-			}
+		if len(line) > lineLimit || consumed > totalLimit || !uniqueSyntheticJSON(line) {
+			readErr = prompty.ErrBatchResults
 			break
 		}
+		item := b.parseResult(line, bindings, prepared)
+		result.Items = append(result.Items, item)
+		sourceLines = append(sourceLines, prompty.CloneJSONDocument(line))
 		if err = ctx.Err(); err != nil {
 			readErr = err
 			break
 		}
+	}
+	if stream.Err() != nil {
+		readErr = errors.Join(readErr, prompty.ErrBatchResults)
+	}
+	// Require SDK success and clean generic IO evidence; correlation is separate.
+	result.Completeness.DownloadComplete = readErr == nil && source.complete && !source.failure
+	if !result.Completeness.DownloadComplete {
+		readErr = errors.Join(readErr, prompty.ErrBatchResults)
 	}
 	if closeErr := stream.Close(); closeErr != nil {
 		readErr = errors.Join(readErr, prompty.ErrBatchResults)
@@ -198,23 +229,6 @@ func (b *MessageBatches) Results(
 	providerJSON, _ := json.Marshal(sourceLines)
 	providerErr := capture.Provider(ctx, providerJSON, source.status, result.Completeness.DownloadComplete)
 	return capture.Finish(ctx, result, errors.Join(readErr, ctx.Err(), providerErr))
-}
-
-// ReadSlice bounds allocation before accumulating one original line. Clean EOF
-// without a trailing newline is valid; a transport error never substitutes EOF.
-func readBatchLine(reader *bufio.Reader, lineLimit int, remaining int64) ([]byte, bool, error) {
-	var line []byte
-	for {
-		fragment, err := reader.ReadSlice('\n')
-		if len(fragment) > lineLimit-len(line) || int64(len(fragment)) > remaining-int64(len(line)) {
-			return line, false, prompty.ErrBatchResults
-		}
-		line = append(line, fragment...)
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		return line, err == nil || errors.Is(err, io.EOF), err
-	}
 }
 
 //nolint:funlen,gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.

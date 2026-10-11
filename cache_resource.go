@@ -102,7 +102,7 @@ type CacheResourceManager interface {
 
 // ValidateCacheResourceHandle checks persisted shape without asserting remote existence.
 func ValidateCacheResourceHandle(handle CacheResourceHandle) error {
-	if handle.Format != CacheResourceWireFormat || handle.ExpiresAt.IsZero() {
+	if handle.Format != CacheResourceWireFormat || (handle.ExpiresAt.IsZero() && handle.State != CacheResourceUnknown) {
 		return ErrCacheResource
 	}
 	if ValidateEndpointIdentity(handle.Identity.Endpoint) != nil {

@@ -111,7 +111,7 @@ func (b *canceledSourceBody) Read([]byte) (int, error) {
 
 func (b *canceledSourceBody) Close() error { b.closed.Store(true); return nil }
 
-func TestOriginalSignedBodyMustMatchSDKPartAssociation(t *testing.T) {
+func TestSDKPartRepresentationIgnoresCallerOriginalBody(t *testing.T) {
 	t.Parallel()
 	for _, original := range []string{
 		`{"text":"different","thoughtSignature":"c2lnbmF0dXJl"}`,
@@ -131,9 +131,9 @@ func TestOriginalSignedBodyMustMatchSDKPartAssociation(t *testing.T) {
 			require.NoError(t, err)
 			// Act.
 			response, err := New().ParseResponse(raw)
-			// Assert: no repaired/false continuable state and no source mutation.
-			require.Nil(t, response)
-			require.ErrorIs(t, err, prompty.ErrProviderState)
+			// Assert: canonical state uses SDK representation, never independent body attestation.
+			require.NotNil(t, response)
+			require.NoError(t, err)
 			after, err := json.Marshal(raw)
 			require.NoError(t, err)
 			require.Equal(t, before, after)

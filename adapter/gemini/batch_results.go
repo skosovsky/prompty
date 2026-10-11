@@ -32,10 +32,10 @@ func (b *Batches) Results(
 	if err := validateBatchResources(handle.Resources); err != nil {
 		return nil, err
 	}
-	if b.base.responseClient == nil {
+	if b.base.client == nil {
 		return nil, adapter.ErrNoClient
 	}
-	if b.base.responseClient.ClientConfig().Backend != genai.BackendGeminiAPI {
+	if b.base.client.ClientConfig().Backend != genai.BackendGeminiAPI {
 		return nil, adapter.ErrUnsupportedCapability
 	}
 	if options.MaxBytes < 0 || options.MaxBytes > math.MaxInt || options.MaxLineBytes < 0 {
@@ -135,22 +135,21 @@ func (b *Batches) Results(
 		return capture.Finish(ctx, result, err)
 	}
 	capture.MarkDispatched()
-	source, operationErr := observeBatchOperation(ctx, limit, func(callCtx context.Context) error {
-		_, callErr := b.base.responseClient.Batches.Get(callCtx, handle.ProviderID, nil)
-		return callErr
+	source, operationErr := observeBatchOperation(ctx, limit, func(callCtx context.Context) (*genai.BatchJob, error) {
+		return b.base.client.Batches.Get(
+			callCtx,
+			handle.ProviderID,
+			&genai.GetBatchJobConfig{HTTPOptions: noRetryHTTPOptions(nil)},
+		)
 	})
 	downloaded := false
-	// A converter failure on one malformed item must not discard other source-
-	// proven items. Reparse only a complete, bounded, successful native response;
-	// transport/cancel/close failures do not become successful retrieval.
-	if operationErr == nil || (ctx.Err() == nil && source.complete && !source.overflow &&
-		source.closeFailure == nil && source.status >= 200 && source.status < 300 && batchSourceJSON(source) != nil) {
+	if operationErr == nil {
 		var observed prompty.BatchHandle
 		observed, operationErr = parseBatchSource(source, handle)
 		if operationErr == nil {
 			handle = observed
 			var records []json.RawMessage
-			records, operationErr = inlineBatchRecords(batchSourceJSON(source))
+			records, operationErr = inlineSDKBatchRecords(source.job)
 			if handle.Status != prompty.BatchEnded && handle.Status != prompty.BatchFailed &&
 				handle.Status != prompty.BatchExpired && handle.Status != prompty.BatchCanceled {
 				operationErr = prompty.ErrBatchUnavailable
@@ -179,15 +178,22 @@ func (b *Batches) Results(
 	return capture.Finish(ctx, result, errors.Join(operationErr, providerErr))
 }
 
-func inlineBatchRecords(payload prompty.JSONDocument) ([]json.RawMessage, error) {
-	output, err := observedBatchOutput(payload)
-	if err != nil {
-		return nil, err
-	}
-	if output.File != "" || output.Inline == nil || output.Inline.Records == nil {
+func inlineSDKBatchRecords(job *genai.BatchJob) ([]json.RawMessage, error) {
+	if job == nil || job.Dest == nil || job.Dest.FileName != "" || job.Dest.InlinedResponses == nil {
 		return nil, prompty.ErrBatchUnavailable
 	}
-	return output.Inline.Records, nil
+	records := make([]json.RawMessage, len(job.Dest.InlinedResponses))
+	for i, record := range job.Dest.InlinedResponses {
+		if record == nil {
+			return nil, prompty.ErrBatchResults
+		}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return nil, prompty.ErrBatchResults
+		}
+		records[i] = encoded
+	}
+	return records, nil
 }
 
 func (b *Batches) parseInlineItem(
@@ -237,10 +243,6 @@ func (b *Batches) parseInlineItem(
 	decoder.UseNumber()
 	if decoder.Decode(&raw) != nil {
 		return item, prompty.ErrBatchResults
-	}
-	//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-	raw.SDKHTTPResponse = &genai.HTTPResponse{
-		Body: string(record.Response),
 	}
 	response, parseErr := adapter.ParseBatchResultItem(b.base, prepared[item.ID], &raw)
 	item.Response = response

@@ -10,8 +10,8 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-// Verify that SDK normalization can encode the shape. Exact contents are
-// restored after this lossy normalization by the dispatch encoding callback.
+// SDK-GENAI-NUM: reject signed state before dispatch when SDK normalization
+// would change its numeric value. No request rewrite repairs the converter.
 func validateGeminiSDKStateEncoding(part *genai.Part) error {
 	original, err := json.Marshal(part)
 	if err != nil {
@@ -22,7 +22,7 @@ func validateGeminiSDKStateEncoding(part *genai.Part) error {
 		return prompty.ErrProviderState
 	}
 	encoded, err := json.Marshal(normalized)
-	if err != nil || !json.Valid(encoded) {
+	if err != nil || !json.Valid(encoded) || !exactGeminiSDKJSONEqual(original, encoded) {
 		return prompty.ErrProviderState
 	}
 	return nil

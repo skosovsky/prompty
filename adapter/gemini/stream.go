@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,7 +23,9 @@ func (a *Adapter) StreamEvents(ctx context.Context, req *Request) iter.Seq2[*pro
 	return a.StreamEventsForProfile(ctx, req, destination)
 }
 
-// StreamEventsForProfile binds signed parts to the full checked destination.
+// StreamEventsForProfile binds signed SDK part representations to the checked destination.
+// SDK-GENAI-LOG/STREAM in docs/official-sdk-migration.md: the SDK logs scanner
+// failures and malformed converters can panic; neither is hidden by this adapter.
 //
 //nolint:gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
 func (a *Adapter) StreamEventsForProfile(
@@ -35,27 +36,15 @@ func (a *Adapter) StreamEventsForProfile(
 			yield(nil, adapter.ErrNoClient)
 			return
 		}
+		if a.responseLimit <= 0 {
+			yield(nil, prompty.ErrProviderState)
+			return
+		}
 		if req == nil {
 			yield(nil, adapter.ErrNilExecution)
 			return
 		}
-		if a.responseClient == nil || a.responseLimit <= 0 {
-			yield(nil, prompty.ErrProviderState)
-			return
-		}
-		request, err := exactGenerationRequest(req)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		source := &streamSource{
-			payload:  nil,
-			status:   0,
-			failure:  nil,
-			limit:    a.responseLimit,
-			validate: validateNativeSource,
-		}
-		streamContext := context.WithValue(ctx, streamSourceKey{}, source)
+		request := copyNativeRequest(req)
 		state := generateStreamState{
 			serial:           0,
 			finished:         false,
@@ -67,28 +56,26 @@ func (a *Adapter) StreamEventsForProfile(
 			destination:      destination,
 			toolRefs:         make(map[string]string),
 		}
-		for _, sdkErr := range a.responseClient.Models.GenerateContentStream(streamContext, request.Model, request.Contents, request.Config) {
+		for raw, sdkErr := range a.client.Models.GenerateContentStream(ctx, request.Model, request.Contents, request.Config) {
 			if sdkErr != nil {
-				switch {
-				case source.failure != nil:
-					yield(nil, source.failure)
-				case source.status >= 200 && source.status < 300:
-					yield(nil, safeObservedResponseError(ctx, sdkErr))
-				case source.status != 0:
-					yield(
-						nil,
-						//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-						genai.APIError{Code: source.status},
-					)
-				default:
-					yield(nil, sdkErr)
-				}
+				yield(nil, safeObservedResponseError(ctx, sdkErr))
 				return
 			}
-			frame, err := state.frame(source.payload)
+			payload, marshalErr := json.Marshal(raw)
+			if marshalErr != nil || len(payload) > a.responseLimit {
+				if frame := sdkUsageFailureChunk(raw); frame != nil && !yield(frame, nil) {
+					return
+				}
+				yield(nil, prompty.ErrProviderState)
+				return
+			}
+			frame, err := state.frameSDK(raw, payload)
+			if err != nil && frame == nil {
+				frame = sdkUsageFailureChunk(raw)
+			}
 			captureErr := adapter.CaptureProviderChunk(
-				streamContext,
-				string(source.payload),
+				ctx,
+				string(payload),
 				prompty.CaptureRecordMetadata{
 					ProviderResponseID: "",
 					RequestID:          "",
@@ -106,11 +93,9 @@ func (a *Adapter) StreamEventsForProfile(
 				return
 			}
 		}
-		// This SDK logs scanner failures instead of returning them. The source
-		// observer retains the authoritative read error independently of finish.
-		if source.failure != nil {
-			yield(nil, source.failure)
-		} else if err := ctx.Err(); err != nil {
+		// SDK-GENAI-STREAM: framing and scanner errors belong to the SDK.
+		// A clean iterator EOF still requires a terminal DTO.
+		if err := ctx.Err(); err != nil {
 			yield(nil, err)
 		} else if !state.finished {
 			yield(nil, prompty.ErrStreamProtocol)
@@ -133,94 +118,11 @@ func copyNativeRequest(req *Request) *Request {
 			config.HTTPOptions = &options
 		}
 	}
+	if copyRequest.Config == nil {
+		copyRequest.Config = &genai.GenerateContentConfig{}
+	}
+	copyRequest.Config.HTTPOptions = noRetryHTTPOptions(copyRequest.Config.HTTPOptions)
 	return &copyRequest
-}
-
-//nolint:gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
-func validateNativeSource(payload []byte) error {
-	response, err := decodeNativeSource(payload)
-	if err != nil {
-		return err
-	}
-	if len(response.Candidates) == 1 {
-		if _, err := sourceCandidateAnnotations(payload); err != nil {
-			return err
-		}
-	}
-	for _, candidate := range response.Candidates {
-		if candidate == nil {
-			return adapter.ErrInvalidResponse
-		}
-		if err := validateCandidateMetadataShape(candidate); err != nil {
-			return err
-		}
-		if candidate.Content != nil {
-			for _, part := range candidate.Content.Parts {
-				if part == nil {
-					return adapter.ErrInvalidResponse
-				}
-			}
-		}
-	}
-	// Retained signed state must not silently normalize case aliases, unknown
-	// fields or explicitly supplied values that disappear in SDK serialization.
-	var original struct {
-		Candidates []struct {
-			Content struct {
-				Parts []json.RawMessage `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	if json.Unmarshal(payload, &original) != nil {
-		return prompty.ErrProviderState
-	}
-	for candidateIndex, candidate := range response.Candidates {
-		if candidate.Content == nil {
-			continue
-		}
-		for partIndex, part := range candidate.Content.Parts {
-			if len(part.ThoughtSignature) != 0 {
-				_, stateErr := decodeGeminiState(
-					prompty.PartState{
-						PartIndex: 0,
-						Envelope: prompty.ProviderEnvelope{
-							Format:    "",
-							Scope:     prompty.ProfileIdentity{Provider: "", Endpoint: "", Model: "", ModelFamily: ""},
-							Codec:     "",
-							Required:  false,
-							ExpiresAt: nil,
-							Payload:   original.Candidates[candidateIndex].Content.Parts[partIndex],
-						},
-					},
-				)
-				if stateErr != nil {
-					return stateErr
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func decodeNativeSource(payload []byte) (*genai.GenerateContentResponse, error) {
-	if !json.Valid(payload) || uniqueGeminiJSONValue(json.NewDecoder(bytes.NewReader(payload))) != nil {
-		return nil, prompty.ErrProviderState
-	}
-	decodePayload, err := normalizeCitationSource(payload)
-	if err != nil {
-		return nil, err
-	}
-	// Bypass the SDK response UnmarshalJSON, which calls json.Unmarshal internally
-	// and ignores an outer decoder's UseNumber setting for dynamic argument maps.
-	type responseAlias genai.GenerateContentResponse
-	var response *responseAlias
-	decoder := json.NewDecoder(bytes.NewReader(decodePayload))
-	decoder.UseNumber()
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&response) != nil || response == nil || response.SDKHTTPResponse != nil {
-		return nil, prompty.ErrProviderState
-	}
-	return (*genai.GenerateContentResponse)(response), nil
 }
 
 type generateStreamState struct {
@@ -235,12 +137,33 @@ type generateStreamState struct {
 	sourcePartSerial int
 }
 
-//nolint:cyclop,funlen,gocognit,gocyclo,nestif // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
-func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, error) {
-	raw, err := decodeNativeSource(payload)
-	if err != nil {
-		return nil, err
+//nolint:cyclop,funlen,gocognit,gocyclo,nestif // Ordered state, metadata and tool publication share one protocol transition.
+func (s *generateStreamState) frameSDK(
+	raw *genai.GenerateContentResponse,
+	payload []byte,
+) (*prompty.ResponseChunk, error) {
+	if raw == nil {
+		return nil, adapter.ErrInvalidResponse
 	}
+	var numericErr error
+	// SDK-GENAI-NUM: partial numeric values are float64 already. They cannot
+	// acquire original-number attestation by marshaling the decoded DTO.
+	for _, candidate := range raw.Candidates {
+		if candidate == nil || candidate.Content == nil {
+			continue
+		}
+		for _, part := range candidate.Content.Parts {
+			if part == nil || part.FunctionCall == nil {
+				continue
+			}
+			for _, argument := range part.FunctionCall.PartialArgs {
+				if argument != nil && argument.NumberValue != nil {
+					numericErr = adapter.ErrMalformedArgs
+				}
+			}
+		}
+	}
+	var err error
 	if len(raw.Candidates) > 1 || (len(raw.Candidates) == 1 && raw.Candidates[0] == nil) {
 		return nil, adapter.ErrInvalidResponse
 	}
@@ -278,6 +201,14 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 		Result:       nil,
 		Kind:         prompty.StreamUsage,
 		Model:        raw.ModelVersion,
+	}
+	if numericErr != nil {
+		frame.Usage = geminiUsage(raw)
+		if len(frame.Usage.Known) == 0 {
+			return nil, numericErr
+		}
+		frame.ContinuationUnavailable = true
+		return frame, numericErr
 	}
 	var frameErr error
 	groundingChunks := s.groundingChunks
@@ -364,10 +295,6 @@ func (s *generateStreamState) frame(payload []byte) (*prompty.ResponseChunk, err
 			}
 		}
 	}
-	//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-	raw.SDKHTTPResponse = &genai.HTTPResponse{
-		Body: string(payload),
-	}
 	frame.Usage = geminiUsage(raw)
 	s.groundingChunks = groundingChunks
 	return frame, frameErr
@@ -379,7 +306,7 @@ func (s *generateStreamState) nextRef() string {
 	return ref
 }
 
-// CaptureCoverage reports source JSON events, not SSE framing or physical attempts.
+// CaptureCoverage reports SDK DTO events, not original JSON/SSE or physical attempts.
 func (*Adapter) CaptureCoverage(mode prompty.StreamMode) prompty.CaptureCoverage {
 	coverage := prompty.CaptureCoverage{
 		Stages:           nil,

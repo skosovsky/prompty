@@ -21,8 +21,8 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	parts := []string{
 		`{"functionCall":{"id":"a","name":"lookup","willContinue":true}}`,
 		`{"functionCall":{"id":"b","name":"lookup","willContinue":true}}`,
-		`{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.n","numberValue":1}],"willContinue":true},"thoughtSignature":"c2ln"}`,
-		`{"functionCall":{"id":"b","partialArgs":[{"jsonPath":"$.n","numberValue":2}]}}`,
+		`{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.n","stringValue":"one"}],"willContinue":true},"thoughtSignature":"c2ln"}`,
+		`{"functionCall":{"id":"b","partialArgs":[{"jsonPath":"$.n","stringValue":"two"}]}}`,
 		`{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.s","stringValue":"ok"}]}}`,
 	}
 	requests := make(chan []byte, 2)
@@ -75,7 +75,7 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	require.Equal(t, 2, updates)
 	require.Len(t, status.Result.ProviderState, 1)
 	require.Equal(t, 7, status.Result.Usage.TotalTokens)
-	require.JSONEq(t, `{"n":1,"s":"ok"}`, status.Result.Content[0].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, `{"n":"one","s":"ok"}`, status.Result.Content[0].(prompty.ToolCallPart).Args)
 	wire, err := prompty.MarshalResponse(status.Result, prompty.WirePolicy{State: prompty.StatePreserve})
 	require.NoError(t, err)
 	restored, err := prompty.UnmarshalResponse(wire)
@@ -126,7 +126,7 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	exec.Messages[len(exec.Messages)-1].Content[0] = prompty.ToolCallPart{
 		ID:   "a",
 		Name: "lookup",
-		Args: `{"n":2,"s":"ok"}`,
+		Args: `{"n":"two","s":"ok"}`,
 	}
 	_, err = client.Execute(t.Context(), exec)
 	require.ErrorIs(t, err, prompty.ErrProviderState)
@@ -175,7 +175,7 @@ func TestSignedPartialDoesNotSilentlyReorderInterleavedParts(t *testing.T) {
 		t,
 		`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"a","name":"lookup","willContinue":true},"thoughtSignature":"c2ln"}]}}]}`,
 		functionEvent(`{"id":"b","name":"other","args":{}}`),
-		functionEvent(`{"id":"a","partialArgs":[{"jsonPath":"$.n","numberValue":1}]}`),
+		functionEvent(`{"id":"a","partialArgs":[{"jsonPath":"$.n","stringValue":"one"}]}`),
 		`{"candidates":[{"finishReason":"STOP"}]}`,
 	)
 	// Act.
@@ -188,7 +188,7 @@ func TestSignedPartialDoesNotSilentlyReorderInterleavedParts(t *testing.T) {
 	require.NoError(t, status.Err)
 	require.EqualValues(t, 1, calls.Load())
 	require.Len(t, status.Result.Content, 2)
-	require.JSONEq(t, `{"n":1}`, status.Result.Content[0].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, `{"n":"one"}`, status.Result.Content[0].(prompty.ToolCallPart).Args)
 	require.Len(t, status.Result.ProviderState, 1)
 	message := prompty.ChatMessage{Role: prompty.RoleAssistant, Content: status.Result.Content,
 		ProviderState: status.Result.ProviderState, Annotations: status.Result.Annotations}

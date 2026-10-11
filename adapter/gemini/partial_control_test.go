@@ -36,7 +36,7 @@ func TestNativePartialControlActualVertexSDKRequest(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(
 			w,
-			"data: "+functionEvent(`{"name":"lookup","partialArgs":[{"jsonPath":"$.n","numberValue":1}]}`)+"\n\n",
+			"data: "+functionEvent(`{"name":"lookup","partialArgs":[{"jsonPath":"$.n","stringValue":"one"}]}`)+"\n\n",
 		)
 		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n")
 	}))
@@ -67,7 +67,7 @@ func TestNativePartialControlActualVertexSDKRequest(t *testing.T) {
 	}
 	// Assert: opt-in reaches actual SDK JSON and returns a complete canonical call.
 	require.Equal(t, prompty.StreamCompleted, stream.Status().State)
-	require.Equal(t, `{"n":1}`, stream.Status().Result.Content[0].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, `{"n":"one"}`, stream.Status().Result.Content[0].(prompty.ToolCallPart).Args)
 	actual := <-requests
 	config := actual["toolConfig"].(map[string]any)["functionCallingConfig"].(map[string]any)
 	require.Equal(t, true, config["streamFunctionCallArguments"])

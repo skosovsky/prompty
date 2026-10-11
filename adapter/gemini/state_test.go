@@ -111,7 +111,7 @@ func TestSignedContentCannotBeEditedOrSentToForeignDestination(t *testing.T) {
 	}
 }
 
-func TestGeminiRefusalIncompleteAndKnownZeroUsage(t *testing.T) {
+func TestGeminiRefusalIncompleteAndSDKUnknownZeroUsage(t *testing.T) {
 	t.Parallel()
 	// Arrange.
 	a := New()
@@ -136,7 +136,7 @@ func TestGeminiRefusalIncompleteAndKnownZeroUsage(t *testing.T) {
 	// Assert.
 	require.Equal(t, prompty.OutcomeRefusal, refused.Outcome)
 	require.Empty(t, refused.Content)
-	require.Equal(t, []prompty.UsageCounter{prompty.UsageTotal}, refused.Usage.Known)
+	require.Empty(t, refused.Usage.Known)
 	require.Equal(t, prompty.OutcomeIncomplete, incomplete.Outcome)
 	require.Equal(t, string(genai.FinishReasonMaxTokens), incomplete.FinishReason)
 }

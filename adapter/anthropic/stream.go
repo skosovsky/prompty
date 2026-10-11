@@ -71,7 +71,7 @@ func (a *Adapter) StreamEventsForProfile(
 			}
 		}
 		if err := stream.Err(); err != nil {
-			yield(nil, err)
+			yield(nil, adapter.SafeProviderError(ctx, err))
 		} else if !state.stopped {
 			yield(nil, prompty.ErrStreamProtocol)
 		}

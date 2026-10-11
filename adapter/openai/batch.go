@@ -258,12 +258,11 @@ func (b *Batches) Submit(ctx context.Context, input prompty.BatchSubmitRequest) 
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
+	}
 	providerErr = capture.Provider(ctx, source.data, source.status, source.complete)
 	if callErr != nil {
-		if identity := batchAcceptedIdentity(source); identity != "" {
-			handle.ProviderID = identity
-			result.Handle = &handle
-		}
 		cause := prompty.ErrBatchUnknown
 		if batchMutationRejected(source.status) {
 			cause = prompty.ErrBatchRejected
@@ -271,9 +270,6 @@ func (b *Batches) Submit(ctx context.Context, input prompty.BatchSubmitRequest) 
 		return capture.Finish(ctx, result, errors.Join(cause, ctx.Err(), providerErr))
 	}
 	err = parseOpenAIBatch(raw, &handle)
-	if err != nil && handle.ProviderID == "" {
-		handle.ProviderID = batchAcceptedIdentity(source)
-	}
 	if handle.ProviderID != "" {
 		result.Handle = &handle
 	}
@@ -417,6 +413,9 @@ func (b *Batches) observe(
 		raw, err = b.base.client.Batches.Get(
 			ctx, handle.ProviderID, option.WithMaxRetries(0), option.WithMiddleware(source.observe),
 		)
+	}
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
 	}
 	providerErr := capture.Provider(ctx, source.data, source.status, source.complete)
 	if err != nil {

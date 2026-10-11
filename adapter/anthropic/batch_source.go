@@ -1,9 +1,6 @@
 package anthropic
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -20,52 +17,14 @@ type batchSource struct {
 	complete bool
 }
 
+// Metadata only; provider body decoding belongs to the SDK.
+// SDK-MUTATION-ID in docs/official-sdk-migration.md: no malformed-body ID recovery.
 func (s *batchSource) observe(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	response, err := next(request)
-	if err != nil || response == nil {
-		return response, err
+	if response != nil {
+		s.status = response.StatusCode
 	}
-	s.status = response.StatusCode
-	if response.Body == nil {
-		return response, prompty.ErrBatchUnknown
-	}
-	data, readErr := io.ReadAll(io.LimitReader(response.Body, batchMetadataMaxBytes+1))
-	closeErr := response.Body.Close()
-	s.data, s.complete = data, readErr == nil && len(data) <= batchMetadataMaxBytes
-	if !s.complete || closeErr != nil {
-		return nil, prompty.ErrBatchUnknown
-	}
-	response.Body = io.NopCloser(bytes.NewReader(data))
-	return response, nil
-}
-
-func (s *batchSource) acceptedIdentity() string {
-	if !s.complete || s.status < http.StatusOK || s.status >= http.StatusMultipleChoices || !json.Valid(s.data) {
-		return ""
-	}
-	decoder := json.NewDecoder(bytes.NewReader(s.data))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return ""
-	}
-	count, identity := 0, ""
-	for decoder.More() {
-		key, keyErr := decoder.Token()
-		var value json.RawMessage
-		if keyErr != nil || decoder.Decode(&value) != nil {
-			return ""
-		}
-		if key == "id" {
-			count++
-			if json.Unmarshal(value, &identity) != nil {
-				return ""
-			}
-		}
-	}
-	if count != 1 || !batchProviderID.MatchString(identity) {
-		return ""
-	}
-	return identity
+	return response, err
 }
 
 func parseBatchHandle(raw *sdk.MessageBatch, handle *prompty.BatchHandle) error {

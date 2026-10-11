@@ -56,3 +56,5 @@ Anonymous embedding cycles are skipped during JSON field metadata discovery, as
 encoding/json does; only surviving fields undergo schema inference. This metadata
 walk is separate from selected-value recursion admission: a recursive named value
 that survives dominance still requires an explicit SchemaProvider or fails.
+
+Gemini opt-in native JSON Schema still uses public ResponseJsonSchema/ParametersJsonSchema with original-schema validation. The pinned genai converter may round dynamic numeric constraints; no HTTP rewrite corrects it. Structural admission and the independent core exact-number contract do not establish exact SDK serialization. See SDK-GENAI-NUM in [the migration register](official-sdk-migration.md).

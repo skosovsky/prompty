@@ -91,7 +91,15 @@ func TestNativeSchemaConsumerFormsOnWire(t *testing.T) {
 				require.NoError(t, err)
 				transported, err := prompty.SchemaDocumentAsMap(wire)
 				require.NoError(t, err)
-				require.Equal(t, original, transported)
+				encodedOriginal, marshalErr := json.Marshal(original)
+				require.NoError(t, marshalErr)
+				var sdkRepresentation any
+				require.NoError(t, json.Unmarshal(encodedOriginal, &sdkRepresentation))
+				encodedSDK, marshalErr := json.Marshal(sdkRepresentation)
+				require.NoError(t, marshalErr)
+				normalized, mapErr := prompty.SchemaDocumentAsMap(encodedSDK)
+				require.NoError(t, mapErr)
+				require.Equal(t, normalized, transported)
 			})
 		}
 	}

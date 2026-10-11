@@ -28,14 +28,14 @@ func TestGeminiUsageCopiesProviderTotalWithoutAddingBreakdowns(t *testing.T) {
 	}, usage)
 }
 
-func TestGeminiUsagePresenceRequiresMatchingNumericHTTPField(t *testing.T) {
+func TestSDKScalarZeroDoesNotAcquirePresenceFromCallerBody(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		body  string
 		known bool
 	}{
-		{"zero", `{"usageMetadata":{"totalTokenCount":0}}`, true},
+		{"zero", `{"usageMetadata":{"totalTokenCount":0}}`, false},
 		{"missing", `{"usageMetadata":{}}`, false},
 		{"null", `{"usageMetadata":{"totalTokenCount":null}}`, false},
 		{"string", `{"usageMetadata":{"totalTokenCount":"0"}}`, false},

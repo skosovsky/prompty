@@ -181,12 +181,11 @@ func (b *MessageBatches) Submit(ctx context.Context, input prompty.BatchSubmitRe
 		option.WithMaxRetries(0),
 		option.WithMiddleware(source.observe),
 	)
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
+	}
 	providerErr := capture.Provider(ctx, source.data, source.status, source.complete)
 	if callErr != nil {
-		if identity := source.acceptedIdentity(); identity != "" {
-			handle.ProviderID = identity
-			result.Handle = &handle
-		}
 		cause := prompty.ErrBatchUnknown
 		if batchMutationRejected(source.status) {
 			cause = prompty.ErrBatchRejected
@@ -194,9 +193,6 @@ func (b *MessageBatches) Submit(ctx context.Context, input prompty.BatchSubmitRe
 		return capture.Finish(ctx, result, errors.Join(cause, ctx.Err(), providerErr))
 	}
 	err = parseBatchHandle(raw, &handle)
-	if err != nil && handle.ProviderID == "" {
-		handle.ProviderID = source.acceptedIdentity()
-	}
 	if handle.ProviderID != "" {
 		result.Handle = &handle
 	}
@@ -310,6 +306,9 @@ func (b *MessageBatches) observe(
 		raw, err = b.base.client.Messages.Batches.Get(
 			ctx, handle.ProviderID, params, option.WithMaxRetries(0), option.WithMiddleware(source.observe),
 		)
+	}
+	if raw != nil {
+		source.data, source.complete = []byte(raw.RawJSON()), true
 	}
 	providerErr := capture.Provider(ctx, source.data, source.status, source.complete)
 	if err != nil {

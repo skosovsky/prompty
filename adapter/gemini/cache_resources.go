@@ -42,7 +42,7 @@ func (m *CacheResources) preflight(
 	if strings.TrimSpace(m.accountBinding) == "" {
 		return zero, prompty.ErrCacheResourceScope
 	}
-	if m.base.responseClient == nil {
+	if m.base.client == nil {
 		return zero, adapter.ErrNoClient
 	}
 	if m.base.responseLimit <= 0 {
@@ -98,7 +98,7 @@ func (m *CacheResources) forHandle(
 // Create maps immutable canonical input and performs one cache creation request.
 // Generation-only options are rejected; lifecycle capture is caller-owned.
 //
-//nolint:funlen,gocognit // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
+//nolint:cyclop,funlen,gocognit,gocyclo // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
 func (m *CacheResources) Create(
 	ctx context.Context,
 	input prompty.CacheResourceCreateRequest,
@@ -157,6 +157,7 @@ func (m *CacheResources) Create(
 		translated.Contents = nil
 	} // Cache creation needs no synthetic generation turn.
 	config := &genai.CreateCachedContentConfig{ //nolint:exhaustruct_v5 // SDK DTO: omitted optional fields and other union arms retain their zero values.
+		HTTPOptions:       noRetryHTTPOptions(nil),
 		Contents:          translated.Contents,
 		SystemInstruction: translated.Config.SystemInstruction,
 		Tools:             translated.Config.Tools,
@@ -164,10 +165,7 @@ func (m *CacheResources) Create(
 		TTL:               input.Expiry.TTL,
 		ExpireTime:        input.Expiry.ExpiresAt,
 	}
-	config.HTTPOptions, err = exactContentOptions(config.HTTPOptions, config.Contents, "contents")
-	if err != nil {
-		return nil, err
-	}
+
 	immutable := *config
 	immutable.TTL, immutable.ExpireTime = 0, time.Time{}
 	immutable.HTTPOptions = nil // Dispatch encoding is not immutable cache content.
@@ -201,12 +199,12 @@ func (m *CacheResources) Create(
 		return capture.finish(ctx, result, captureErr)
 	}
 	source := &responseSource{
-		data:         bytes.Buffer{},
-		overflow:     false,
-		complete:     false,
-		status:       0,
-		closeFailure: nil,
-		limit:        m.base.responseLimit,
+		data: bytes.Buffer{},
+		job:  nil, cache: nil,
+		overflow: false,
+		complete: false,
+		status:   0,
+		limit:    m.base.responseLimit,
 	}
 	if contextErr := ctx.Err(); contextErr != nil {
 		return capture.finish(ctx, result, contextErr)
@@ -218,13 +216,29 @@ func (m *CacheResources) Create(
 		return capture.finish(ctx, result, stateErr)
 	}
 	capture.source, capture.dispatched = source, true
-	_, err = m.base.responseClient.Caches.Create(
-		context.WithValue(ctx, responseSourceKey{}, source),
+	raw, callErr := m.base.client.Caches.Create(
+		ctx,
 		translated.Model,
 		config,
 	)
+
+	err = callErr
+	source.status = sdkOperationHTTPStatus(err)
+	source.cache = raw
+	if raw != nil {
+		encoded, encodingErr := json.Marshal(raw)
+		if encodingErr == nil && len(encoded) <= source.limit {
+			_, _ = source.data.Write(encoded)
+			source.complete = true
+		}
+	}
+	if err == nil {
+		if raw == nil {
+			source.complete = true
+		}
+	}
 	if err != nil {
-		if source.status >= 200 && source.status < 300 {
+		if source.cache != nil {
 			_, _ = cacheResourceResult(source, handle, result)
 			if result.Handle != nil {
 				result.Handle.State = prompty.CacheResourceUnknown
@@ -286,19 +300,35 @@ func (m *CacheResources) Get(
 		return capture.finish(ctx, result, contextErr)
 	}
 	source := &responseSource{
-		data:         bytes.Buffer{},
-		overflow:     false,
-		complete:     false,
-		status:       0,
-		closeFailure: nil,
-		limit:        m.base.responseLimit,
+		data: bytes.Buffer{},
+		job:  nil, cache: nil,
+		overflow: false,
+		complete: false,
+		status:   0,
+		limit:    m.base.responseLimit,
 	}
 	capture.source, capture.dispatched = source, true
-	_, err = m.base.responseClient.Caches.Get(
-		context.WithValue(ctx, responseSourceKey{}, source),
+	raw, callErr := m.base.client.Caches.Get(
+		ctx,
 		handle.ProviderID,
-		nil,
+		&genai.GetCachedContentConfig{HTTPOptions: noRetryHTTPOptions(nil)},
 	)
+
+	err = callErr
+	source.status = sdkOperationHTTPStatus(err)
+	source.cache = raw
+	if raw != nil {
+		encoded, encodingErr := json.Marshal(raw)
+		if encodingErr == nil && len(encoded) <= source.limit {
+			_, _ = source.data.Write(encoded)
+			source.complete = true
+		}
+	}
+	if err == nil {
+		if raw == nil {
+			source.complete = true
+		}
+	}
 	if err != nil {
 		return capture.finish(ctx, result, cacheOperationError(ctx, err))
 	}
@@ -323,10 +353,10 @@ func (m *CacheResources) UpdateExpiry(
 		return nil, prompty.ErrCacheResourceExpired
 	}
 	result := &prompty.CacheResourceResult{TokenCount: nil, Handle: &handle, Diagnostics: report}
-	//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
 	config := &genai.UpdateCachedContentConfig{
-		TTL:        expiry.TTL,
-		ExpireTime: expiry.ExpiresAt,
+		HTTPOptions: noRetryHTTPOptions(nil),
+		TTL:         expiry.TTL,
+		ExpireTime:  expiry.ExpiresAt,
 	}
 	capture, captureErr := newCacheOperationCapture("cache.update_expiry", report, options...)
 	if captureErr != nil {
@@ -345,20 +375,36 @@ func (m *CacheResources) UpdateExpiry(
 		return capture.finish(ctx, result, expiryErr)
 	}
 	source := &responseSource{
-		data:         bytes.Buffer{},
-		overflow:     false,
-		complete:     false,
-		status:       0,
-		closeFailure: nil,
-		limit:        m.base.responseLimit,
+		data: bytes.Buffer{},
+		job:  nil, cache: nil,
+		overflow: false,
+		complete: false,
+		status:   0,
+		limit:    m.base.responseLimit,
 	}
 	capture.source, capture.dispatched = source, true
 	handle.State = prompty.CacheResourceUnknown
-	_, err = m.base.responseClient.Caches.Update(
-		context.WithValue(ctx, responseSourceKey{}, source),
+	raw, callErr := m.base.client.Caches.Update(
+		ctx,
 		handle.ProviderID,
 		config,
 	)
+
+	err = callErr
+	source.status = sdkOperationHTTPStatus(err)
+	source.cache = raw
+	if raw != nil {
+		encoded, encodingErr := json.Marshal(raw)
+		if encodingErr == nil && len(encoded) <= source.limit {
+			_, _ = source.data.Write(encoded)
+			source.complete = true
+		}
+	}
+	if err == nil {
+		if raw == nil {
+			source.complete = true
+		}
+	}
 	if err != nil {
 		handle.State = prompty.CacheResourceUnknown
 		return capture.finish(ctx, result, cacheOperationError(ctx, err))
@@ -391,20 +437,35 @@ func (m *CacheResources) Delete(
 		return capture.finish(ctx, result, contextErr)
 	}
 	source := &responseSource{
-		data:         bytes.Buffer{},
-		overflow:     false,
-		complete:     false,
-		status:       0,
-		closeFailure: nil,
-		limit:        m.base.responseLimit,
+		data: bytes.Buffer{},
+		job:  nil, cache: nil,
+		overflow: false,
+		complete: false,
+		status:   0,
+		limit:    m.base.responseLimit,
 	}
 	capture.source, capture.dispatched = source, true
 	handle.State = prompty.CacheResourceUnknown
-	_, err = m.base.responseClient.Caches.Delete(
-		context.WithValue(ctx, responseSourceKey{}, source),
+	raw, callErr := m.base.client.Caches.Delete(
+		ctx,
 		handle.ProviderID,
-		nil,
+		&genai.DeleteCachedContentConfig{HTTPOptions: noRetryHTTPOptions(nil)},
 	)
+
+	err = callErr
+	source.status = sdkOperationHTTPStatus(err)
+	if raw != nil {
+		encoded, encodingErr := json.Marshal(raw)
+		if encodingErr == nil && len(encoded) <= source.limit {
+			_, _ = source.data.Write(encoded)
+			source.complete = true
+		}
+	}
+	if err == nil {
+		if raw == nil {
+			source.complete = true
+		}
+	}
 	if err != nil || source.overflow || !source.complete {
 		handle.State = prompty.CacheResourceUnknown
 		return capture.finish(ctx, result, cacheOperationError(ctx, err))
@@ -424,65 +485,36 @@ func cacheResourceResult(
 	handle prompty.CacheResourceHandle,
 	result *prompty.CacheResourceResult,
 ) (*prompty.CacheResourceResult, error) {
-	if source.overflow || !source.complete {
-		return result, prompty.ErrCacheResourceUnknown
-	}
-	payload := source.data.Bytes()
-	if !json.Valid(payload) || uniqueGeminiJSONValue(json.NewDecoder(bytes.NewReader(payload))) != nil {
-		return result, prompty.ErrCacheResourceUnknown
-	}
-	var observed struct {
-		Name          string          `json:"name"`
-		Model         string          `json:"model"`
-		ExpireTime    time.Time       `json:"expireTime"`
-		UsageMetadata json.RawMessage `json:"usageMetadata"`
-	}
-	if !exactCacheResourceFields(payload, []string{wireName, wireModel, "expireTime", "usageMetadata"}) {
-		return result, prompty.ErrCacheResourceUnknown
-	}
-	if err := json.Unmarshal(payload, &observed); err != nil || !cacheResourceName.MatchString(observed.Name) ||
-		observed.ExpireTime.IsZero() ||
-		strings.TrimPrefix(observed.Model, "models/") != strings.TrimPrefix(handle.Identity.Model, "models/") ||
+	observed := source.cache
+	if observed == nil || !cacheResourceName.MatchString(observed.Name) ||
 		handle.ProviderID != "" && observed.Name != handle.ProviderID {
 		return result, prompty.ErrCacheResourceUnknown
 	}
+	// Retain SDK-returned identity even if unrelated projection/validation fails.
+	// This is reconciliation evidence only, never usable continuation or retry permission.
 	handle.ProviderID = observed.Name
-	handle.ExpiresAt = observed.ExpireTime
 	handle.State = prompty.CacheResourceUnknown
 	result.Handle = &handle
-	if len(observed.UsageMetadata) > 0 && !bytes.Equal(observed.UsageMetadata, []byte(wireNull)) {
-		if !exactCacheResourceFields(observed.UsageMetadata, []string{"totalTokenCount"}) {
+	if !observed.ExpireTime.IsZero() {
+		handle.ExpiresAt = observed.ExpireTime
+	}
+	// SDK-GENAI-SOURCE: zero scalar has no presence evidence; keep count unknown.
+	if observed.UsageMetadata != nil && observed.UsageMetadata.TotalTokenCount != 0 {
+		if observed.UsageMetadata.TotalTokenCount < 0 {
 			return result, prompty.ErrCacheResourceUnknown
 		}
-		var usage struct {
-			TotalTokenCount *int64 `json:"totalTokenCount"`
-		}
-		if decodeErr := json.Unmarshal(observed.UsageMetadata, &usage); decodeErr != nil ||
-			usage.TotalTokenCount != nil && *usage.TotalTokenCount < 0 {
-			return result, prompty.ErrCacheResourceUnknown
-		}
-		result.TokenCount = usage.TotalTokenCount
+		count := int64(observed.UsageMetadata.TotalTokenCount)
+		result.TokenCount = &count
+	}
+	if source.overflow || !source.complete || observed.ExpireTime.IsZero() ||
+		strings.TrimPrefix(observed.Model, "models/") != strings.TrimPrefix(handle.Identity.Model, "models/") {
+		return result, prompty.ErrCacheResourceUnknown
 	}
 	handle.State = prompty.CacheResourceActive
 	if !handle.ExpiresAt.After(time.Now()) {
 		handle.State = prompty.CacheResourceExpired
 	}
 	return result, nil
-}
-
-func exactCacheResourceFields(payload []byte, fields []string) bool {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(payload, &object) != nil || object == nil {
-		return false
-	}
-	for key := range object {
-		for _, field := range fields {
-			if strings.EqualFold(key, field) && key != field {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 var _ prompty.CacheResourceManager = (*CacheResources)(nil)

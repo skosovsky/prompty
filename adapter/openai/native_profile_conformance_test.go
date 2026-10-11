@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/prompty"
+	"github.com/skosovsky/prompty/adapter"
 )
 
 func forNativeFixtureModels(t *testing.T, run func(*testing.T, string)) {
@@ -82,7 +83,7 @@ func nativeConformanceReader(scenario string) (io.Reader, prompty.StreamState, e
 		return io.MultiReader(
 			strings.NewReader(cleanupFixtureSSE),
 			cleanupErrorReader{},
-		), prompty.StreamFailed, errCleanupFixtureRead
+		), prompty.StreamFailed, adapter.ErrInvalidResponse
 	}
 	if scenario == "early-eof" {
 		return strings.NewReader(cleanupFixtureSSE), prompty.StreamFailed, prompty.ErrStreamProtocol

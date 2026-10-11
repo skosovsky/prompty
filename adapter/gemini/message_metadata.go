@@ -12,47 +12,6 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-// REST Gemini uses citationSources; Vertex and the SDK DTO use citations.
-// Normalize only the decode copy. Annotations retain the original source value.
-func normalizeCitationSource(payload []byte) ([]byte, error) {
-	var root map[string]json.RawMessage
-	if json.Unmarshal(payload, &root) != nil {
-		return nil, prompty.ErrProviderState
-	}
-	if len(root["candidates"]) == 0 {
-		return payload, nil
-	}
-	var candidates []map[string]json.RawMessage
-	if json.Unmarshal(root["candidates"], &candidates) != nil {
-		return nil, prompty.ErrProviderState
-	}
-	changed := false
-	for _, candidate := range candidates {
-		value, ok := candidate["citationMetadata"]
-		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte(wireNull)) {
-			continue
-		}
-		var metadata map[string]json.RawMessage
-		if json.Unmarshal(value, &metadata) != nil {
-			return nil, prompty.ErrProviderState
-		}
-		if sources, found := metadata["citationSources"]; found {
-			if _, collision := metadata["citations"]; collision {
-				return nil, prompty.ErrProviderState
-			}
-			delete(metadata, "citationSources")
-			metadata["citations"] = sources
-			candidate["citationMetadata"], _ = json.Marshal(metadata)
-			changed = true
-		}
-	}
-	if !changed {
-		return payload, nil
-	}
-	root["candidates"], _ = json.Marshal(candidates)
-	return json.Marshal(root)
-}
-
 func sourceCandidateAnnotations(payload []byte) ([]prompty.MessageAnnotation, error) {
 	var source struct {
 		Candidates []map[string]json.RawMessage `json:"candidates"`

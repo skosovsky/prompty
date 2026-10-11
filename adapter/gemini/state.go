@@ -3,6 +3,7 @@ package gemini
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,14 +17,29 @@ import (
 const geminiPartCodec = "gemini.part.json"
 
 // ParseResponseForProfile preserves ordered provider parts and request-scoped signatures.
-func (*Adapter) ParseResponseForProfile(
+func (a *Adapter) ParseResponseForProfile(
 	raw *genai.GenerateContentResponse,
 	destination prompty.ProfileIdentity,
 ) (*prompty.Response, error) {
-	return parseGeminiResponse(raw, destination, 0)
+	if raw != nil {
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			// Preserve safe domain validation categories without retaining marshal causes.
+			_, parseErr := parseGeminiResponse(raw, destination, 0)
+			return sdkUsageFailure(raw), errors.Join(prompty.ErrProviderState, parseErr)
+		}
+		if a.responseLimit <= 0 || len(encoded) > a.responseLimit {
+			return sdkUsageFailure(raw), prompty.ErrProviderState
+		}
+	}
+	response, err := parseGeminiResponse(raw, destination, 0)
+	if err != nil && response == nil {
+		response = sdkUsageFailure(raw)
+	}
+	return response, err
 }
 
-//nolint:cyclop,funlen,gocognit,gocyclo,nestif // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
+//nolint:funlen,gocognit,nestif // Ordered provider protocol checks preserve capture, partial-result and terminal-state semantics.
 func parseGeminiResponse(
 	raw *genai.GenerateContentResponse, destination prompty.ProfileIdentity, previousGroundingChunks int,
 ) (*prompty.Response, error) {
@@ -164,14 +180,7 @@ func parseGeminiResponse(
 			prompty.MessageAnnotation{Scope: nil, Required: false, Kind: annotation.kind, Value: value},
 		)
 	}
-	if raw.SDKHTTPResponse != nil && raw.SDKHTTPResponse.Body != "" &&
-		(candidate.CitationMetadata != nil || candidate.GroundingMetadata != nil) {
-		annotations, err := sourceCandidateAnnotations([]byte(raw.SDKHTTPResponse.Body))
-		if err != nil {
-			return nil, err
-		}
-		response.MessageAnnotations = annotations
-	}
+
 	return response, nil
 }
 
@@ -484,20 +493,14 @@ func (a *Adapter) assistantMessageContent(message prompty.ChatMessage) (*genai.C
 
 // SDK scalar fields lack presence; nonzero values are known, zero values remain
 // unknown unless a valid retained HTTP body reports the matching numeric value.
+// SDK-GENAI-SOURCE in docs/official-sdk-migration.md: scalar zero has no
+// SDK presence evidence; caller Body cannot restore original-provider fidelity.
 func geminiUsage(raw *genai.GenerateContentResponse) prompty.Usage {
 	var usage prompty.Usage
 	if raw.UsageMetadata == nil {
 		return usage
 	}
 	metadata := raw.UsageMetadata
-	var body struct {
-		Usage map[string]json.RawMessage `json:"usageMetadata"`
-	}
-	if raw.SDKHTTPResponse != nil {
-		if err := json.Unmarshal([]byte(raw.SDKHTTPResponse.Body), &body); err != nil {
-			body.Usage = nil
-		}
-	}
 	usage.Mode = prompty.UsageCumulative
 	for _, field := range []struct {
 		key         string
@@ -511,7 +514,7 @@ func geminiUsage(raw *genai.GenerateContentResponse) prompty.Usage {
 		{"cachedContentTokenCount", prompty.UsageCacheRead, metadata.CachedContentTokenCount, &usage.PromptTokensCached},
 		{"thoughtsTokenCount", prompty.UsageReasoning, metadata.ThoughtsTokenCount, &usage.CompletionTokensReasoning},
 	} {
-		if geminiUsageKnown(field.value, body.Usage[field.key]) {
+		if field.value != 0 {
 			*field.destination = int(field.value)
 			usage.Known = append(usage.Known, field.counter)
 		}
@@ -519,26 +522,8 @@ func geminiUsage(raw *genai.GenerateContentResponse) prompty.Usage {
 	return usage
 }
 
-func geminiUsageKnown(value int32, raw json.RawMessage) bool {
-	if value != 0 {
-		return true
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var valueShape any
-	if err := decoder.Decode(&valueShape); err != nil {
-		return false
-	}
-	number, numeric := valueShape.(json.Number)
-	if !numeric {
-		return false
-	}
-	parsed, err := number.Int64()
-	return err == nil && parsed == int64(value)
-}
-
 func partialGeminiFailure(response *prompty.Response, err error) (*prompty.Response, error) {
-	if len(response.Content) == 0 {
+	if len(response.Content) == 0 && len(response.Usage.Known) == 0 {
 		return nil, err
 	}
 	response.Outcome = "" // Unknown: failed decoding cannot confirm completion.
