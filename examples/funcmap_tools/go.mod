@@ -4,8 +4,8 @@ go 1.27.2
 
 require (
 	github.com/openai/openai-go/v3 v3.73.0
-	github.com/skosovsky/prompty v0.0.0
-	github.com/skosovsky/prompty/adapter/openai v0.0.0
+	github.com/skosovsky/prompty v0.16.4
+	github.com/skosovsky/prompty/adapter/openai v0.16.4
 )
 
 require (
@@ -28,7 +28,3 @@ require (
 
 // v0.16.1 regressed the published v0.16.0 API and omitted a module.
 retract v0.16.1
-
-replace github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
-
-replace github.com/skosovsky/prompty => ../..

@@ -5,8 +5,8 @@ go 1.27.2
 require (
 	github.com/openai/openai-go/v3 v3.73.0
 	github.com/skosovsky/contexty v0.13.1
-	github.com/skosovsky/prompty v0.15.0
-	github.com/skosovsky/prompty/adapter/openai v0.15.0
+	github.com/skosovsky/prompty v0.16.4
+	github.com/skosovsky/prompty/adapter/openai v0.16.4
 	github.com/skosovsky/routery v0.7.0
 	github.com/skosovsky/toolsy v0.18.0
 	github.com/stretchr/testify v1.12.1
@@ -30,7 +30,3 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
-
-replace github.com/skosovsky/prompty/adapter/openai => ../../adapter/openai
-
-replace github.com/skosovsky/prompty => ../..
