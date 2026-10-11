@@ -160,23 +160,37 @@ contracts, and the official [GenerateContent API](https://ai.google.dev/api/gene
 and [structured output guide](https://ai.google.dev/gemini-api/docs/structured-output)
 (2026-10-11). No live provider compatibility claim is made.
 
-The initial, deliberately narrow subset is schema objects containing `type`
-(single string: object, array, string, number, integer, boolean, null),
-`title`/`description` (strings), `properties` (schema objects), `required` (string
-array), `items` (schema object), `minimum`/`maximum` (JSON numbers),
-`additionalProperties` (boolean or schema object), and `enum` (nonempty array of
-strings/numbers). Tool roots must have `type: object`. All other keywords are
-rejected, including **all references** (local, missing, cyclic, external), `$defs`,
-resource identities, composition, format, ordering, and tuple keywords. This
-subset covers the Kosmify exact-constraint consumer fixture; it is not full JSON
-Schema support. `oneOf` is rejected because the provider interprets it as `anyOf`.
-Unknown semantics are never stripped or sent through typed fallback.
+The admitted subset contains schema objects with `type` (object, array, string,
+number, integer, boolean, null; or a nullable pair of one concrete type and null),
+`title`/`description`, `properties`, `required`, `items`, `minimum`/`maximum`,
+`additionalProperties` and nonempty string/numeric `enum`. Native mode also
+preserves `$defs` and acyclic local fragment JSON Pointer `$ref`, nonempty `anyOf`,
+`prefixItems` (ordered schema array), `minItems`/`maxItems` (nonnegative integral
+JSON numbers), `format` (date, date-time, time) and `propertyOrdering` (string array).
+Tool roots require explicit `type: object`; a root reference cannot bypass this.
+Output and tool parameter schemas have separate real-SDK HTTP fixtures.
 
-Admission errors use `SchemaFidelityError` with sorted traversal and escaped JSON
-pointers; errors omit schema values. Checked core compiles the original schema
+References are decoded once as URI fragments and resolved only to validated schema
+positions with strict RFC6901 escapes. Shared targets, escaped names and percent
+encoding are preserved; nothing is inlined or fetched. Cycles (including optional
+and nullable recursion), external/root/anchor references, missing or non-schema
+targets, semantic reference siblings, resource identities and unknown keywords
+fail before dispatch. `$anchor` has no required consumer fixture and remains
+outside this subset. `oneOf` remains rejected because the provider interprets it
+as `anyOf`. Unknown semantics are never stripped or sent through typed fallback.
+
+The consumer matrix covers Kosmify shared/escaped/encoded references, properties
+named `$ref`, recursion rejection and exact-constraint/unmapped-semantics fixtures.
+Additional output/tool wire fixtures cover branches, tuple order, array bounds,
+nullable types, documented formats and property order. This is offline schema
+transport parity, not live certification of a deployment or full JSON Schema.
+The host continues to own execution budgets, timeout and telemetry.
+
+Admission errors use `SchemaFidelityError` with deterministic traversal and escaped
+JSON pointers; errors omit schema values. Checked core compiles the original schema
 first, so malformed source schemas and unresolved references can instead return
 its existing schema compilation error, still before I/O. Direct translation and
-`MapSchema` reject references with a fidelity error without resolving them.
+`MapSchema` share the same admission and cycle checks.
 
 Output sends `application/json` and only `ResponseJsonSchema`; tools send only
 `ParametersJsonSchema`. Decimal and large integer lexemes survive SDK HTTP

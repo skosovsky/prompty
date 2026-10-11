@@ -184,7 +184,9 @@ func TestNativeSchemaPreservesClientExtras(t *testing.T) {
 	WithClient(sdk)(adp)
 	exec := prompty.SimplePrompt("fixture")
 	exec.ResponseFormat = &prompty.SchemaDefinition{
-		Schema: prompty.JSONDocument(`{"type":"object","properties":{"value":{"type":"integer","minimum":1}}}`),
+		Schema: prompty.JSONDocument(
+			`{"type":"object","$defs":{"value":{"anyOf":[{"type":"integer","minimum":1,"maximum":9007199254740993},{"type":"number","maximum":1.234567890123456789}]}},"properties":{"value":{"$ref":"#/$defs/value"}}}`,
+		),
 	}
 	// Act.
 	_, err = adapter.NewClient(adp).Execute(context.Background(), exec)
@@ -192,7 +194,10 @@ func TestNativeSchemaPreservesClientExtras(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, calls.Load())
 	require.EqualValues(t, 1, hookCalls.Load())
-	require.Contains(t, <-bodies, `"caller_marker":"preserved"`)
+	body := <-bodies
+	require.Contains(t, body, `"caller_marker":"preserved"`)
+	require.Contains(t, body, "9007199254740993")
+	require.Contains(t, body, "1.234567890123456789")
 }
 
 func TestNativeSchemaUnknownModelAndForeignOverride(t *testing.T) {

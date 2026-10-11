@@ -57,7 +57,7 @@ func (a *Adapter) functionResultParts(content []prompty.ContentPart) (any, []*ge
 				return nil, nil, err
 			}
 			media = append(media, image)
-			ordered = append(ordered, map[string]any{"$ref": fmt.Sprintf("prompty_part_%d", index)})
+			ordered = append(ordered, map[string]any{nativeReferenceKeyword: fmt.Sprintf("prompty_part_%d", index)})
 		case *prompty.MediaPart:
 			if value == nil {
 				return nil, nil, adapter.ErrUnsupportedContentType
@@ -67,7 +67,7 @@ func (a *Adapter) functionResultParts(content []prompty.ContentPart) (any, []*ge
 				return nil, nil, err
 			}
 			media = append(media, image)
-			ordered = append(ordered, map[string]any{"$ref": fmt.Sprintf("prompty_part_%d", index)})
+			ordered = append(ordered, map[string]any{nativeReferenceKeyword: fmt.Sprintf("prompty_part_%d", index)})
 		default:
 			return nil, nil, adapter.ErrUnsupportedContentType
 		}

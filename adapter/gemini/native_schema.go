@@ -3,7 +3,9 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"slices"
+	"strings"
 
 	"google.golang.org/genai"
 
@@ -12,6 +14,7 @@ import (
 )
 
 const wireObject = "object"
+const nativeReferenceKeyword = "$ref"
 
 func (a *Adapter) mapNativeSchema(request prompty.SchemaMappingRequest) (prompty.SchemaMapping, error) {
 	if err := a.validateNativeIdentity(request.Profile); err != nil {
@@ -74,13 +77,26 @@ func (a *Adapter) validateNativeExecution(exec *prompty.PromptExecution) error {
 	return nil
 }
 
-// References and composition are deliberately outside this initial subset.
+// validateNativeSchema admits only the native subset and acyclic local references.
+func validateNativeSchema(schema map[string]any, pointer string) error {
+	graph := nativeSchemaGraph{nodes: make(map[string]map[string]any), edges: make(map[string][]string)}
+	if err := graph.validate(schema, pointer); err != nil {
+		return err
+	}
+	return graph.validateReferences()
+}
+
 // Sorted schema-position traversal never inspects instance values as schemas.
 //
 //nolint:cyclop,funlen,gocognit,gocyclo // Keyword admission follows the explicit provider subset.
-func validateNativeSchema(schema map[string]any, pointer string) error {
+func (graph *nativeSchemaGraph) validate(schema map[string]any, pointer string) error {
 	if schema == nil {
 		return fidelityError(pointer, "schema must be an object")
+	}
+	graph.nodes[pointer] = schema
+	childSchema := func(child map[string]any, path string) error {
+		graph.edges[pointer] = append(graph.edges[pointer], path)
+		return graph.validate(child, path)
 	}
 	keys := make([]string, 0, len(schema))
 	for key := range schema {
@@ -89,10 +105,46 @@ func validateNativeSchema(schema map[string]any, pointer string) error {
 	slices.Sort(keys)
 	for _, key := range keys {
 		value, path := schema[key], pointerKey(pointer, key)
+		if _, ref := schema[nativeReferenceKeyword]; ref && !strings.HasPrefix(key, "$") {
+			return fidelityError(path, "reference siblings are not preserved by provider")
+		}
 		switch key {
+		case nativeReferenceKeyword:
+			ref, ok := value.(string)
+			if !ok || !strings.HasPrefix(ref, "#/") {
+				return fidelityError(path, "only local JSON pointer references are supported")
+			}
+		case "format":
+			format, ok := value.(string)
+			if !ok || !slices.Contains([]string{"date", "date-time", "time"}, format) {
+				return fidelityError(path, "unsupported format")
+			}
+		case "minItems", "maxItems":
+			number, ok := value.(json.Number)
+			if !ok {
+				return fidelityError(path, "must be a nonnegative integer")
+			}
+			exact, ok := new(big.Rat).SetString(string(number))
+			if !ok || !exact.IsInt() || exact.Sign() < 0 {
+				return fidelityError(path, "must be a nonnegative integer")
+			}
+		case "anyOf", "prefixItems":
+			children, ok := value.([]any)
+			if !ok || (key == "anyOf" && len(children) == 0) {
+				return fidelityError(path, "must be an array of schemas (anyOf must be nonempty)")
+			}
+			for i, value := range children {
+				child, ok := value.(map[string]any)
+				childPath := fmt.Sprintf("%s/%d", path, i)
+				if !ok {
+					return fidelityError(childPath, "schema must be an object")
+				}
+				if err := childSchema(child, childPath); err != nil {
+					return err
+				}
+			}
 		case "type":
-			name, ok := value.(string)
-			if !ok || (jsonSchemaTypeToGenai(name) == genai.TypeUnspecified && name != "null") {
+			if !nativeSchemaType(value) {
 				return fidelityError(path, "unsupported type")
 			}
 		case "title", "description":
@@ -103,7 +155,7 @@ func validateNativeSchema(schema map[string]any, pointer string) error {
 			if _, ok := value.(json.Number); !ok {
 				return fidelityError(path, "must be a number")
 			}
-		case "required":
+		case "required", "propertyOrdering":
 			values, ok := value.([]any)
 			if !ok {
 				return fidelityError(path, "must be an array")
@@ -125,7 +177,7 @@ func validateNativeSchema(schema map[string]any, pointer string) error {
 					return fidelityError(fmt.Sprintf("%s/%d", path, i), "only string and numeric enums are supported")
 				}
 			}
-		case "properties":
+		case "properties", "$defs":
 			members, ok := value.(map[string]any)
 			if !ok {
 				return fidelityError(path, "must be an object")
@@ -141,7 +193,7 @@ func validateNativeSchema(schema map[string]any, pointer string) error {
 				if !ok {
 					return fidelityError(childPath, "schema must be an object")
 				}
-				if err := validateNativeSchema(child, childPath); err != nil {
+				if err := childSchema(child, childPath); err != nil {
 					return err
 				}
 			}
@@ -155,7 +207,7 @@ func validateNativeSchema(schema map[string]any, pointer string) error {
 			if !ok {
 				return fidelityError(path, "must be a schema object")
 			}
-			if err := validateNativeSchema(child, path); err != nil {
+			if err := childSchema(child, path); err != nil {
 				return err
 			}
 		default:
@@ -222,4 +274,17 @@ func (a *Adapter) preserveSchemaNumbers(config *genai.GenerateContentConfig) err
 		fallback = a.client.ClientConfig().HTTPOptions.ExtrasRequestProvider
 	}
 	return preserveNativeSchemaNumbers(config, fallback)
+}
+
+// Native nullable types use exactly one concrete JSON type and null.
+func nativeSchemaType(value any) bool {
+	valid := func(value any) bool {
+		name, ok := value.(string)
+		return ok && (jsonSchemaTypeToGenai(name) != genai.TypeUnspecified || name == wireNull)
+	}
+	if values, ok := value.([]any); ok {
+		return len(values) == 2 && valid(values[0]) && valid(values[1]) && values[0] != values[1] &&
+			(values[0] == wireNull || values[1] == wireNull)
+	}
+	return valid(value)
 }
