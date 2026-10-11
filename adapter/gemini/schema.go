@@ -12,7 +12,10 @@ import (
 
 // MapSchema verifies the implemented strict typed-schema subset before translation.
 // Explicit lowering transformations are not yet implemented by this mapper.
-func (*Adapter) MapSchema(request prompty.SchemaMappingRequest) (prompty.SchemaMapping, error) {
+func (a *Adapter) MapSchema(request prompty.SchemaMappingRequest) (prompty.SchemaMapping, error) {
+	if a.nativeJSONSchema {
+		return a.mapNativeSchema(request)
+	}
 	if request.Profile.Provider != wireGemini {
 		return prompty.SchemaMapping{}, fidelityError("", "foreign schema profile")
 	}
@@ -153,7 +156,7 @@ func jsonSchemaTypeToGenai(t string) genai.Type {
 		return genai.TypeBoolean
 	case "array":
 		return genai.TypeArray
-	case "object":
+	case wireObject:
 		return genai.TypeObject
 	default:
 		return genai.TypeUnspecified

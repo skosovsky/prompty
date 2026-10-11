@@ -37,10 +37,17 @@ type Adapter struct {
 	endpoint            string
 	profiles            []prompty.CapabilityProfile
 	cacheAccountBinding string
+	nativeJSONSchema    bool
 }
 
 // Option configures an Adapter (e.g. WithModel, WithClient).
 type Option func(*Adapter)
+
+// WithNativeJSONSchema selects exact JSON Schema transport for the documented subset.
+// Endpoint/model support must be declared through the existing capability profiles.
+func WithNativeJSONSchema() Option {
+	return func(a *Adapter) { a.nativeJSONSchema = true }
+}
 
 // WithModel sets the default model used when exec.ModelOptions does not contain Model.
 func WithModel(m string) Option {
@@ -73,6 +80,7 @@ func New(opts ...Option) *Adapter {
 		cacheAccountBinding: "",
 		defaultModel:        "gemini-2.0-flash",
 		responseLimit:       defaultResponsePayloadLimit,
+		nativeJSONSchema:    false,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -161,7 +169,7 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 	if len(systemParts) > 0 {
 		config.SystemInstruction = genai.NewContentFromText(strings.Join(systemParts, "\n\n"), genai.RoleUser)
 	}
-	if err := applyToolsAndResponseFormat(config, exec, wantGoogleSearch); err != nil {
+	if err := a.applyToolsAndResponseFormat(config, exec, wantGoogleSearch); err != nil {
 		return nil, err
 	}
 	if controlErr := a.applyPartialControl(config, exec, providerSettings); controlErr != nil {
@@ -178,6 +186,9 @@ func (a *Adapter) Translate(exec *prompty.PromptExecution) (*Request, error) {
 		} else {
 			return nil, errors.New("prompty/adapter/gemini: empty contents and no system instructions")
 		}
+	}
+	if err := a.preserveSchemaNumbers(config); err != nil {
+		return nil, err
 	}
 	return &Request{Model: model, Contents: contents, Config: config}, nil
 }
@@ -545,12 +556,17 @@ func (a *Adapter) translateMessages(input []prompty.ChatMessage) ([]string, []*g
 	return systemParts, contents, nil
 }
 
-func applyToolsAndResponseFormat(
+func (a *Adapter) applyToolsAndResponseFormat(
 	config *genai.GenerateContentConfig,
 	exec *prompty.PromptExecution,
 	wantGoogleSearch bool,
 ) error {
 	// Request cache hints and caller-selected remote resources are distinct contracts.
+	if a.nativeJSONSchema {
+		if err := a.validateNativeExecution(exec); err != nil {
+			return err
+		}
+	}
 	if len(exec.Tools) > 0 {
 		config.Tools = []*genai.Tool{{
 			FunctionDeclarations: make([]*genai.FunctionDeclaration, 0, len(exec.Tools)),
@@ -583,6 +599,11 @@ func applyToolsAndResponseFormat(
 		schemaMap, err := prompty.SchemaMap(exec.ResponseFormat)
 		if err != nil {
 			return fmt.Errorf("response_format schema: %w", err)
+		}
+		if a.nativeJSONSchema {
+			config.ResponseJsonSchema = schemaMap
+			config.ResponseSchema = nil
+			return nil
 		}
 		schema, err := mapToGenaiSchema(schemaMap)
 		if err != nil {

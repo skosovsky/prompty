@@ -137,3 +137,50 @@ Required original-source capture needs a file-port accuracy declaration.
 `ExampleNewFileBatches` is a runnable local fixture, not live conformance.
 
 The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
+
+## Opt-in native JSON Schema
+
+`gemini.New(gemini.WithNativeJSONSchema(), gemini.WithClient(sdk),
+gemini.WithModel(model), gemini.WithProfiles(endpoint, profile))` selects native
+schema transport. The default remains the strict typed output schema mapper.
+Use checked `adapter.NewClient` to validate results against the **original** schema.
+Raw `Translate` enforces the same keyword admission, but does not validate responses.
+
+The contract is GenerateContent on the Gemini Developer API (`v1beta`), for
+models whose caller-owned endpoint/model profile explicitly supports structured
+output and/or function calling (for example Gemini 2.5 Flash/Pro). The option is
+not endpoint or model capability evidence. Bind the actual SDK endpoint with
+`WithProfiles`; capabilities and combination restrictions still use the existing
+preflight, including per-execution overrides. Vertex and OpenAI-compatible
+endpoints are not certified by these offline fixtures.
+
+Verified against `google.golang.org/genai v1.72.0`, its
+`GenerateContentConfig.ResponseJsonSchema` / `FunctionDeclaration.ParametersJsonSchema`
+contracts, and the official [GenerateContent API](https://ai.google.dev/api/generate-content)
+and [structured output guide](https://ai.google.dev/gemini-api/docs/structured-output)
+(2026-10-11). No live provider compatibility claim is made.
+
+The initial, deliberately narrow subset is schema objects containing `type`
+(single string: object, array, string, number, integer, boolean, null),
+`title`/`description` (strings), `properties` (schema objects), `required` (string
+array), `items` (schema object), `minimum`/`maximum` (JSON numbers),
+`additionalProperties` (boolean or schema object), and `enum` (nonempty array of
+strings/numbers). Tool roots must have `type: object`. All other keywords are
+rejected, including **all references** (local, missing, cyclic, external), `$defs`,
+resource identities, composition, format, ordering, and tuple keywords. This
+subset covers the Kosmify exact-constraint consumer fixture; it is not full JSON
+Schema support. `oneOf` is rejected because the provider interprets it as `anyOf`.
+Unknown semantics are never stripped or sent through typed fallback.
+
+Admission errors use `SchemaFidelityError` with sorted traversal and escaped JSON
+pointers; errors omit schema values. Checked core compiles the original schema
+first, so malformed source schemas and unresolved references can instead return
+its existing schema compilation error, still before I/O. Direct translation and
+`MapSchema` reject references with a fidelity error without resolving them.
+
+Output sends `application/json` and only `ResponseJsonSchema`; tools send only
+`ParametersJsonSchema`. Decimal and large integer lexemes survive SDK HTTP
+serialization: a request-local extras hook restores admitted schema-bearing fields
+after genai's float64 DTO conversion. Existing request options/extras are copied
+and composed; retry, budgets, telemetry, names, and tool choice are not configured
+by native mode. Response validation remains a checked-core responsibility.
