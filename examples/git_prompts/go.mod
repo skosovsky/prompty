@@ -3,9 +3,9 @@ module github.com/skosovsky/prompty/examples/git_prompts
 go 1.27.2
 
 require (
-	github.com/skosovsky/prompty v0.0.0
-	github.com/skosovsky/prompty/adapter/gemini v0.0.0
-	github.com/skosovsky/prompty/remoteregistry/git v0.0.0
+	github.com/skosovsky/prompty v0.17.0
+	github.com/skosovsky/prompty/adapter/gemini v0.17.0
+	github.com/skosovsky/prompty/remoteregistry/git v0.17.0
 	google.golang.org/genai v1.72.0
 )
 
@@ -64,9 +64,3 @@ require (
 
 // v0.16.1 regressed the published v0.16.0 API and omitted a module.
 retract v0.16.1
-
-replace github.com/skosovsky/prompty/adapter/gemini => ../../adapter/gemini
-
-replace github.com/skosovsky/prompty => ../..
-
-replace github.com/skosovsky/prompty/remoteregistry/git => ../../remoteregistry/git

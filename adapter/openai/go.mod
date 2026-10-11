@@ -4,7 +4,7 @@ go 1.27.2
 
 require (
 	github.com/openai/openai-go/v3 v3.73.0
-	github.com/skosovsky/prompty v0.0.0
+	github.com/skosovsky/prompty v0.17.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
@@ -28,8 +28,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/skosovsky/prompty => ../..
 
 // v0.16.1 regressed the published v0.16.0 API and omitted a module.
 retract v0.16.1
