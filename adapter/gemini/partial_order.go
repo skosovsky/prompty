@@ -156,7 +156,10 @@ func orderedPartialMessage(message prompty.ChatMessage) ([]*genai.Part, error) {
 			switch {
 			case state.Envelope.Codec == geminiPartialPartsCodec:
 				_, projection, complete, err := decodePartialState(state)
-				if err != nil || !complete || !reflect.DeepEqual(projection, canonical) {
+				if err != nil {
+					return nil, err
+				}
+				if !complete || !reflect.DeepEqual(projection, canonical) {
 					return nil, prompty.ErrProviderState
 				}
 				var sequence partialPartSequence
@@ -208,7 +211,10 @@ func orderedPartialMessage(message prompty.ChatMessage) ([]*genai.Part, error) {
 		}
 		if incremental {
 			_, projection, complete, err := projectPartialSequence(sources, false)
-			if err != nil || !complete || !reflect.DeepEqual(projection, canonical) {
+			if err != nil {
+				return nil, err
+			}
+			if !complete || !reflect.DeepEqual(projection, canonical) {
 				return nil, prompty.ErrProviderState
 			}
 		} else {

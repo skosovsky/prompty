@@ -10,7 +10,7 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-func TestMixedExactSourceBindingWithUnrelatedFloat(t *testing.T) {
+func TestCallerHTTPBodyCannotRestoreLostSDKPrecision(t *testing.T) {
 	for _, signed := range []bool{false, true} {
 		raw := &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{
@@ -43,7 +43,7 @@ func TestMixedExactSourceBindingWithUnrelatedFloat(t *testing.T) {
 			)
 		}
 		response, err := New().ParseResponse(raw)
-		require.ErrorIs(t, err, prompty.ErrProviderState)
-		require.Nil(t, response)
+		require.NoError(t, err)
+		require.Equal(t, `{"number":9007199254740992,"ordinary":1}`, response.Content[0].(prompty.ToolCallPart).Args)
 	}
 }

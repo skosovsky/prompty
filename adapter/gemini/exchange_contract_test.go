@@ -21,9 +21,9 @@ func TestDirectUnsignedNumericRepresentations(t *testing.T) {
 		{"integer", int64(9007199254740993), true},
 		{"unsigned integer", uint64(9007199254740993), true},
 		{"exact decimal", json.Number("0.10000000000000001"), true},
-		{"SDK float64", float64(1), false},
-		{"typed nested float", map[string][]float64{"values": {1}}, false},
-		{"nested SDK float", []any{map[string]any{"n": float64(2)}}, false},
+		{"SDK float64", float64(1), true},
+		{"typed nested float", map[string][]float64{"values": {1}}, true},
+		{"nested SDK float", []any{map[string]any{"n": float64(2)}}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

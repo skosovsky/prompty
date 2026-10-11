@@ -7,8 +7,8 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-// partialArgument retains original number lexemes and explicit value presence.
-// SDK PartialArg.NumberValue is float64 and cannot establish that fidelity.
+// partialArgument retains number lexemes from the supplied SDK representation
+// and explicit pointer-value presence, never original provider numeric fidelity.
 type partialArgument struct {
 	path      string
 	value     any

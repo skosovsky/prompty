@@ -16,33 +16,30 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func TestSDKIngressSignedNumbersRejectedBeforeContinuation(t *testing.T) {
+func TestSDKOrdinarySignedContinuationRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, args  string
-		canContinue bool
+		name, args string
 	}{
-		{"rounded integer", `{"big":9007199254740993}`, true},
-		{"rounded decimal", `{"decimal":0.10000000000000001}`, true},
-		{"exact integer", `{"big":9007199254740992}`, true},
-		{"empty args", `{}`, true},
-		{"nested caller data", `{"Name":"caller","nested":[{"decimal":0.1}]}`, true},
+		{"ordinary numbers and refs", `{"message_ref":1,"patient_ref":"P1","service_ref":"S1","appointment_ref":"A1","zero":0,"fraction":0.25,"nested":[{"n":2}]}`},
+		{"empty args", `{}`},
+		{"nested caller data", `{"Name":"caller","nested":[{"decimal":0.1}]}`},
 	} {
-		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered} {
+		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
 			t.Run(tc.name+"/"+string(mode), func(t *testing.T) {
 				t.Parallel()
-				checkActualSignedIngress(t, tc.args, tc.canContinue, mode)
+				checkActualSignedIngress(t, tc.args, mode)
 			})
 		}
 	}
 }
 
-func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode prompty.StreamMode) {
+func checkActualSignedIngress(t *testing.T, args string, mode prompty.StreamMode) {
 	t.Helper()
-	// Arrange: the actual SDK would round the first response before Part encoding.
+	// Arrange: genuine SDK response with ordinary values and a fixture signature.
 	var calls atomic.Int64
 	requests := make(chan []byte, 2)
-	signed := `{"functionCall":{"name":"lookup","args":` + args + `},"thoughtSignature":"c2lnbmF0dXJl"}`
+	signed := `{"functionCall":{"id":"call-a","name":"lookup","args":` + args + `},"thoughtSignature":"AAH/"}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -56,10 +53,11 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 		if count > 1 {
 			part = `{"text":"ok"}`
 		}
-		_, _ = io.WriteString(
-			w,
-			`{"candidates":[{"content":{"role":"model","parts":[`+part+`]},"finishReason":"STOP"}]}`,
-		)
+		reply := `{"candidates":[{"content":{"role":"model","parts":[` + part + `]},"finishReason":"STOP"}]}`
+		if mode == prompty.StreamNative {
+			reply = "data: " + reply + "\n\n"
+		}
+		_, _ = io.WriteString(w, reply)
 	}))
 	t.Cleanup(server.Close)
 	httpClient := server.Client()
@@ -75,24 +73,22 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 		Provenance: "local SDK ingress fixture, not live evidence",
 		Capabilities: map[string]prompty.CapabilitySupport{
 			prompty.CapabilityProviderState:       prompty.CapabilitySupported,
+			prompty.CapabilityNativeStream:        prompty.CapabilitySupported,
 			prompty.CapabilityToolNameCorrelation: prompty.CapabilitySupported,
 		},
 	}
 	client := adapter.NewClient(New(WithClient(sdk), WithModel("fixture"), WithProfiles(server.URL, profile)))
 	// Act: parse → both wires → checked continuation, not a constructed SDK DTO.
 	response, err := checkedIngressInvoke(context.Background(), client, prompty.SimplePrompt("fixture"), mode)
-	// SDK-GENAI-NUM: numeric SDK arguments cannot establish exact checked state.
-	if args != "{}" {
-		require.ErrorIs(t, err, prompty.ErrProviderState)
-		require.EqualValues(t, 1, calls.Load())
-		require.Same(t, originalTransport, httpClient.Transport)
-		return
-	}
 	require.NoError(t, err)
 	require.Equal(t, int64(1), calls.Load())
-	require.Equal(t, geminiJSONValue([]byte(signed)), geminiJSONValue(response.ProviderState[0].Envelope.Payload))
+	require.Equal(
+		t,
+		geminiJSONValue([]byte(sdkCanonicalArgs(signed))),
+		geminiJSONValue(response.ProviderState[0].Envelope.Payload),
+	)
 	part := response.Content[0].(prompty.ToolCallPart)
-	require.Equal(t, geminiJSONValue([]byte(args)), geminiJSONValue([]byte(part.Args)))
+	require.Equal(t, geminiJSONValue([]byte(sdkCanonicalArgs(args))), geminiJSONValue([]byte(part.Args)))
 	wire, err := prompty.MarshalResponse(response, prompty.WirePolicy{State: prompty.StatePreserve})
 	require.NoError(t, err)
 	restored, err := prompty.UnmarshalResponse(wire)
@@ -105,26 +101,22 @@ func checkActualSignedIngress(t *testing.T, args string, canContinue bool, mode 
 	rebound, err := prompty.UnmarshalExecution(executionWire)
 	require.NoError(t, err)
 	_, err = checkedIngressInvoke(context.Background(), client, rebound, mode)
-	// Assert: exact original state is persisted; no damaged signature is replayed.
-	if canContinue {
-		require.NoError(t, err)
-		require.Equal(t, int64(2), calls.Load())
-		<-requests // First request contains no signed continuation.
-		var request struct {
-			Contents []struct {
-				Parts []json.RawMessage `json:"parts"`
-			} `json:"contents"`
-		}
-		require.NoError(t, json.Unmarshal(<-requests, &request))
-		expectedState := signed
-		if args == "{}" {
-			expectedState = `{"functionCall":{"name":"lookup"},"thoughtSignature":"c2lnbmF0dXJl"}`
-		}
-		require.Equal(t, geminiJSONValue([]byte(expectedState)), geminiJSONValue(request.Contents[1].Parts[0]))
-	} else {
-		require.ErrorIs(t, err, prompty.ErrProviderState)
-		require.Equal(t, int64(1), calls.Load())
+	// Assert: SDK state, signature association, order and args survive persistence.
+	// This proves transfer only, not cryptographic verification or live acceptance.
+	require.NoError(t, err)
+	require.Equal(t, int64(2), calls.Load())
+	<-requests // First request contains no signed continuation.
+	var request struct {
+		Contents []struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"contents"`
 	}
+	require.NoError(t, json.Unmarshal(<-requests, &request))
+	expectedState := sdkCanonicalArgs(signed)
+	if args == "{}" {
+		expectedState = `{"functionCall":{"id":"call-a","name":"lookup"},"thoughtSignature":"AAH/"}`
+	}
+	require.Equal(t, geminiJSONValue([]byte(expectedState)), geminiJSONValue(request.Contents[1].Parts[0]))
 	require.Same(t, originalTransport, httpClient.Transport)
 	require.Same(t, httpClient, sdk.ClientConfig().HTTPClient)
 }
@@ -144,9 +136,9 @@ func checkedIngressInvoke(
 	return stream.Status().Result, stream.Status().Err
 }
 
-func TestRawSignedFloatDTOWithoutOriginalSourceFailsClosed(t *testing.T) {
+func TestRawSignedFiniteFloatDTOIsSDKRepresentation(t *testing.T) {
 	t.Parallel()
-	// Arrange: a float-normalized DTO is not proof of the provider's signed number.
+	// Arrange: finite SDK values are valid even without original wire evidence.
 	raw := &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{Content: &genai.Content{
 		Parts: []*genai.Part{
 			{FunctionCall: &genai.FunctionCall{Name: "lookup", Args: map[string]any{"big": float64(1)}},
@@ -155,7 +147,22 @@ func TestRawSignedFloatDTOWithoutOriginalSourceFailsClosed(t *testing.T) {
 	}, FinishReason: genai.FinishReasonStop}}}
 	// Act.
 	response, err := New().ParseResponse(raw)
-	// Assert: no falsely continuable original envelope escapes.
-	require.Nil(t, response)
-	require.ErrorIs(t, err, prompty.ErrProviderState)
+	// Assert: canonical state describes the SDK value.
+	require.NoError(t, err)
+	require.Len(t, response.ProviderState, 1)
+	require.Equal(t, `{"big":1}`, response.Content[0].(prompty.ToolCallPart).Args)
+}
+
+func TestSDKSignedNumericLimitationsCharacterization(t *testing.T) {
+	t.Parallel()
+	for _, args := range []string{`{"big":9007199254740993}`, `{"decimal":1.234567890123456789}`, `{"nested":[{"negative":-9007199254740993,"fraction":0.10000000000000001,"exponent":1.234567890123456789e2}]}`} {
+		for _, mode := range []prompty.StreamMode{"", prompty.StreamNative} {
+			t.Run(args+string(mode), func(t *testing.T) {
+				t.Parallel()
+				// Arrange/Act/Assert: SDK-limited signed representation persists and replays;
+				// this differs from incompatible caller/legacy exact state tested separately.
+				checkActualSignedIngress(t, args, mode)
+			})
+		}
+	}
 }

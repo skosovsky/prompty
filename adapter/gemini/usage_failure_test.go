@@ -14,13 +14,13 @@ import (
 )
 
 //nolint:gocognit // Compare sync/native retained usage through actual SDK acquisition in one fixture.
-func TestSDKNumericFailureRetainsKnownUsageWithoutContent(t *testing.T) {
+func TestSDKInvalidCallRetainsKnownUsageWithoutContent(t *testing.T) {
 	t.Parallel()
 	for _, native := range []bool{false, true} {
 		t.Run(map[bool]string{false: "sync", true: "native"}[native], func(t *testing.T) {
 			t.Parallel()
-			// Arrange: actual SDK receives a numeric call and nonzero usage.
-			payload := `{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"id":9007199254740993}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7}}`
+			// Arrange: actual SDK receives an invalid mixed call and nonzero usage.
+			payload := `{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"id":1},"partialArgs":[{"jsonPath":"$.id","numberValue":1}]}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7}}`
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				body := payload
 				if native {
@@ -59,12 +59,12 @@ func TestSDKNumericFailureRetainsKnownUsageWithoutContent(t *testing.T) {
 						finalErr = streamErr
 					}
 				}
-				require.ErrorIs(t, finalErr, adapter.ErrMalformedArgs)
+				require.ErrorIs(t, finalErr, prompty.ErrStreamProtocol)
 			} else {
 				raw, callErr := a.Execute(t.Context(), request)
 				require.NoError(t, callErr)
 				response, parseErr := a.ParseResponse(raw)
-				require.ErrorIs(t, parseErr, adapter.ErrMalformedArgs)
+				require.ErrorIs(t, parseErr, adapter.ErrUnsupportedContentType)
 				require.NotNil(t, response)
 				require.Empty(t, response.Content)
 				require.Empty(t, response.Outcome)
@@ -77,9 +77,9 @@ func TestSDKNumericFailureRetainsKnownUsageWithoutContent(t *testing.T) {
 	}
 }
 
-func TestSDKPartialNumericFailureRetainsUsage(t *testing.T) {
+func TestSDKInvalidPartialCallRetainsUsage(t *testing.T) {
 	t.Parallel()
-	// Arrange: partial numeric fields arrive already rounded in the SDK DTO.
+	// Arrange: invalid mutually exclusive partial value fields in the SDK DTO.
 	raw := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{
 			{
@@ -87,7 +87,9 @@ func TestSDKPartialNumericFailureRetainsUsage(t *testing.T) {
 					Parts: []*genai.Part{
 						{
 							FunctionCall: &genai.FunctionCall{
-								PartialArgs: []*genai.PartialArg{{NumberValue: new(float64(1))}},
+								PartialArgs: []*genai.PartialArg{
+									{JsonPath: "$.id", NumberValue: new(float64(1)), StringValue: "invalid"},
+								},
 							},
 						},
 					},
@@ -101,7 +103,7 @@ func TestSDKPartialNumericFailureRetainsUsage(t *testing.T) {
 	// Act.
 	frame, err := (&generateStreamState{}).frameSDK(raw, payload)
 	// Assert.
-	require.ErrorIs(t, err, adapter.ErrMalformedArgs)
+	require.Error(t, err)
 	require.NotNil(t, frame)
 	require.Empty(t, frame.Content)
 	require.Empty(t, frame.Outcome)

@@ -104,9 +104,8 @@ func parseGeminiResponse(
 		Usage:        geminiUsage(raw),
 	}
 	if candidate.Content != nil {
-		for sourceIndex, sdkPart := range candidate.Content.Parts {
-			part, sourceErr := originalGeminiPart(raw, sourceIndex, sdkPart)
-			if sourceErr != nil {
+		for _, part := range candidate.Content.Parts {
+			if sourceErr := validateGeminiSDKPartArguments(part); sourceErr != nil {
 				return partialGeminiFailure(response, sourceErr)
 			}
 			canonical, err := canonicalGeminiPart(part)
@@ -309,13 +308,16 @@ func validateGeminiPayloads(messages []prompty.ChatMessage) error {
 		for _, state := range message.ProviderState {
 			if state.Envelope.Codec == geminiPartialPartsCodec {
 				parts, canonical, complete, err := decodePartialState(state)
-				if err != nil || !complete || message.Role != prompty.RoleAssistant || !state.Envelope.Required ||
+				if err != nil {
+					return err
+				}
+				if !complete || message.Role != prompty.RoleAssistant || !state.Envelope.Required ||
 					!reflect.DeepEqual(canonical, message.Content[state.PartIndex]) {
 					return prompty.ErrProviderState
 				}
 				for _, part := range parts {
-					if validateGeminiSDKStateEncoding(part) != nil {
-						return prompty.ErrProviderState
+					if encodingErr := validateGeminiSDKStateEncoding(part); encodingErr != nil {
+						return encodingErr
 					}
 				}
 				continue
@@ -492,7 +494,7 @@ func (a *Adapter) assistantMessageContent(message prompty.ChatMessage) (*genai.C
 }
 
 // SDK scalar fields lack presence; nonzero values are known, zero values remain
-// unknown unless a valid retained HTTP body reports the matching numeric value.
+// unknown: this SDK DTO exposes no field-presence evidence for scalar counters.
 // SDK-GENAI-SOURCE in docs/official-sdk-migration.md: scalar zero has no
 // SDK presence evidence; caller Body cannot restore original-provider fidelity.
 func geminiUsage(raw *genai.GenerateContentResponse) prompty.Usage {

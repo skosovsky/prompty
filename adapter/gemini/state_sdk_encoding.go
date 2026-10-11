@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"reflect"
 
@@ -15,15 +16,15 @@ import (
 func validateGeminiSDKStateEncoding(part *genai.Part) error {
 	original, err := json.Marshal(part)
 	if err != nil {
-		return prompty.ErrProviderState
+		return incompatibleGeminiSDKState()
 	}
 	var normalized map[string]any
 	if decodeErr := json.Unmarshal(original, &normalized); decodeErr != nil {
-		return prompty.ErrProviderState
+		return incompatibleGeminiSDKState()
 	}
 	encoded, err := json.Marshal(normalized)
 	if err != nil || !json.Valid(encoded) || !exactGeminiSDKJSONEqual(original, encoded) {
-		return prompty.ErrProviderState
+		return incompatibleGeminiSDKState()
 	}
 	return nil
 }
@@ -56,4 +57,11 @@ func geminiExactJSONNumbers(value any) any {
 		}
 	}
 	return value
+}
+
+func incompatibleGeminiSDKState() error {
+	return fmt.Errorf(
+		"%w: saved representation is incompatible with SDK encoding; obtain fresh provider state using SDK-representable domain values",
+		prompty.ErrProviderState,
+	)
 }

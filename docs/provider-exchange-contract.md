@@ -129,3 +129,14 @@ because this mapping has no faithful native error-result representation.
 Provider response acquisition belongs to official SDKs. Public RawJSON/event metadata may drive canonical validation; no independent body parser or request rewrite restores lost SDK data. Gemini signed parts are SDK representations, with limits in [the migration register](official-sdk-migration.md). Known nonzero usage survives downstream mapping failure even when no content is publishable. SDK-origin errors are sanitized without blanket panic recovery; the genai process logger limitation is explicitly accepted.
 
 An unknown cache handle may retain a valid SDK resource ID with unknown expiration for persistence and explicit Get/Delete reconciliation. Active/expired/deleted handles require expiration evidence; generation reuse always rejects unknown state. Genai successful HTTP status is unknown in DTO-only resource capture; public APIError.Code retains known rejection evidence. Positive DTO-limit failure keeps usage-only failed results rather than discarding counters.
+
+
+Ordinary Gemini/Ollama tool args serialize finite SDK values, not original wire
+numeric spelling or arbitrary precision. Float64 alone is not malformed; invalid
+JSON, nonfinite/unsupported values and original-schema mismatch still reject.
+OpenAI/Anthropic raw argument JSON stays on the public raw/string path. Signed
+Gemini envelopes retain SDK representation, signature association and order through
+persistence. Scope/destination/model, expiry and required-state gates remain.
+Legacy exact signed state that SDK encoding would change fails ErrProviderState;
+obtain fresh provider state with representable domain inputs, without altering
+protected state. See [SDK capability contract](sdk-capability-contract.md).

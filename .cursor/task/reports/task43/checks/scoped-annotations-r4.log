@@ -1,5 +1,0 @@
-ok      github.com/skosovsky/prompty    1.778s
-ok      github.com/skosovsky/prompty/adapter    1.789s
-ok      github.com/skosovsky/prompty/adapter/openai 1.694s
-ok      github.com/skosovsky/prompty/adapter/anthropic  1.884s
-ok      github.com/skosovsky/prompty/ext/truncate   1.495s

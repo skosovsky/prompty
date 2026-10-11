@@ -16,13 +16,13 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func TestHTTPArgumentFailureRetainsKnownPrefix(t *testing.T) {
+func TestSDKDuplicateKeysCharacterization(t *testing.T) {
 	t.Parallel()
 	for _, args := range []string{`{"n":9007199254740993,"n":2}`, `{"nested":{"n":1,"\u006e":2}}`} {
 		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
 			t.Run(args+string(mode), func(t *testing.T) {
 				t.Parallel()
-				// Arrange: ordinary parts precede a rejected native call in the same HTTP frame.
+				// Arrange: SDK normalizes duplicate keys before adapter mapping.
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					_, _ = io.WriteString(
 						w,
@@ -53,14 +53,18 @@ func TestHTTPArgumentFailureRetainsKnownPrefix(t *testing.T) {
 					}
 					response, err = stream.Status().Result, stream.Status().Err
 				}
-				// Assert: no valid tool call or successful finish is invented.
-				require.ErrorIs(t, err, adapter.ErrMalformedArgs)
+				// Assert: available values survive; original duplicates are irrecoverable.
+				require.NoError(t, err)
 				require.NotNil(t, response)
-				require.Len(t, response.Content, 2)
+				require.Len(t, response.Content, 3)
 				require.Equal(t, "known reasoning", response.Content[0].(prompty.ReasoningPart).Text)
 				require.Equal(t, "known text", response.Content[1].(prompty.TextPart).Text)
-				require.Empty(t, response.Outcome)
-				require.True(t, response.ContinuationUnavailable)
+				expected := `{"n":2}`
+				if args == `{"nested":{"n":1,"\u006e":2}}` {
+					expected = `{"nested":{"n":2}}`
+				}
+				require.Equal(t, expected, response.Content[2].(prompty.ToolCallPart).Args)
+				require.Equal(t, prompty.OutcomeToolCalls, response.Outcome)
 			})
 		}
 	}

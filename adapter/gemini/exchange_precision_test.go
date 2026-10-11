@@ -18,10 +18,10 @@ import (
 )
 
 //nolint:gocognit // Keep the complete ordered provider fixture and its assertions in one scenario.
-func TestSDKUnsignedArgumentsPrecisionAdmissionAndIDs(t *testing.T) {
+func TestSDKOrdinaryUnsignedArgumentsAndIDs(t *testing.T) {
 	t.Parallel()
 	for _, args := range []string{
-		`{"integer":9007199254740993}`, `{"nested":[{"negative":-9007199254740993,"fraction":0.10000000000000001,"exponent":1.234567890123456789e2}]}`, `{}`,
+		`{"integer":1}`, `{"nested":[{"negative":-1,"fraction":0.25,"exponent":1e2}]}`, `{}`,
 	} {
 		for _, mode := range []prompty.StreamMode{"", prompty.StreamBuffered, prompty.StreamNative} {
 			t.Run(args+string(mode), func(t *testing.T) {
@@ -77,12 +77,6 @@ func TestSDKUnsignedArgumentsPrecisionAdmissionAndIDs(t *testing.T) {
 					prompty.SimplePrompt("fixture"),
 					mode,
 				)
-				if args != "{}" {
-					// SDK-GENAI-NUM: no checked original-number evidence survives SDK decoding.
-					require.Error(t, err)
-					require.EqualValues(t, 1, count.Load())
-					return
-				}
 				require.NoError(t, err)
 				wire, err := prompty.MarshalResponse(response, prompty.WirePolicy{State: prompty.StatePreserve})
 				require.NoError(t, err)
@@ -106,25 +100,16 @@ func TestSDKUnsignedArgumentsPrecisionAdmissionAndIDs(t *testing.T) {
 						},
 					}})
 				_, err = checkedIngressInvoke(t.Context(), client, execution, mode)
-				// Assert: repeated names retain their IDs and exact args through both exchanges.
+				// Assert: repeated names retain their IDs and ordinary SDK args through both exchanges.
 				require.NoError(t, err)
 				require.Equal(t, int64(2), count.Load())
 				for _, part := range restored.Content {
 					call := part.(prompty.ToolCallPart)
-					require.Equal(t, geminiJSONValue([]byte(args)), geminiJSONValue([]byte(call.Args)))
-				}
-				if args == `{"integer":9007199254740993}` {
-					tool, bindErr := prompty.NewTypedTool("lookup", func(_ context.Context, value struct {
-						Integer int64 `json:"integer"`
-					}) (int64, error) {
-						return value.Integer, nil
-					})
-					require.NoError(t, bindErr)
-					for _, part := range restored.Content {
-						value, invokeErr := tool.Invoke(t.Context(), part.(prompty.ToolCallPart).Args)
-						require.NoError(t, invokeErr)
-						require.Equal(t, int64(9007199254740993), value)
-					}
+					require.Equal(
+						t,
+						geminiJSONValue([]byte(sdkCanonicalArgs(args))),
+						geminiJSONValue([]byte(call.Args)),
+					)
 				}
 				<-requests
 				var request struct {
@@ -141,7 +126,7 @@ func TestSDKUnsignedArgumentsPrecisionAdmissionAndIDs(t *testing.T) {
 					if !ok {
 						actual = map[string]any{}
 					}
-					require.Equal(t, geminiJSONValue([]byte(args)), actual)
+					require.Equal(t, geminiJSONValue([]byte(sdkCanonicalArgs(args))), actual)
 				}
 				for index, id := range []string{"second", "first"} {
 					native := geminiJSONValue(request.Contents[2].Parts[index]).(map[string]any)["functionResponse"].(map[string]any)

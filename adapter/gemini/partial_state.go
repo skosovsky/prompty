@@ -77,7 +77,7 @@ func projectPartialSequence(
 		}
 		encoded, err := json.Marshal(&part)
 		if err != nil || !reflect.DeepEqual(geminiJSONValue(source), geminiJSONValue(encoded)) {
-			return nil, canonical, false, prompty.ErrProviderState
+			return nil, canonical, false, incompatibleGeminiSDKState()
 		}
 		var fields struct {
 			Call json.RawMessage `json:"functionCall"`

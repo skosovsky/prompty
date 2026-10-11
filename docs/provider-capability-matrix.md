@@ -96,7 +96,7 @@ are not added twice to total. Tool helpers admit the whole scoped batch before
 handlers and propagate the invocation context. See [schema contract](schema-data-contract.md),
 [exchange contract](provider-exchange-contract.md) and [migration](migration.md).
 
-SDK acquisition and decoding determine available response evidence. Direct SDK float DTOs cannot establish original numeric precision; exact caller JSON numbers or Go integers are accepted where documented. Gemini limits apply to serialized DTO projections after SDK allocation, and state captures SDK representations.
+SDK acquisition and decoding determine available response evidence. Finite SDK numeric DTO values are accepted as their available representation; they cannot establish original lexical or arbitrary numeric precision. OpenAI/Anthropic raw arguments remain exact where publicly available. Caller JSON numbers/Go integers remain separately accepted where documented, subject to protected-state SDK encoding checks. Gemini limits apply to serialized DTO projections after SDK allocation, and state captures SDK representations.
 This does not make semantic capture HTTP-byte evidence or a count of physical
 attempts. Capture defaults to host-projected metadata and does not imply telemetry
 of prompt/tool/reasoning/opaque content. Separate remote/batch/cache operations do

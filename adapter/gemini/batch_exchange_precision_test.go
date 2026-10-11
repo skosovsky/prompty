@@ -12,7 +12,7 @@ import (
 	"github.com/skosovsky/prompty"
 )
 
-func TestBatchInlineAndJSONLUnsignedArgumentsAreExact(t *testing.T) {
+func TestBatchSDKRepresentationCharacterization(t *testing.T) {
 	t.Parallel()
 	for _, fileMode := range []bool{false, true} {
 		t.Run(map[bool]string{false: "inline", true: "JSONL"}[fileMode], func(t *testing.T) {
@@ -90,12 +90,14 @@ func TestBatchInlineAndJSONLUnsignedArgumentsAreExact(t *testing.T) {
 			require.True(t, result.Completeness.DownloadComplete)
 			require.Len(t, result.Items, 3)
 			for index, item := range result.Items {
-				// SDK-GENAI-NUM: numeric tool arguments are SDK-limited in both result paths.
-				if arguments[index] == "{}" {
-					require.Equal(t, prompty.BatchItemSuccess, item.Outcome)
-				} else {
-					require.Equal(t, prompty.BatchItemIncomplete, item.Outcome)
-				}
+				// Both result paths project official SDK DTO numeric values.
+				require.Equal(t, prompty.BatchItemSuccess, item.Outcome)
+				expected := sdkCanonicalArgs(arguments[index])
+				require.Equal(
+					t,
+					geminiJSONValue([]byte(expected)),
+					geminiJSONValue([]byte(item.Response.Content[0].(prompty.ToolCallPart).Args)),
+				)
 			}
 		})
 	}

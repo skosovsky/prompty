@@ -27,8 +27,6 @@ func decodeExactToolArguments(data []byte) (api.ToolCallFunctionArguments, error
 	return args, nil
 }
 
-func unverifiedToolNumbers(value any) bool { return adapter.HasUnverifiedJSONNumbers(value) }
-
 func uniqueArgumentValue(decoder *json.Decoder) error {
 	decoder.UseNumber()
 	token, tokenErr := decoder.Token()

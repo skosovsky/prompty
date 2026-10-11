@@ -15,7 +15,7 @@ go get github.com/skosovsky/prompty/adapter/ollama
 
 ## Implemented mappings
 
-Chat uses the official `api.Client.Chat` for synchronous and native callback execution. `ChatClient` is an optional provider boundary for injection, not a core dependency. Inbound SDK float arguments fail with ErrMalformedArgs because their original numeric value cannot be attested. Caller-constructed exact arguments can use json.Number. There is no replacement NDJSON parser or frame-limit constructor. SDK frame/decode behavior and numeric limitations are recorded in the [migration contract](../../docs/official-sdk-migration.md).
+Chat uses the official `api.Client.Chat` for synchronous and native callback execution. `ChatClient` is an optional provider boundary for injection, not a core dependency. Finite inbound SDK numeric arguments are accepted and canonicalized from the available SDK value, including nested values, zero and fractions. Original spelling and precision lost during decoding cannot be recovered; checked schema validation applies to that value. Use string domain schemas for exact identifiers/decimals. Caller-constructed exact arguments can use json.Number. There is no replacement NDJSON parser or frame-limit constructor. SDK frame/decode behavior and numeric limitations are recorded in the [migration contract](../../docs/official-sdk-migration.md).
 
 Ordinary tools are mapped, but native named-tool selection is not implemented. ForcedTool now fails with `adapter.ErrUnsupportedCapability`, including raw Translate, instead of adding a system instruction. A profile override cannot create that mapping; use ordinary tools without the forced guarantee or a supported adapter.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -116,14 +117,14 @@ func (s invalidArgumentSDKSource) Chat(
 ) error {
 	return callback(s.response)
 }
-func TestUnknownPrecisionPreservesKnownPartsWithoutStreamFinish(t *testing.T) {
+func TestInvalidValuesPreserveKnownPartsWithoutStreamFinish(t *testing.T) {
 	t.Parallel()
 	for _, cyclic := range []bool{false, true} {
-		t.Run(map[bool]string{false: "typed float", true: "cycle"}[cyclic], func(t *testing.T) {
+		t.Run(map[bool]string{false: "nonfinite float", true: "cycle"}[cyclic], func(t *testing.T) {
 			t.Parallel()
 			// Arrange: a host-supplied SDK client/DTO has no original JSON source.
 			arguments := api.NewToolCallFunctionArguments()
-			value := map[string]any{"nested": map[string][]float64{"values": {9007199254740993}}}
+			value := map[string]any{"nested": map[string][]float64{"values": {math.Inf(1)}}}
 			if cyclic {
 				value = map[string]any{}
 				value["cycle"] = value

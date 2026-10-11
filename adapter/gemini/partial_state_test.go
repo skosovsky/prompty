@@ -17,6 +17,16 @@ import (
 
 func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	t.Parallel()
+	for _, numeric := range []bool{false, true} {
+		t.Run(map[bool]string{false: "string", true: "ordinary numeric"}[numeric], func(t *testing.T) {
+			t.Parallel()
+			checkSignedPartialVertexSDKWireContinuation(t, numeric)
+		})
+	}
+}
+
+func checkSignedPartialVertexSDKWireContinuation(t *testing.T, numeric bool) {
+	t.Helper()
 	// Arrange: unsigned start, signed progress and unsigned completion stay distinct.
 	parts := []string{
 		`{"functionCall":{"id":"a","name":"lookup","willContinue":true}}`,
@@ -24,6 +34,11 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 		`{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.n","stringValue":"one"}],"willContinue":true},"thoughtSignature":"c2ln"}`,
 		`{"functionCall":{"id":"b","partialArgs":[{"jsonPath":"$.n","stringValue":"two"}]}}`,
 		`{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.s","stringValue":"ok"}]}}`,
+	}
+	expectedArgs := `{"n":"one","s":"ok"}`
+	if numeric {
+		parts[2] = `{"functionCall":{"id":"a","partialArgs":[{"jsonPath":"$.n","stringValue":"one"},{"jsonPath":"$.zero","numberValue":0},{"jsonPath":"$.fraction","numberValue":0.25}],"willContinue":true},"thoughtSignature":"AAH/"}`
+		expectedArgs = `{"n":"one","s":"ok","zero":0,"fraction":0.25}`
 	}
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,38 +90,47 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	require.Equal(t, 2, updates)
 	require.Len(t, status.Result.ProviderState, 1)
 	require.Equal(t, 7, status.Result.Usage.TotalTokens)
-	require.JSONEq(t, `{"n":"one","s":"ok"}`, status.Result.Content[0].(prompty.ToolCallPart).Args)
+	require.JSONEq(t, expectedArgs, status.Result.Content[0].(prompty.ToolCallPart).Args)
 	wire, err := prompty.MarshalResponse(status.Result, prompty.WirePolicy{State: prompty.StatePreserve})
 	require.NoError(t, err)
 	restored, err := prompty.UnmarshalResponse(wire)
 	require.NoError(t, err)
 	exec := prompty.SimplePrompt("continue").AddMessage(prompty.ChatMessage{Role: prompty.RoleAssistant,
 		Content: restored.Content, ProviderState: restored.ProviderState, Annotations: restored.Annotations})
+	executionWire, err := prompty.MarshalExecution(exec, prompty.WirePolicy{State: prompty.StatePreserve})
+	require.NoError(t, err)
+	exec, err = prompty.UnmarshalExecution(executionWire)
+	require.NoError(t, err)
 	response, err := client.Execute(t.Context(), exec)
-	// Assert: the actual SDK request replays three original parts, not merged args.
+	// Assert: the actual SDK request replays all five source parts in order.
 	require.NoError(t, err)
 	require.Equal(t, "done", response.Content[0].(prompty.TextPart).Text)
 	<-requests
-	var request struct {
-		Contents []struct {
-			Role  string            `json:"role"`
-			Parts []json.RawMessage `json:"parts"`
-		} `json:"contents"`
-	}
-	require.NoError(t, json.Unmarshal(<-requests, &request))
-	var actual []json.RawMessage
-	for _, content := range request.Contents {
-		if content.Role == "model" {
-			actual = content.Parts
-		}
-	}
-	require.Len(t, actual, 5)
-	for index := range parts {
-		require.Equal(t, geminiJSONValue([]byte(parts[index])), geminiJSONValue(actual[index]))
-	}
+	assertVertexSDKSourceParts(t, <-requests, parts)
 	for _, annotation := range restored.Annotations {
 		if annotation.Kind == geminiSourcePartAnnotation {
 			require.NotContains(t, string(annotation.Value), "thoughtSignature")
+		}
+	}
+	// Incompatible caller/legacy exact state must not be rounded to bypass admission.
+	if numeric {
+		for _, exact := range []string{"9007199254740993", "0.10000000000000001"} {
+			legacy := exec.Clone()
+			message := &legacy.Messages[len(legacy.Messages)-1]
+			message.ProviderState[0].Envelope.Payload = []byte(
+				strings.ReplaceAll(string(message.ProviderState[0].Envelope.Payload), "0.25", exact),
+			)
+			call := message.Content[0].(prompty.ToolCallPart)
+			call.Args = strings.ReplaceAll(call.Args, "0.25", exact)
+			message.Content[0] = call
+			// Act/Assert: classified migration guidance without payload leakage, before SDK IO.
+			_, stateErr := client.Execute(t.Context(), legacy)
+			require.ErrorIs(t, stateErr, prompty.ErrProviderState)
+			require.ErrorContains(t, stateErr, "saved representation is incompatible with SDK encoding")
+			require.ErrorContains(t, stateErr, "obtain fresh provider state")
+			require.NotContains(t, stateErr.Error(), exact)
+			require.NotContains(t, stateErr.Error(), "AAH/")
+			require.Empty(t, requests)
 		}
 	}
 	// Missing or duplicated source provenance cannot be repaired by canonical order.
@@ -131,6 +155,27 @@ func TestSignedPartialActualVertexSDKWireContinuation(t *testing.T) {
 	_, err = client.Execute(t.Context(), exec)
 	require.ErrorIs(t, err, prompty.ErrProviderState)
 	require.Empty(t, requests)
+}
+
+func assertVertexSDKSourceParts(t *testing.T, body []byte, expected []string) {
+	t.Helper()
+	var request struct {
+		Contents []struct {
+			Role  string            `json:"role"`
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"contents"`
+	}
+	require.NoError(t, json.Unmarshal(body, &request))
+	var actual []json.RawMessage
+	for _, content := range request.Contents {
+		if content.Role == "model" {
+			actual = content.Parts
+		}
+	}
+	require.Len(t, actual, 5)
+	for index := range expected {
+		require.Equal(t, geminiJSONValue([]byte(expected[index])), geminiJSONValue(actual[index]))
+	}
 }
 
 func TestSignedPartialCancelRetainsLatestBoundSequence(t *testing.T) {

@@ -147,3 +147,36 @@ func TestNativePartialEOFRetainsIdentityAndOriginalFragment(t *testing.T) {
 	require.Empty(t, status.Result.Content[0].(prompty.ToolCallPart).Args)
 	require.Equal(t, call, string(status.Result.Annotations[0].Value))
 }
+
+func TestNativePartialOrdinaryNumbersStayProvisionalUntilComplete(t *testing.T) {
+	t.Parallel()
+	// Arrange: pointer-valued SDK numeric fragments; no original-wire precision promise.
+	client, _ := geminiNativeFixture(
+		t,
+		functionEvent(`{"id":"a","name":"lookup","willContinue":true}`),
+		functionEvent(
+			`{"id":"a","partialArgs":[{"jsonPath":"$.zero","numberValue":0},{"jsonPath":"$.one","numberValue":1},{"jsonPath":"$.fraction","numberValue":0.25}],"willContinue":true}`,
+		),
+		functionEvent(`{"id":"a"}`),
+		`{"candidates":[{"finishReason":"STOP"}]}`,
+	)
+	// Act.
+	stream := client.ExecuteStream(t.Context(), prompty.SimplePrompt("fixture"), prompty.StreamNative)
+	provisional := 0
+	for frame, err := range stream.Events() {
+		require.NoError(t, err)
+		for _, part := range frame.Content {
+			if call, ok := part.(prompty.ToolCallPart); ok && call.Args == "" {
+				provisional++
+			}
+		}
+	}
+	// Assert: numeric progress alone cannot dispatch a completed call.
+	require.Positive(t, provisional)
+	require.Equal(t, prompty.StreamCompleted, stream.Status().State)
+	require.Equal(
+		t,
+		`{"fraction":0.25,"one":1,"zero":0}`,
+		stream.Status().Result.Content[0].(prompty.ToolCallPart).Args,
+	)
+}

@@ -35,3 +35,10 @@ or richer outcomes uses the full Response and a host dispatcher. `AdmitToolCalls
 provides the same whole-batch original-schema/scope/correlation checks without
 invoking any provider or handler. See [Host tool dispatch](host-tool-dispatch.md)
 for inputs, errors, mapping, migration and the executable optional recipe.
+
+
+Provider numeric admission follows [SDK capability semantics](sdk-capability-contract.md).
+Gemini/Ollama schema validation applies to finite SDK-decoded values; it cannot
+prove that a provider number was not rounded before admission. Host dispatch
+remains separate from adapter parsing. Exact identifiers/decimal values should use
+string domain schemas when SDK precision would otherwise be insufficient.

@@ -1,6 +1,0 @@
-level=warning msg="The linter 'exhaustruct' is deprecated (since v2.13.0) due to: new major version. Replaced by exhaustruct_v5."
-stream.go:440:78: unnecessary leading newline (whitespace)
-func updateObservedResponseMetadata(result *Response, chunk *ResponseChunk) {
-                                                                             ^
-1 issues:
-* whitespace: 1

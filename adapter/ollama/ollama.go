@@ -359,7 +359,7 @@ func (a *Adapter) ParseResponse(resp *api.ChatResponse) (*prompty.Response, erro
 	}
 	for _, tc := range msg.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
-		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
+		if argsMap == nil || tc.Function.Name == "" {
 			return partialOllamaFailure(resp, out, adapter.ErrMalformedArgs)
 		}
 		b, err := json.Marshal(argsMap)
@@ -432,7 +432,7 @@ func (a *Adapter) ParseStreamChunk(rawChunk any) ([]prompty.ContentPart, error) 
 	}
 	for _, tc := range chunk.Message.ToolCalls {
 		argsMap := tc.Function.Arguments.ToMap()
-		if argsMap == nil || tc.Function.Name == "" || unverifiedToolNumbers(argsMap) {
+		if argsMap == nil || tc.Function.Name == "" {
 			return out, adapter.ErrMalformedArgs
 		}
 		b, err := json.Marshal(argsMap)

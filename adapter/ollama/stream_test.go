@@ -226,7 +226,7 @@ func TestCompleteSnapshotAndNameResultMapping(t *testing.T) {
 	require.Empty(t, request.Messages[0].ToolCallID)
 }
 
-func TestNativeSDKUnverifiedPrecisionRejected(t *testing.T) {
+func TestNativeSDKLargeIntegerCharacterization(t *testing.T) {
 	t.Parallel()
 	// Arrange: actual SDK HTTP decoding precedes the adapter callback.
 	client, _ := nativeFixture(t, []string{
@@ -237,7 +237,8 @@ func TestNativeSDKUnverifiedPrecisionRejected(t *testing.T) {
 	stream := client.ExecuteStream(context.Background(), prompty.SimplePrompt("fixture"), prompty.StreamNative)
 	for range stream.Events() {
 	}
-	// Assert: SDK-OLLAMA-NUM cannot certify the rounded numeric call.
-	require.Equal(t, prompty.StreamFailed, stream.Status().State)
-	require.ErrorIs(t, stream.Status().Err, adapter.ErrMalformedArgs)
+	// Assert: SDK-OLLAMA-NUM accepts the available rounded value, not exact wire.
+	require.Equal(t, prompty.StreamCompleted, stream.Status().State)
+	require.NoError(t, stream.Status().Err)
+	require.Equal(t, `{"id":9007199254740992}`, stream.Status().Result.Content[0].(prompty.ToolCallPart).Args)
 }

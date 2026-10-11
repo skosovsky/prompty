@@ -164,7 +164,7 @@ func TestNativeTextAndInterleavedTools(t *testing.T) {
 		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"a","name":"lookup","input":{}}}`,
 		`{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"b","name":"lookup","input":{}}}`,
 		`{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"x\":2}"}}`,
-		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\":1}"}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\":9007199254740993,\"decimal\":1.234567890123456789}"}}`,
 		`{"type":"content_block_stop","index":2}`,
 		`{"type":"content_block_stop","index":1}`,
 		`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}`,
@@ -189,7 +189,11 @@ func TestNativeTextAndInterleavedTools(t *testing.T) {
 	require.Len(t, status.Result.Content, 3)
 	require.Equal(t, "early", status.Result.Content[0].(prompty.TextPart).Text)
 	require.Equal(t, "a", status.Result.Content[1].(prompty.ToolCallPart).ID)
-	require.JSONEq(t, `{"x":1}`, status.Result.Content[1].(prompty.ToolCallPart).Args)
+	require.Equal(
+		t,
+		`{"x":9007199254740993,"decimal":1.234567890123456789}`,
+		status.Result.Content[1].(prompty.ToolCallPart).Args,
+	)
 	require.Equal(t, "b", status.Result.Content[2].(prompty.ToolCallPart).ID)
 	require.JSONEq(t, `{"x":2}`, status.Result.Content[2].(prompty.ToolCallPart).Args)
 }

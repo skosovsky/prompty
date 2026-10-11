@@ -2,9 +2,7 @@ package ollama
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,40 +16,15 @@ import (
 	"github.com/skosovsky/prompty/adapter"
 )
 
-func TestSDKUnverifiedFloatsFailClosed(t *testing.T) {
+func TestSDKSchemaFailurePreventsToolHandler(t *testing.T) {
 	t.Parallel()
-	// Arrange: genuine SDK response loses precision before the adapter receives it.
-	var raw api.ChatResponse
-	require.NoError(
-		t,
-		json.Unmarshal(
-			[]byte(
-				`{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"id":9007199254740993}}}]},"done":true,"done_reason":"stop"}`,
-			),
-			&raw,
-		),
-	)
-	value, exists := raw.Message.ToolCalls[0].Function.Arguments.Get("id")
-	require.True(t, exists)
-	numeric, valid := value.(float64)
-	require.True(t, valid)
-	require.Equal(t, math.Float64bits(float64(9007199254740992)), math.Float64bits(numeric))
-	// Act/Assert: neither sync nor chunk parsing advertises rounded args as exact.
-	_, err := New().ParseResponse(&raw)
-	require.ErrorIs(t, err, adapter.ErrMalformedArgs)
-	_, err = New().ParseStreamChunk(&raw)
-	require.ErrorIs(t, err, adapter.ErrMalformedArgs)
-}
-
-func TestSDKPrecisionFailurePreventsToolHandler(t *testing.T) {
-	t.Parallel()
-	// Arrange: the real SDK converts the received integer into an unverified float.
+	// Arrange: SDK-decoded arguments violate the original tool schema.
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		_, _ = fmt.Fprintln(
 			w,
-			`{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"id":9007199254740993}}}]},"done":true,"done_reason":"stop"}`,
+			`{"message":{"tool_calls":[{"id":"a","function":{"name":"lookup","arguments":{"id":"wrong"}}}]},"done":true,"done_reason":"stop"}`,
 		)
 	}))
 	defer server.Close()
@@ -59,7 +32,7 @@ func TestSDKPrecisionFailurePreventsToolHandler(t *testing.T) {
 	require.NoError(t, err)
 	profile := prompty.CapabilityProfile{
 		Identity:     prompty.ProfileIdentity{Provider: "ollama", Endpoint: server.URL, Model: "fixture"},
-		Provenance:   "SDK precision rejection fixture",
+		Provenance:   "SDK schema rejection fixture",
 		Capabilities: map[string]prompty.CapabilitySupport{prompty.CapabilityTools: prompty.CapabilitySupported},
 	}
 	client := adapter.NewClient(New(WithModel("fixture"), WithClient(api.NewClient(endpoint, server.Client())),
@@ -81,18 +54,18 @@ func TestSDKPrecisionFailurePreventsToolHandler(t *testing.T) {
 	// Act.
 	_, err = prompty.ExecuteWithTypedTools(context.Background(), client, execution, registry)
 	// Assert.
-	require.ErrorIs(t, err, adapter.ErrMalformedArgs)
+	require.ErrorIs(t, err, prompty.ErrSchemaMismatch)
 	require.Equal(t, int32(1), calls.Load())
 	require.Zero(t, invoked)
 }
 
-func TestSDKPrecisionFailureRetainsKnownUsageWithoutContent(t *testing.T) {
+func TestSDKInvalidCallRetainsKnownUsageWithoutContent(t *testing.T) {
 	t.Parallel()
-	// Arrange: real SDK numeric failure and known usage in the same frame.
+	// Arrange: real SDK invalid call and known usage in the same frame.
 	client, _ := nativeFixture(
 		t,
 		[]string{
-			`{"message":{"tool_calls":[{"function":{"name":"lookup","arguments":{"id":9007199254740993}}}]},"prompt_eval_count":7,"done":true,"done_reason":"stop"}`,
+			`{"message":{"tool_calls":[{"function":{"name":"","arguments":{"id":1}}}]},"prompt_eval_count":7,"done":true,"done_reason":"stop"}`,
 		},
 	)
 	// Act.

@@ -31,7 +31,7 @@ func nativeInterleavedToolConformance(t *testing.T, model string) {
 		for _, data := range []string{
 			`{"choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
 			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"lookup","arguments":"{\"x\":"}},{"index":1,"id":"b","type":"function","function":{"name":"lookup","arguments":"{\"x\":"}}]}}]}`,
-			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}},{"index":0,"function":{"arguments":"1}"}}]}}]}`,
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}},{"index":0,"function":{"arguments":"9007199254740993}"}}]}}]}`,
 			`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
 			`{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
 			"[DONE]",
@@ -67,7 +67,7 @@ func nativeInterleavedToolConformance(t *testing.T, model string) {
 	require.Equal(t, "a", first.ID)
 	require.Equal(t, "b", second.ID)
 	require.Equal(t, "lookup", second.Name)
-	require.JSONEq(t, `{"x":1}`, first.Args)
+	require.Equal(t, `{"x":9007199254740993}`, first.Args)
 	require.JSONEq(t, `{"x":2}`, second.Args)
 	require.NotEmpty(t, status.Identity.MessageID)
 	require.Equal(t, []string{"tool:0", "tool:1"}, status.Identity.PartIDs)

@@ -145,24 +145,6 @@ func (s *generateStreamState) frameSDK(
 	if raw == nil {
 		return nil, adapter.ErrInvalidResponse
 	}
-	var numericErr error
-	// SDK-GENAI-NUM: partial numeric values are float64 already. They cannot
-	// acquire original-number attestation by marshaling the decoded DTO.
-	for _, candidate := range raw.Candidates {
-		if candidate == nil || candidate.Content == nil {
-			continue
-		}
-		for _, part := range candidate.Content.Parts {
-			if part == nil || part.FunctionCall == nil {
-				continue
-			}
-			for _, argument := range part.FunctionCall.PartialArgs {
-				if argument != nil && argument.NumberValue != nil {
-					numericErr = adapter.ErrMalformedArgs
-				}
-			}
-		}
-	}
 	var err error
 	if len(raw.Candidates) > 1 || (len(raw.Candidates) == 1 && raw.Candidates[0] == nil) {
 		return nil, adapter.ErrInvalidResponse
@@ -202,14 +184,6 @@ func (s *generateStreamState) frameSDK(
 		Kind:         prompty.StreamUsage,
 		Model:        raw.ModelVersion,
 	}
-	if numericErr != nil {
-		frame.Usage = geminiUsage(raw)
-		if len(frame.Usage.Known) == 0 {
-			return nil, numericErr
-		}
-		frame.ContinuationUnavailable = true
-		return frame, numericErr
-	}
 	var frameErr error
 	groundingChunks := s.groundingChunks
 	if len(raw.Candidates) == 1 {
@@ -224,7 +198,7 @@ func (s *generateStreamState) frameSDK(
 	}
 	normalized, err := s.normalizePartialCalls(raw, payload)
 	if err != nil {
-		return nil, err
+		return sdkUsageFailureChunk(raw), err
 	}
 	if len(raw.Candidates) == 1 || raw.PromptFeedback != nil && raw.PromptFeedback.BlockReason != "" {
 		if len(raw.Candidates) == 1 {

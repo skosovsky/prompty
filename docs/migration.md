@@ -29,11 +29,10 @@ are not persisted. Error results can retain known provider output/usage/identity
 inspect that evidence before host reconciliation. Library cancellation does not
 roll back tool effects, cancel a remote job automatically, or authorize retry.
 
-Historical independent acceptance and checks remain in
-[task38](../.cursor/task/reports/task38/), [task39](../.cursor/task/reports/task39/),
-[task40](../.cursor/task/reports/task40/), [task42](../.cursor/task/reports/task42/),
-[task41](../.cursor/task/reports/task41/) and [task43](../.cursor/task/reports/task43/).
-They attest their frozen snapshots; current documentation is separate evidence.
+Historical independent acceptance and checks for tasks 38–43 are local-only
+artifacts under the ignored `.cursor/` directory and are not distributed with
+the repository. They attest their frozen snapshots; current source contracts,
+regression tests and documentation provide the published migration evidence.
 
 Task45 removes `ToolHandler`, `ExecuteWithToolValidation` and `ErrToolInvokerRequired`. Replace execution calls with `ExecuteWithTypedTools` and provide a `ToolInvoker`; pure `ToolValidator` ports remain separate. No legacy aliases remain.
 
@@ -51,4 +50,13 @@ OpenAI Chat inline audio accepts explicit mp3/wav MIME families only; unsupporte
 
 ## Official SDK migration
 
-Remove `ollama.NewHTTPChatClient` calls and inject `api.NewClient(url, hostHTTPClient)` through WithClient. Gemini now borrows the supplied genai client directly, removes original-body observers and schema/content request rewrites, and captures SDK representations. Signed continuation validates that representation; numeric arguments without exact evidence fail, while native schema dynamic numeric constraints retain SDK serialization limits. Accepted malformed responses have no recovered identity unless the SDK returns it. Anthropic batch Results uses the SDK iterator. Follow the [complete matrix/register](official-sdk-migration.md) and [upgrade checks](verification.md#sdk-upgrade-verification). These are explicit guarantee changes; upstream limitations are not fixed.
+Remove `ollama.NewHTTPChatClient` calls and inject `api.NewClient(url, hostHTTPClient)` through WithClient. Gemini now borrows the supplied genai client directly, removes original-body observers and schema/content request rewrites, and captures SDK representations. Signed continuation validates that representation; finite numeric SDK arguments are accepted; exact caller/persisted signed state that SDK serialization changes fails with ErrProviderState and requires fresh state. Native schema dynamic numeric constraints retain SDK serialization limits. Accepted malformed responses have no recovered identity unless the SDK returns it. Anthropic batch Results uses the SDK iterator. Follow the [complete matrix/register](official-sdk-migration.md) and [upgrade checks](verification.md#sdk-upgrade-verification). These are explicit guarantee changes; upstream limitations are not fixed.
+
+
+Ordinary numeric tool calling is supported by SDK representation, including nested
+zero/one/fractions and string references. Schema checks remain on the available
+value. OpenAI/Anthropic retain raw JSON precision; Gemini/Ollama may round large
+integers or precise decimals. Scalar zero usage without public presence evidence
+stays unknown, including trailing native usage; unknown does not establish zero
+cost or budget safety. See [capability refinement](sdk-capability-contract.md) for
+state migration and consumer expectation changes.
