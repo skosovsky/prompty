@@ -55,10 +55,14 @@ func WithCache(base prompty.Registry, ttl time.Duration) *CachedRegistry {
 		panic("remoteregistry: base registry must not be nil")
 	}
 	return &CachedRegistry{
-		base:     base,
-		ttl:      ttl,
-		cache:    make(map[string]*cacheEntry),
-		inflight: make(map[string]*inflightFetch),
+		base:       base,
+		ttl:        ttl,
+		mu:         sync.RWMutex{},
+		maxEntries: 0,
+		oldest:     nil,
+		newest:     nil,
+		cache:      make(map[string]*cacheEntry),
+		inflight:   make(map[string]*inflightFetch),
 	}
 }
 
@@ -299,7 +303,7 @@ func (r *CachedRegistry) Plan(
 func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	defer inFlight.cancel()
 
-	entry := &cacheEntry{tpl: nil, snapshot: nil, expiresAt: time.Time{}}
+	entry := &cacheEntry{id: "", prev: nil, next: nil, tpl: nil, snapshot: nil, expiresAt: time.Time{}}
 	var err error
 	if source, ok := r.base.(prompty.ManifestSnapshotRegistry); ok {
 		entry.snapshot, err = source.CaptureManifest(inFlight.ctx, id)

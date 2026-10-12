@@ -16,7 +16,11 @@ type cacheBenchmarkRegistry struct {
 	templates map[string]*prompty.ChatPromptTemplate
 }
 
-func (r *cacheBenchmarkRegistry) Plan(_ context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
+func (r *cacheBenchmarkRegistry) Plan(
+	_ context.Context,
+	id string,
+	input prompty.RegistryPlanInput,
+) (*prompty.RenderPlan, error) {
 	return prompty.NewRenderPlanFromPlanInput(r.templates[id], input)
 }
 
@@ -57,21 +61,26 @@ func BenchmarkCacheFreshHit(b *testing.B) {
 				name = "PublicPlan"
 			}
 			b.Run(fmt.Sprintf("%s/N%d", name, count), func(b *testing.B) {
-				base, ids := cacheBenchmarkFixture(b, count)
-				cache := WithCache(base, time.Hour)
-				warmCacheBenchmark(b, cache, ids)
-				b.ReportAllocs()
-				b.ResetTimer()
-				for b.Loop() {
-					if public {
-						if _, err := cache.Plan(b.Context(), ids[0], prompty.RegistryPlanInput{}); err != nil {
-							b.Fatal(err)
-						}
-					} else if _, err := cache.loadMaterial(b.Context(), ids[0]); err != nil {
-						b.Fatal(err)
-					}
-				}
+				benchmarkFreshCacheHit(b, count, public)
 			})
+		}
+	}
+}
+
+func benchmarkFreshCacheHit(b *testing.B, count int, public bool) {
+	b.Helper()
+	base, ids := cacheBenchmarkFixture(b, count)
+	cache := WithCache(base, time.Hour)
+	warmCacheBenchmark(b, cache, ids)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if public {
+			if _, err := cache.Plan(b.Context(), ids[0], prompty.RegistryPlanInput{}); err != nil {
+				b.Fatal(err)
+			}
+		} else if _, err := cache.loadMaterial(b.Context(), ids[0]); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

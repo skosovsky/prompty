@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +25,9 @@ func TestParsedMetadataNormalization(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange.
-			tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("constant"), Metadata: tc.input}})
+			tpl, err := NewChatPromptTemplate(
+				[]MessageTemplate{{Role: RoleUser, Content: TextContent("constant"), Metadata: tc.input}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,11 +55,15 @@ func TestParsedMetadataConstructorErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange.
-			messages := []MessageTemplate{{Role: RoleSystem, Content: TextContent("ok")}, {Role: RoleUser, Content: TextContent("constant"), Metadata: JSONDocument(tc.input)}}
+			messages := []MessageTemplate{
+				{Role: RoleSystem, Content: TextContent("ok")},
+				{Role: RoleUser, Content: TextContent("constant"), Metadata: JSONDocument(tc.input)},
+			}
 			// Act.
 			tpl, err := NewChatPromptTemplate(messages)
 			// Assert.
-			if tpl != nil || !errors.Is(err, ErrTemplateParse) || !strings.Contains(err.Error(), "message 1 metadata: "+tc.message) {
+			if tpl != nil || !errors.Is(err, ErrTemplateParse) ||
+				!strings.Contains(err.Error(), "message 1 metadata: "+tc.message) {
 				t.Fatalf("unexpected result: %v, %v", tpl, err)
 			}
 		})
@@ -77,7 +84,9 @@ func TestParsedMetadataOwnership(t *testing.T) {
 	// Arrange.
 	source := JSONDocument(`{"nested":{"items":["original"]},"n":9007199254740993}`)
 	want := []byte(`{"n":9007199254740993,"nested":{"items":["original"]}}`)
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("constant"), Metadata: source}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{{Role: RoleUser, Content: TextContent("constant"), Metadata: source}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +133,11 @@ func TestParsedMetadataOwnership(t *testing.T) {
 
 func TestParsedMetadataConcurrentRenderOwnership(t *testing.T) {
 	// Arrange.
-	tpl, err := NewChatPromptTemplate([]MessageTemplate{{Role: RoleUser, Content: TextContent("constant"), Metadata: JSONDocument(`{"n":9007199254740993}`)}})
+	tpl, err := NewChatPromptTemplate(
+		[]MessageTemplate{
+			{Role: RoleUser, Content: TextContent("constant"), Metadata: JSONDocument(`{"n":9007199254740993}`)},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +145,9 @@ func TestParsedMetadataConcurrentRenderOwnership(t *testing.T) {
 	var workers sync.WaitGroup
 	failures := make(chan error, 16)
 	// Act.
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		workers.Go(func() {
-			for j := 0; j < 50; j++ {
+			for j := range 50 {
 				result, err := templates[j%len(templates)].renderTemplates(nil)
 				if err != nil {
 					failures <- err
@@ -162,8 +175,8 @@ func TestParsedMetadataConcurrentRenderOwnership(t *testing.T) {
 func benchmarkMetadataFixture(b *testing.B, keys int) []MessageTemplate {
 	b.Helper()
 	metadata := map[string]any{}
-	for i := 0; i < keys; i++ {
-		metadata[fmt.Sprint(i)] = "value"
+	for i := range keys {
+		metadata[strconv.Itoa(i)] = "value"
 	}
 	doc, err := MapToJSONDocument(metadata)
 	if err != nil {
@@ -174,7 +187,7 @@ func benchmarkMetadataFixture(b *testing.B, keys int) []MessageTemplate {
 
 func BenchmarkWarmRenderMetadata(b *testing.B) {
 	for _, keys := range []int{0, 16, 1024} {
-		b.Run(fmt.Sprint(keys), func(b *testing.B) {
+		b.Run(strconv.Itoa(keys), func(b *testing.B) {
 			// Arrange: fixture construction and encoding are outside the measured loop.
 			tpl, err := NewChatPromptTemplate(benchmarkMetadataFixture(b, keys))
 			if err != nil {
@@ -195,7 +208,7 @@ func BenchmarkWarmRenderMetadata(b *testing.B) {
 
 func BenchmarkColdConstructionMetadata(b *testing.B) {
 	for _, keys := range []int{0, 16, 1024} {
-		b.Run(fmt.Sprint(keys), func(b *testing.B) {
+		b.Run(strconv.Itoa(keys), func(b *testing.B) {
 			// Arrange: input JSON fixture only; canonical parsing belongs to construction.
 			messages := benchmarkMetadataFixture(b, keys)
 			b.ReportAllocs()

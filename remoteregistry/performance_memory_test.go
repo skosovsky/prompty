@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,12 +20,21 @@ type retentionRegistry struct {
 	fail  atomic.Bool
 }
 
-func (r *retentionRegistry) Plan(_ context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
+func (r *retentionRegistry) Plan(
+	_ context.Context,
+	id string,
+	input prompty.RegistryPlanInput,
+) (*prompty.RenderPlan, error) {
 	r.calls.Add(1)
 	if r.fail.Load() {
 		return nil, errors.New("retention fixture fetch failure")
 	}
-	tpl, err := prompty.NewChatPromptTemplate([]prompty.MessageTemplate{{Role: prompty.RoleUser, Content: prompty.TextContent(id + strings.Repeat("x", 64<<10))}}, prompty.WithMetadata(prompty.PromptMetadata{ID: id, Version: "1"}))
+	tpl, err := prompty.NewChatPromptTemplate(
+		[]prompty.MessageTemplate{
+			{Role: prompty.RoleUser, Content: prompty.TextContent(id + strings.Repeat("x", 64<<10))},
+		},
+		prompty.WithMetadata(prompty.PromptMetadata{ID: id, Version: "1"}),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +51,8 @@ func expireRetentionEntries(cache *CachedRegistry, preserve string) {
 	}
 }
 
-func retainedExpiredPayload(cache *CachedRegistry) (entries, bytes int) {
+func retainedExpiredPayload(cache *CachedRegistry) (int, int) {
+	var entries, bytes int
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
 	for _, entry := range cache.cache {
@@ -64,49 +75,54 @@ func TestCacheLookupReleasesExpiredPayload(t *testing.T) {
 	for _, count := range []int{16, 128, 512} {
 		for _, trigger := range []string{"hit", "miss"} {
 			t.Run(fmt.Sprintf("%d/%s", count, trigger), func(t *testing.T) {
-				// Arrange: load distinct 64KiB templates and keep one unrelated fresh ID.
-				base := &retentionRegistry{}
-				cache := WithCache(base, time.Hour)
-				for i := range count {
-					if _, err := cache.Plan(t.Context(), fmt.Sprint(i), prompty.RegistryPlanInput{}); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-					t.Fatal(err)
-				}
-				expireRetentionEntries(cache, "fresh")
-				before := base.calls.Load()
-				id := "fresh"
-				if trigger == "miss" {
-					id = "unrelated"
-				}
-				// Act: a lookup, including a hit, is the documented cleanup trigger.
-				if _, err := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); err != nil {
-					t.Fatal(err)
-				}
-				// Assert: no expired template payload remains reachable through the cache.
-				entries, bytes := retainedExpiredPayload(cache)
-				if entries != 0 || bytes != 0 {
-					t.Fatalf("expired entries=%d reachable bytes=%d", entries, bytes)
-				}
-				wantCalls := before
-				if trigger == "miss" {
-					wantCalls++
-				}
-				if got := base.calls.Load(); got != wantCalls {
-					t.Fatalf("fetches=%d want=%d", got, wantCalls)
-				}
+				checkExpiredPayloadRelease(t, count, trigger)
 			})
 		}
+	}
+}
+
+func checkExpiredPayloadRelease(t *testing.T, count int, trigger string) {
+	t.Helper()
+	// Arrange: load distinct 64KiB templates and keep one unrelated fresh ID.
+	base := &retentionRegistry{}
+	cache := WithCache(base, time.Hour)
+	for i := range count {
+		if _, fetchErr := cache.Plan(t.Context(), strconv.Itoa(i), prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
+		}
+	}
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
+	}
+	expireRetentionEntries(cache, "fresh")
+	before := base.calls.Load()
+	id := "fresh"
+	if trigger == "miss" {
+		id = "unrelated"
+	}
+	// Act: a lookup, including a hit, is the documented cleanup trigger.
+	if _, fetchErr := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
+	}
+	// Assert: no expired template payload remains reachable through the cache.
+	entries, bytes := retainedExpiredPayload(cache)
+	if entries != 0 || bytes != 0 {
+		t.Fatalf("expired entries=%d reachable bytes=%d", entries, bytes)
+	}
+	wantCalls := before
+	if trigger == "miss" {
+		wantCalls++
+	}
+	if got := base.calls.Load(); got != wantCalls {
+		t.Fatalf("fetches=%d want=%d", got, wantCalls)
 	}
 }
 
 func TestCacheIdleExpiryWaitsForLookup(t *testing.T) {
 	// Arrange: one materialized entry whose deadline is deterministically expired.
 	cache := WithCache(&retentionRegistry{}, time.Hour)
-	if _, err := cache.Plan(t.Context(), "idle", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "idle", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	// Act: expiry alone changes freshness; there is no background eviction worker.
 	expireRetentionEntries(cache, "")
@@ -123,13 +139,13 @@ func TestCacheNonpositiveTTLRemainsFresh(t *testing.T) {
 			// Arrange: a nonexpiring entry, with an adversarial past deadline.
 			base := &retentionRegistry{}
 			cache := WithCache(base, ttl)
-			if _, err := cache.Plan(t.Context(), "infinite", prompty.RegistryPlanInput{}); err != nil {
-				t.Fatal(err)
+			if _, fetchErr := cache.Plan(t.Context(), "infinite", prompty.RegistryPlanInput{}); fetchErr != nil {
+				t.Fatal(fetchErr)
 			}
 			expireRetentionEntries(cache, "")
 			// Act: lookup still hits; TTL <= 0 controls freshness.
-			if _, err := cache.Plan(t.Context(), "infinite", prompty.RegistryPlanInput{}); err != nil {
-				t.Fatal(err)
+			if _, fetchErr := cache.Plan(t.Context(), "infinite", prompty.RegistryPlanInput{}); fetchErr != nil {
+				t.Fatal(fetchErr)
 			}
 			// Assert.
 			if got := base.calls.Load(); got != 1 {
@@ -143,8 +159,8 @@ func TestCacheExpiredFetchErrorDoesNotFallback(t *testing.T) {
 	// Arrange: expire a successful generation, then fail every fetch.
 	base := &retentionRegistry{}
 	cache := WithCache(base, time.Hour)
-	if _, err := cache.Plan(t.Context(), "failed", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "failed", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	expireRetentionEntries(cache, "")
 	base.fail.Store(true)
@@ -170,8 +186,8 @@ func TestCacheCleanupPreservesHeldPlan(t *testing.T) {
 	}
 	expireRetentionEntries(cache, "")
 	// Act: cleanup drops cache ownership while caller still owns its plan.
-	if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	exec, err := plan.Execute(t.Context())
 	// Assert: the held generation still renders its original content and identity.
@@ -189,8 +205,12 @@ func TestCacheCleanupPreservesHeldPlan(t *testing.T) {
 func TestCacheCleanupPreservesHeldSnapshot(t *testing.T) {
 	// Arrange: capture immutable sources and remember their descriptor.
 	fetcher := &mockFetcher{data: map[string][]byte{
-		"held":  []byte(`{"id":"held","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"old generation"}]}]}`),
-		"fresh": []byte(`{"id":"fresh","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"fresh generation"}]}]}`),
+		"held": []byte(
+			`{"id":"held","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"old generation"}]}]}`,
+		),
+		"fresh": []byte(
+			`{"id":"fresh","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"fresh generation"}]}]}`,
+		),
 	}}
 	base, err := New(fetcher, WithParser(manifest.NewJSONParser()))
 	if err != nil {
@@ -203,10 +223,12 @@ func TestCacheCleanupPreservesHeldSnapshot(t *testing.T) {
 	}
 	descriptor := snapshot.Descriptor()
 	expireRetentionEntries(cache, "")
-	fetcher.data["held"] = []byte(`{"id":"held","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"new generation"}]}]}`)
+	fetcher.data["held"] = []byte(
+		`{"id":"held","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"new generation"}]}]}`,
+	)
 	// Act: drop cache ownership and load the replacement generation.
-	if _, err := cache.CaptureManifest(t.Context(), "fresh"); err != nil {
-		t.Fatal(err)
+	if _, captureErr := cache.CaptureManifest(t.Context(), "fresh"); captureErr != nil {
+		t.Fatal(captureErr)
 	}
 	replacement, err := cache.CaptureManifest(t.Context(), "held")
 	if err != nil {
@@ -283,30 +305,35 @@ func TestCacheLimitCardinalityAndIndexLifecycle(t *testing.T) {
 	for _, limit := range []int{1, 16, 128} {
 		for _, ttl := range []time.Duration{time.Hour, 0, -time.Hour} {
 			t.Run(fmt.Sprintf("%d/%s", limit, ttl), func(t *testing.T) {
-				// Arrange: opt-in capacity with expiring or nonexpiring entries.
-				cache := WithCacheLimit(&retentionRegistry{}, ttl, limit)
-				// Act: repeatedly publish more IDs than fit in cache.
-				for i := range limit*3 + 17 {
-					if _, err := cache.Plan(t.Context(), fmt.Sprint(i), prompty.RegistryPlanInput{}); err != nil {
-						t.Fatal(err)
-					}
-					// Assert after every completed publication.
-					assertRetentionIndex(t, cache)
-				}
-				cache.mu.RLock()
-				if len(cache.cache) != limit {
-					t.Errorf("entries=%d want=%d", len(cache.cache), limit)
-				}
-				cache.mu.RUnlock()
-				// Act: EvictAll must release both map ownership and auxiliary node ownership.
-				cache.EvictAll()
-				// Assert.
-				assertRetentionIndex(t, cache)
-				if cache.oldest != nil || cache.newest != nil || len(cache.cache) != 0 {
-					t.Fatal("EvictAll retained index or entries")
-				}
+				checkCapacityIndexLifecycle(t, limit, ttl)
 			})
 		}
+	}
+}
+
+func checkCapacityIndexLifecycle(t *testing.T, limit int, ttl time.Duration) {
+	t.Helper()
+	// Arrange: opt-in capacity with expiring or nonexpiring entries.
+	cache := WithCacheLimit(&retentionRegistry{}, ttl, limit)
+	// Act: repeatedly publish more IDs than fit in cache.
+	for i := range limit*3 + 17 {
+		if _, fetchErr := cache.Plan(t.Context(), strconv.Itoa(i), prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
+		}
+		// Assert after every completed publication.
+		assertRetentionIndex(t, cache)
+	}
+	cache.mu.RLock()
+	if len(cache.cache) != limit {
+		t.Errorf("entries=%d want=%d", len(cache.cache), limit)
+	}
+	cache.mu.RUnlock()
+	// Act: EvictAll must release both map ownership and auxiliary node ownership.
+	cache.EvictAll()
+	// Assert.
+	assertRetentionIndex(t, cache)
+	if cache.oldest != nil || cache.newest != nil || len(cache.cache) != 0 {
+		t.Fatal("EvictAll retained index or entries")
 	}
 }
 
@@ -340,8 +367,12 @@ func TestCacheUnlimitedPreservesMoreThan512FreshGenerations(t *testing.T) {
 			cache := WithCache(base, ttl)
 			// Act: load >512 distinct IDs and then select the earliest again.
 			for i := range 530 {
-				if _, err := cache.Plan(t.Context(), fmt.Sprint(i), prompty.RegistryPlanInput{}); err != nil {
-					t.Fatal(err)
+				if _, fetchErr := cache.Plan(
+					t.Context(),
+					strconv.Itoa(i),
+					prompty.RegistryPlanInput{},
+				); fetchErr != nil {
+					t.Fatal(fetchErr)
 				}
 			}
 			base.fail.Store(true)
@@ -367,8 +398,8 @@ func TestCacheLimitFIFOOrdering(t *testing.T) {
 	// Arrange: publications select FIFO order; hits do not promote entries.
 	cache := WithCacheLimit(&retentionRegistry{}, time.Hour, 2)
 	for _, id := range []string{"a", "b", "a", "c"} {
-		if _, err := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); err != nil {
-			t.Fatal(err)
+		if _, fetchErr := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
 		}
 	}
 	// Assert: a hit on a did not protect it from capacity eviction.
@@ -386,8 +417,8 @@ func TestCacheLimitFIFOOrdering(t *testing.T) {
 	cache.cache["b"].expiresAt = time.Now().Add(-time.Hour)
 	cache.mu.Unlock()
 	for _, id := range []string{"b", "d"} {
-		if _, err := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); err != nil {
-			t.Fatal(err)
+		if _, fetchErr := cache.Plan(t.Context(), id, prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
 		}
 	}
 	// Assert.
@@ -411,8 +442,8 @@ func TestCacheRefreshEvictChurnReleasesIndexNodes(t *testing.T) {
 	var detached []*cacheEntry
 	// Act: repeatedly refresh and explicitly evict the same ID.
 	for i := range 200 {
-		if _, err := cache.Plan(t.Context(), "churn", prompty.RegistryPlanInput{}); err != nil {
-			t.Fatal(err)
+		if _, fetchErr := cache.Plan(t.Context(), "churn", prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
 		}
 		cache.mu.RLock()
 		detached = append(detached, cache.cache["churn"])
@@ -438,8 +469,8 @@ func TestCacheLimitFetchErrorPreservesFreshVictim(t *testing.T) {
 	// Arrange: fill capacity before an unrelated failing fetch.
 	base := &retentionRegistry{}
 	cache := WithCacheLimit(base, time.Hour, 1)
-	if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	base.fail.Store(true)
 	// Act.
@@ -447,20 +478,25 @@ func TestCacheLimitFetchErrorPreservesFreshVictim(t *testing.T) {
 		t.Fatal("expected fetch error")
 	}
 	// Assert: failed material never triggers capacity eviction.
-	if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	assertRetentionIndex(t, cache)
 }
 
 type gatedRetentionRegistry struct {
 	retentionRegistry
+
 	gated   atomic.Bool
 	started chan string
 	release chan struct{}
 }
 
-func (r *gatedRetentionRegistry) Plan(ctx context.Context, id string, input prompty.RegistryPlanInput) (*prompty.RenderPlan, error) {
+func (r *gatedRetentionRegistry) Plan(
+	ctx context.Context,
+	id string,
+	input prompty.RegistryPlanInput,
+) (*prompty.RenderPlan, error) {
 	if r.gated.Load() {
 		r.started <- id
 		select {
@@ -479,8 +515,12 @@ func TestCacheLimitConcurrentCompletions(t *testing.T) {
 	base := &gatedRetentionRegistry{started: make(chan string, fetches), release: make(chan struct{})}
 	cache := WithCacheLimit(base, time.Hour, limit)
 	for i := range limit {
-		if _, err := cache.Plan(t.Context(), fmt.Sprintf("initial%d", i), prompty.RegistryPlanInput{}); err != nil {
-			t.Fatal(err)
+		if _, fetchErr := cache.Plan(
+			t.Context(),
+			fmt.Sprintf("initial%d", i),
+			prompty.RegistryPlanInput{},
+		); fetchErr != nil {
+			t.Fatal(fetchErr)
 		}
 	}
 	base.gated.Store(true)
@@ -526,8 +566,8 @@ func TestCacheLimitCancellationDoesNotEvictFreshVictim(t *testing.T) {
 	// Arrange: a fresh entry fills the cache while a different ID fetch is blocked.
 	base := &gatedRetentionRegistry{started: make(chan string, 1), release: make(chan struct{})}
 	cache := WithCacheLimit(base, time.Hour, 1)
-	if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	base.gated.Store(true)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -545,8 +585,8 @@ func TestCacheLimitCancellationDoesNotEvictFreshVictim(t *testing.T) {
 	close(base.release)
 	<-flight.done
 	// Assert: failed/cancelled fetch cannot consume capacity at the expense of fresh material.
-	if _, err := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "fresh", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	assertRetentionIndex(t, cache)
 }
@@ -554,15 +594,16 @@ func TestCacheLimitCancellationDoesNotEvictFreshVictim(t *testing.T) {
 func TestCacheExpirationBoundary(t *testing.T) {
 	// Arrange: a positive TTL entry whose exact expiry is known.
 	cache := WithCache(&retentionRegistry{}, time.Hour)
-	if _, err := cache.Plan(t.Context(), "boundary", prompty.RegistryPlanInput{}); err != nil {
-		t.Fatal(err)
+	if _, fetchErr := cache.Plan(t.Context(), "boundary", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry := cache.cache["boundary"]
 	boundary := entry.expiresAt
 	// Act/Assert: freshness is strict now < expiry; equality expires the generation.
-	if !cache.cacheEntryValid(entry, boundary.Add(-time.Nanosecond)) || cache.cacheEntryValid(entry, boundary) || cache.cacheEntryValid(entry, boundary.Add(time.Nanosecond)) {
+	if !cache.cacheEntryValid(entry, boundary.Add(-time.Nanosecond)) || cache.cacheEntryValid(entry, boundary) ||
+		cache.cacheEntryValid(entry, boundary.Add(time.Nanosecond)) {
 		t.Fatal("expiration boundary changed")
 	}
 	cache.removeExpired(boundary.Add(-time.Nanosecond))
@@ -583,49 +624,58 @@ func TestCacheMaintenanceDoesNotScanFreshIndex(t *testing.T) {
 	// The earliest publication stays fresh; only an interior deadline is poisoned.
 	// Its removal would demonstrate a full cache scan rather than prefix-index work.
 	for _, count := range []int{16, 128, 512, 4096} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			cache := WithCacheLimit(&retentionRegistry{}, time.Hour, count)
-			for i := range count {
-				if _, err := cache.Plan(t.Context(), fmt.Sprint(i), prompty.RegistryPlanInput{}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			cache.mu.Lock()
-			sentinel := cache.newest
-			sentinel.expiresAt = time.Now().Add(-time.Hour)
-			oldest := cache.oldest
-			cache.mu.Unlock()
-			// Act: hit maintenance followed by successful full-cache insertion.
-			if _, err := cache.Plan(t.Context(), "0", prompty.RegistryPlanInput{}); err != nil {
-				t.Fatal(err)
-			}
-			cache.mu.RLock()
-			hitSentinelPresent := cache.cache[sentinel.id] == sentinel
-			cache.mu.RUnlock()
-			if !hitSentinelPresent {
-				t.Fatal("hit maintenance scanned interior deadlines")
-			}
-			if _, err := cache.Plan(t.Context(), "new", prompty.RegistryPlanInput{}); err != nil {
-				t.Fatal(err)
-			}
-			// Assert: unvisited interior sentinel stays stored and FIFO evicts exactly its head.
-			cache.mu.RLock()
-			sentinelPresent := cache.cache[sentinel.id] == sentinel
-			oldestPresent := cache.cache[oldest.id] == oldest
-			cache.mu.RUnlock()
-			if !sentinelPresent || oldestPresent {
-				t.Fatal("maintenance scanned interior deadlines or capacity victim was not FIFO head")
-			}
-			assertRetentionIndex(t, cache)
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			checkFreshIndexMaintenance(t, count)
 		})
 	}
+}
+
+func checkFreshIndexMaintenance(t *testing.T, count int) {
+	t.Helper()
+	cache := WithCacheLimit(&retentionRegistry{}, time.Hour, count)
+	for i := range count {
+		if _, fetchErr := cache.Plan(t.Context(), strconv.Itoa(i), prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
+		}
+	}
+	cache.mu.Lock()
+	sentinel := cache.newest
+	sentinel.expiresAt = time.Now().Add(-time.Hour)
+	oldest := cache.oldest
+	cache.mu.Unlock()
+	// Act: hit maintenance followed by successful full-cache insertion.
+	if _, fetchErr := cache.Plan(t.Context(), "0", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
+	}
+	cache.mu.RLock()
+	hitSentinelPresent := cache.cache[sentinel.id] == sentinel
+	cache.mu.RUnlock()
+	if !hitSentinelPresent {
+		t.Fatal("hit maintenance scanned interior deadlines")
+	}
+	if _, fetchErr := cache.Plan(t.Context(), "new", prompty.RegistryPlanInput{}); fetchErr != nil {
+		t.Fatal(fetchErr)
+	}
+	// Assert: unvisited interior sentinel stays stored and FIFO evicts exactly its head.
+	cache.mu.RLock()
+	sentinelPresent := cache.cache[sentinel.id] == sentinel
+	oldestPresent := cache.cache[oldest.id] == oldest
+	cache.mu.RUnlock()
+	if !sentinelPresent || oldestPresent {
+		t.Fatal("maintenance scanned interior deadlines or capacity victim was not FIFO head")
+	}
+	assertRetentionIndex(t, cache)
 }
 
 func TestCacheCapacityPreservesHeldSnapshot(t *testing.T) {
 	// Arrange: nonexpiring snapshots in a capacity-one registry.
 	fetcher := &mockFetcher{data: map[string][]byte{
-		"old": []byte(`{"id":"old","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"old generation"}]}]}`),
-		"new": []byte(`{"id":"new","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"new generation"}]}]}`),
+		"old": []byte(
+			`{"id":"old","version":"1","messages":[{"role":"user","content":[{"type":"text","text":"old generation"}]}]}`,
+		),
+		"new": []byte(
+			`{"id":"new","version":"2","messages":[{"role":"user","content":[{"type":"text","text":"new generation"}]}]}`,
+		),
 	}}
 	base, err := New(fetcher, WithParser(manifest.NewJSONParser()))
 	if err != nil {
@@ -638,8 +688,8 @@ func TestCacheCapacityPreservesHeldSnapshot(t *testing.T) {
 	}
 	descriptor := held.Descriptor()
 	// Act: a successful new publication evicts the old generation from cache only.
-	if _, err := cache.CaptureManifest(t.Context(), "new"); err != nil {
-		t.Fatal(err)
+	if _, captureErr := cache.CaptureManifest(t.Context(), "new"); captureErr != nil {
+		t.Fatal(captureErr)
 	}
 	plan, err := held.Plan(t.Context(), prompty.RegistryPlanInput{})
 	if err != nil {
@@ -662,8 +712,8 @@ func TestCacheCleanupVisitsExpiredPrefix(t *testing.T) {
 	const expired = 7
 	cache := WithCache(&retentionRegistry{}, time.Hour)
 	for i := range count {
-		if _, err := cache.Plan(t.Context(), fmt.Sprint(i), prompty.RegistryPlanInput{}); err != nil {
-			t.Fatal(err)
+		if _, fetchErr := cache.Plan(t.Context(), strconv.Itoa(i), prompty.RegistryPlanInput{}); fetchErr != nil {
+			t.Fatal(fetchErr)
 		}
 	}
 	cache.mu.Lock()
@@ -692,6 +742,7 @@ func TestCacheCleanupVisitsExpiredPrefix(t *testing.T) {
 }
 
 func TestCacheLimitDetachedEviction(t *testing.T) {
+	t.Parallel()
 	for _, all := range []bool{false, true} {
 		for _, oldFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("all=%t/oldFirst=%t", all, oldFirst), func(t *testing.T) {

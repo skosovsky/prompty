@@ -3,7 +3,6 @@ package prompty
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"testing"
 )
@@ -13,7 +12,10 @@ type validationUnknownPart struct{ TextPart }
 // rewriteValidationOracle is the previous validation implementation. Comparing
 // first errors catches ordering changes across structural and policy failures.
 func rewriteValidationOracle(messages []ChatMessage) error {
-	return RewriteCachePolicies(slices.Clone(messages), func(_ string, _ *CachePolicy) (bool, error) { return true, nil })
+	return RewriteCachePolicies(
+		slices.Clone(messages),
+		func(_ string, _ *CachePolicy) (bool, error) { return true, nil },
+	)
 }
 
 func TestValidateCachePoliciesReadOnlyCompatibility(t *testing.T) {
@@ -31,22 +33,39 @@ func TestValidateCachePoliciesReadOnlyCompatibility(t *testing.T) {
 		validationUnknownPart{}, TextPart{CachePolicy: bad},
 		ToolResultPart{Content: []ContentPart{&ToolResultPart{Content: []ContentPart{TextPart{CachePolicy: bad}}}}},
 	}
-	policies := []*CachePolicy{nil, valid, bad, {Mechanism: CacheBlockMarker, Controls: JSONDocument(`{"ttl":"1h"}`)}, {Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`null`)}, {Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`[]`)}, {Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`{`)}, {Mechanism: CacheOmit}, {Mechanism: CacheOmit, Mode: CacheRequired}}
+	policies := []*CachePolicy{
+		nil,
+		valid,
+		bad,
+		{Mechanism: CacheBlockMarker, Controls: JSONDocument(`{"ttl":"1h"}`)},
+		{Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`null`)},
+		{Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`[]`)},
+		{Mechanism: CacheBlockMarker, Provider: "example", Controls: JSONDocument(`{`)},
+		{Mechanism: CacheOmit},
+		{Mechanism: CacheOmit, Mode: CacheRequired},
+	}
 	for i, part := range parts {
 		for j, messagePolicy := range policies {
 			for k, later := range parts {
 				t.Run(fmt.Sprintf("part%d/policy%d/later%d", i, j, k), func(t *testing.T) {
 					// Arrange: nested content also tests wrappers and invalid-policy ordering.
-					messages := []ChatMessage{{CachePolicy: messagePolicy, Content: []ContentPart{part, ToolResultPart{Content: []ContentPart{later}}}}}
+					messages := []ChatMessage{
+						{
+							CachePolicy: messagePolicy,
+							Content:     []ContentPart{part, ToolResultPart{Content: []ContentPart{later}}},
+						},
+					}
 					want := rewriteValidationOracle(messages)
 					// Act.
 					got := ValidateCachePolicies(messages)
 					// Assert.
-					if fmt.Sprint(got) != fmt.Sprint(want) || errors.Is(got, ErrCachePolicy) != errors.Is(want, ErrCachePolicy) {
+					if fmt.Sprint(got) != fmt.Sprint(want) ||
+						errors.Is(got, ErrCachePolicy) != errors.Is(want, ErrCachePolicy) {
 						t.Fatalf("got %v; want %v", got, want)
 					}
 					var gotCache, wantCache *CacheError
-					if errors.As(got, &gotCache) != errors.As(want, &wantCache) || !reflect.DeepEqual(gotCache, wantCache) {
+					if errors.As(got, &gotCache) != errors.As(want, &wantCache) ||
+						!sameValidationCacheError(gotCache, wantCache) {
 						t.Fatalf("cache errors differ: got %#v; want %#v", gotCache, wantCache)
 					}
 				})
@@ -70,7 +89,8 @@ func TestValidateCachePoliciesDoesNotMutateInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if messages[0].Content[0] != nested || nested.Content[0] != media || messages[0].CachePolicy != policy || media.CachePolicy != policy {
+	if messages[0].Content[0] != nested || nested.Content[0] != media || messages[0].CachePolicy != policy ||
+		media.CachePolicy != policy {
 		t.Fatal("validation replaced caller-owned content or policies")
 	}
 	if !slices.Equal(media.Data, originalData) || !slices.Equal(controls, originalControls) {
@@ -83,7 +103,19 @@ func TestValidateCachePoliciesNestedControlsAndPath(t *testing.T) {
 		t.Run(string(controls), func(t *testing.T) {
 			// Arrange: a nil message policy must still validate nested controls.
 			policy := &CachePolicy{Mechanism: CacheBlockMarker, Provider: "example", Controls: controls}
-			messages := []ChatMessage{{Content: []ContentPart{&ToolResultPart{Content: []ContentPart{ToolResultPart{Content: []ContentPart{&MediaPart{Data: []byte{1}, CachePolicy: policy}}}}}}}}
+			messages := []ChatMessage{
+				{
+					Content: []ContentPart{
+						&ToolResultPart{
+							Content: []ContentPart{
+								ToolResultPart{
+									Content: []ContentPart{&MediaPart{Data: []byte{1}, CachePolicy: policy}},
+								},
+							},
+						},
+					},
+				},
+			}
 			want := rewriteValidationOracle(messages)
 			// Act.
 			got := ValidateCachePolicies(messages)
@@ -98,7 +130,8 @@ func TestValidateCachePoliciesNestedControlsAndPath(t *testing.T) {
 				return
 			}
 			var cacheErr *CacheError
-			if !errors.As(got, &cacheErr) || cacheErr.Decision.Path != "/messages/0/content/0/content/0/content/0/cache_policy" {
+			if !errors.As(got, &cacheErr) ||
+				cacheErr.Decision.Path != "/messages/0/content/0/content/0/content/0/cache_policy" {
 				t.Fatalf("wrong nested cache error: %v", got)
 			}
 		})
@@ -117,7 +150,14 @@ func BenchmarkValidateCachePoliciesMedia(b *testing.B) {
 				case "mixed":
 					content = []ContentPart{TextPart{CachePolicy: policy}, &media, ReasoningPart{}, ToolCallPart{}}
 				case "nested":
-					content = []ContentPart{&ToolResultPart{CachePolicy: policy, Content: []ContentPart{ToolResultPart{Content: []ContentPart{media, TextPart{CachePolicy: policy}}}}}}
+					content = []ContentPart{
+						&ToolResultPart{
+							CachePolicy: policy,
+							Content: []ContentPart{
+								ToolResultPart{Content: []ContentPart{media, TextPart{CachePolicy: policy}}},
+							},
+						},
+					}
 				}
 				messages := []ChatMessage{{Content: content}}
 				b.ReportAllocs()
@@ -131,4 +171,11 @@ func BenchmarkValidateCachePoliciesMedia(b *testing.B) {
 			})
 		}
 	}
+}
+
+func sameValidationCacheError(a, b *CacheError) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Decision == b.Decision && errors.Is(a.Cause, b.Cause)
 }
