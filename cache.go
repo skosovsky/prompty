@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"slices"
 )
 
 // CacheMechanism identifies request controls, not a cache hit or remote resource.
@@ -143,9 +142,105 @@ func ValidateRequestCachePolicy(policy *CachePolicy) error {
 
 // ValidateCachePolicies checks every message/part policy without mutating input.
 func ValidateCachePolicies(messages []ChatMessage) error {
-	return RewriteCachePolicies(slices.Clone(messages), func(_ string, _ *CachePolicy) (bool, error) {
-		return true, nil
-	})
+	for i := range messages {
+		message := &messages[i]
+		path := fmt.Sprintf("/messages/%d", i)
+		if err := validateCachePolicyAt(path+"/cache_policy", message.CachePolicy); err != nil {
+			return err
+		}
+		// Forward conversion used to check the complete content tree before
+		// visiting any part policy. Keep that precedence without copying payloads.
+		if err := validateCacheContent(message.Content); err != nil {
+			return err
+		}
+		if err := validatePartCachePolicies(message.Content, path+"/content"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCachePolicyAt(path string, policy *CachePolicy) error {
+	if err := ValidateCachePolicy(policy); err != nil {
+		return &CacheError{Decision: CacheDecision{
+			Path: path, Mechanism: policy.Mechanism, Disposition: CacheUnsupported, Reason: "invalid policy shape",
+		}, Cause: err}
+	}
+	return nil
+}
+
+// cacheContentFields reads only policy and nesting; it never canonicalizes or
+// clones the content. Its accepted variants and errors match contentPartToWire.
+func cacheContentFields(part ContentPart) (*CachePolicy, []ContentPart, error) {
+	switch x := part.(type) {
+	case TextPart:
+		return x.CachePolicy, nil, nil
+	case *TextPart:
+		if x == nil {
+			return nil, nil, errors.New("nil text content part")
+		}
+		return x.CachePolicy, nil, nil
+	case MediaPart:
+		return x.CachePolicy, nil, nil
+	case *MediaPart:
+		if x == nil {
+			return nil, nil, errors.New("nil media content part")
+		}
+		return x.CachePolicy, nil, nil
+	case ReasoningPart:
+		return x.CachePolicy, nil, nil
+	case *ReasoningPart:
+		if x == nil {
+			return nil, nil, errors.New("nil reasoning content part")
+		}
+		return x.CachePolicy, nil, nil
+	case ToolCallPart:
+		return x.CachePolicy, nil, nil
+	case *ToolCallPart:
+		if x == nil {
+			return nil, nil, errors.New("nil tool call content part")
+		}
+		return x.CachePolicy, nil, nil
+	case ToolResultPart:
+		return x.CachePolicy, x.Content, nil
+	case *ToolResultPart:
+		if x == nil {
+			return nil, nil, errors.New("nil tool result content part")
+		}
+		return x.CachePolicy, x.Content, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported content part %T", part)
+	}
+}
+
+func validateCacheContent(parts []ContentPart) error {
+	for i, part := range parts {
+		_, nested, err := cacheContentFields(part)
+		if err == nil {
+			err = validateCacheContent(nested)
+		}
+		if err != nil {
+			return fmt.Errorf("content[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func validatePartCachePolicies(parts []ContentPart, path string) error {
+	for i, part := range parts {
+		policy, nested, _ := cacheContentFields(part) // Representation checked in the first pass.
+		if policy == nil && len(nested) == 0 {
+			continue
+		}
+		partPath := fmt.Sprintf("%s/%d", path, i)
+		if err := validateCachePolicyAt(partPath+"/cache_policy", policy); err != nil {
+			return err
+		}
+		if err := validatePartCachePolicies(nested, partPath+"/content"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RewriteCachePolicies visits message and nested part policies at stable JSON

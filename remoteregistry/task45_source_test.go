@@ -176,7 +176,7 @@ func TestHTTPImportedLogicalID(t *testing.T) {
 	require.NotContains(t, paths, "/prompts/child/part.yaml")
 }
 
-func checkCacheEviction(t *testing.T, all, oldFirst bool) {
+func checkCacheEviction(t *testing.T, all, oldFirst bool, bounded ...bool) {
 	t.Helper()
 	t.Parallel()
 	// Arrange: each generation is held independently, without timer scheduling.
@@ -205,6 +205,9 @@ func checkCacheEviction(t *testing.T, all, oldFirst bool) {
 	base, err := New(fetcher, WithParser(manifest.NewJSONParser()))
 	require.NoError(t, err)
 	cache := WithCache(base, 0)
+	if len(bounded) > 0 && bounded[0] {
+		cache = WithCacheLimit(base, 0, 1)
+	}
 	type result struct {
 		snapshot *prompty.ManifestSnapshot
 		err      error

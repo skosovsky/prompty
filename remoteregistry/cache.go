@@ -11,6 +11,9 @@ import (
 )
 
 type cacheEntry struct {
+	id        string
+	prev      *cacheEntry
+	next      *cacheEntry
 	tpl       *prompty.ChatPromptTemplate
 	snapshot  *prompty.ManifestSnapshot
 	expiresAt time.Time
@@ -27,11 +30,13 @@ type inflightFetch struct {
 
 // CachedRegistry decorates any prompty.Registry with TTL cache and request deduplication.
 type CachedRegistry struct {
-	base     prompty.Registry
-	ttl      time.Duration
-	mu       sync.RWMutex
-	cache    map[string]*cacheEntry
-	inflight map[string]*inflightFetch
+	base           prompty.Registry
+	ttl            time.Duration
+	mu             sync.RWMutex
+	cache          map[string]*cacheEntry
+	inflight       map[string]*inflightFetch
+	maxEntries     int
+	oldest, newest *cacheEntry
 }
 
 var (
@@ -41,8 +46,10 @@ var (
 	_ prompty.ManifestResolver = (*CachedRegistry)(nil)
 )
 
-// WithCache wraps base registry with cache + in-flight request dedupe.
-// TTL <= 0 means entries never expire.
+// WithCache wraps base with unbounded cache and in-flight request deduplication.
+// TTL <= 0 means entries never expire. Positive-TTL entries are removed on
+// material lookup and successful fetch publication, including unrelated IDs.
+// Idle entries remain until the next lookup or explicit eviction; no worker runs.
 func WithCache(base prompty.Registry, ttl time.Duration) *CachedRegistry {
 	if base == nil {
 		panic("remoteregistry: base registry must not be nil")
@@ -50,14 +57,77 @@ func WithCache(base prompty.Registry, ttl time.Duration) *CachedRegistry {
 	return &CachedRegistry{
 		base:     base,
 		ttl:      ttl,
-		mu:       sync.RWMutex{},
 		cache:    make(map[string]*cacheEntry),
 		inflight: make(map[string]*inflightFetch),
 	}
 }
 
+// WithCacheLimit opts into a limit on retained entries, using FIFO successful
+// publication order. Hits do not change order or TTL. TTL <= 0 disables time
+// expiration, but capacity eviction can select a new generation on a later fetch.
+// Caller-held snapshots and in-flight fetches are not bounded by maxEntries.
+// It panics for nil base (checked first) or maxEntries <= 0.
+func WithCacheLimit(base prompty.Registry, ttl time.Duration, maxEntries int) *CachedRegistry {
+	r := WithCache(base, ttl)
+	if maxEntries <= 0 {
+		panic("remoteregistry: maxEntries must be positive")
+	}
+	r.maxEntries = maxEntries
+	return r
+}
+
 func (r *CachedRegistry) cacheEntryValid(ent *cacheEntry, now time.Time) bool {
 	return r.ttl <= 0 || now.Before(ent.expiresAt)
+}
+
+// removeEntry requires mu and clears both index links. It drops only cache
+// ownership; callers and detached waiters retain their immutable generation.
+func (r *CachedRegistry) removeEntry(entry *cacheEntry) {
+	delete(r.cache, entry.id)
+	if entry.prev != nil {
+		entry.prev.next = entry.next
+	} else {
+		r.oldest = entry.next
+	}
+	if entry.next != nil {
+		entry.next.prev = entry.prev
+	} else {
+		r.newest = entry.prev
+	}
+	entry.prev, entry.next = nil, nil
+}
+
+// Fixed TTL and serialized publication make FIFO order expiration order too.
+// Maintenance visits only the expired prefix and at most one fresh head.
+func (r *CachedRegistry) removeExpired(now time.Time) {
+	if r.ttl <= 0 {
+		return
+	}
+	removed := false
+	for r.oldest != nil && !r.cacheEntryValid(r.oldest, now) {
+		r.removeEntry(r.oldest)
+		removed = true
+	}
+	if removed && len(r.cache) == 0 {
+		r.cache = make(map[string]*cacheEntry)
+	}
+}
+
+func (r *CachedRegistry) publishEntry(id string, entry *cacheEntry) {
+	if previous := r.cache[id]; previous != nil {
+		r.removeEntry(previous)
+	}
+	if r.maxEntries > 0 && len(r.cache) >= r.maxEntries {
+		r.removeEntry(r.oldest)
+	}
+	entry.id, entry.prev = id, r.newest
+	if r.newest != nil {
+		r.newest.next = entry
+	} else {
+		r.oldest = entry
+	}
+	r.newest = entry
+	r.cache[id] = entry
 }
 
 func (r *CachedRegistry) loadMaterial(
@@ -70,21 +140,38 @@ func (r *CachedRegistry) loadMaterial(
 
 	now := time.Now()
 	r.mu.RLock()
-	ent, ok := r.cache[id]
-	if ok && r.cacheEntryValid(ent, now) {
-		entry := ent
-		r.mu.RUnlock()
-		return entry, nil
+	ent := r.cache[id]
+	var expiresAt, oldestExpiresAt time.Time
+	hasOldest := r.oldest != nil
+	if r.ttl > 0 {
+		if ent != nil {
+			expiresAt = ent.expiresAt
+		}
+		if hasOldest {
+			oldestExpiresAt = r.oldest.expiresAt
+		}
 	}
 	r.mu.RUnlock()
+	// Compare copied deadlines outside the shared lock. A concurrent eviction
+	// cannot invalidate this captured immutable generation. The slow path below
+	// recomputes time and membership under the write lock before maintenance.
+	if ent != nil && (r.ttl <= 0 || now.Before(expiresAt) &&
+		(!hasOldest || now.Before(oldestExpiresAt))) {
+		return ent, nil
+	}
 
 	r.mu.Lock()
 	now = time.Now()
-	ent, ok = r.cache[id]
-	if ok && r.cacheEntryValid(ent, now) {
-		entry := ent
-		r.mu.Unlock()
-		return entry, nil
+	r.removeExpired(now)
+	if ent := r.cache[id]; ent != nil {
+		if r.cacheEntryValid(ent, now) {
+			r.mu.Unlock()
+			return ent, nil
+		}
+		r.removeEntry(ent)
+		if len(r.cache) == 0 {
+			r.cache = make(map[string]*cacheEntry)
+		}
 	}
 
 	if inFlight, exists := r.inflight[id]; exists {
@@ -233,12 +320,14 @@ func (r *CachedRegistry) runInflightFetch(id string, inFlight *inflightFetch) {
 	if current, exists := r.inflight[id]; exists && current == inFlight {
 		delete(r.inflight, id)
 		if inFlight.err == nil {
-			expiresAt := time.Now().Add(r.ttl)
+			now := time.Now()
+			r.removeExpired(now)
+			expiresAt := now.Add(r.ttl)
 			if r.ttl <= 0 {
 				expiresAt = time.Time{}
 			}
 			entry.expiresAt = expiresAt
-			r.cache[id] = entry
+			r.publishEntry(id, entry)
 		}
 	}
 	r.mu.Unlock()
@@ -312,7 +401,12 @@ func (r *CachedRegistry) Evict(id string) {
 		return
 	}
 	r.mu.Lock()
-	delete(r.cache, id)
+	if entry := r.cache[id]; entry != nil {
+		r.removeEntry(entry)
+		if len(r.cache) == 0 {
+			r.cache = make(map[string]*cacheEntry)
+		}
+	}
 	delete(r.inflight, id) // Existing waiters retain their detached generation.
 	r.mu.Unlock()
 }
@@ -320,6 +414,9 @@ func (r *CachedRegistry) Evict(id string) {
 // EvictAll clears all cache entries.
 func (r *CachedRegistry) EvictAll() {
 	r.mu.Lock()
+	for r.oldest != nil {
+		r.removeEntry(r.oldest)
+	}
 	r.cache = make(map[string]*cacheEntry)
 	r.inflight = make(map[string]*inflightFetch)
 	r.mu.Unlock()

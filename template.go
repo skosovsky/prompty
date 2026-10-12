@@ -67,8 +67,8 @@ type parsedMessage struct {
 	role         Role
 	optional     bool
 	cacheControl *CachePolicy
-	metadata     map[string]any // provider-specific; copied to ChatMessage on render
-	vars         []string       // pre-computed from all parts for optional-skip check
+	metadata     JSONDocument // immutable canonical JSON; cloned to ChatMessage on render
+	vars         []string     // pre-computed from all parts for optional-skip check
 	layerID      string
 	layerKind    LayerKind
 }
@@ -187,10 +187,7 @@ func (c *ChatPromptTemplate) renderTemplates(mergedVars map[string]any) (*Prompt
 		if err != nil {
 			return nil, err
 		}
-		msgMeta, metaErr := MapToJSONDocument(pm.metadata)
-		if metaErr != nil {
-			return nil, fmt.Errorf("%w: message %d metadata: %w", ErrTemplateRender, i, metaErr)
-		}
+		msgMeta := CloneJSONDocument(pm.metadata)
 		var prov *MessageProvenance
 		if pm.layerID != "" || c.Metadata.ID != "" {
 			prov = &MessageProvenance{LayerID: pm.layerID, ManifestID: c.Metadata.ID}
@@ -653,13 +650,16 @@ func (c *ChatPromptTemplate) parseMessages(root *template.Template) error {
 		if err != nil {
 			return err
 		}
-		var meta map[string]any
+		var meta JSONDocument
 		if len(m.Metadata) > 0 {
 			decoded, decodeErr := JSONDocumentAsMap(m.Metadata)
 			if decodeErr != nil {
 				return fmt.Errorf("%w: message %d metadata: %w", ErrTemplateParse, i, decodeErr)
 			}
-			meta = maps.Clone(decoded)
+			meta, err = MapToJSONDocument(decoded)
+			if err != nil {
+				return fmt.Errorf("%w: message %d metadata: %w", ErrTemplateParse, i, err)
+			}
 		}
 		c.parsedTemplates = append(c.parsedTemplates, parsedMessage{
 			parts:        parsedParts,
