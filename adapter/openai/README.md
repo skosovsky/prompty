@@ -58,7 +58,7 @@ batch request, with common redaction/acknowledgements and one terminal. It is no
 HTTP-byte/physical-attempt evidence. Required capture failure after upload can
 leave a known file without a batch and never proceeds to create the job.
 
-ExampleNewBatches and local multipart/SDK/JSONL fault fixtures are runnable. Live account/model support remains unverified. The current [matrix](../../docs/provider-capability-matrix.md) links all implemented batch ports; task37 reports retain their historical checkpoint.
+ExampleNewBatches and local multipart/SDK/JSONL fault fixtures are runnable. Live account/model support remains unverified. The current [matrix](../../docs/provider-capability-matrix.md) links all implemented batch ports.
 
 ## Separate Responses operations
 
@@ -262,9 +262,9 @@ These mappings are not provider-wide/model-wide capability claims. Bind caller-o
 - **Model options:** `exec.ModelOptions` maps `Model`, `Temperature`, `MaxTokens`, `TopP`, and `Stop` into the request.
 - **Output/state:** strict/lowering schema diagnostics and original validation, refusal and full citation annotations. MaxTokens maps to max_completion_tokens; reasoning effort requires an effective profile options schema and never silently removes temperature.
 - **Capture:** optional sync/native SDK JSON hooks plus canonical stages. Required HTTP bytes/physical attempts fail preflight because those boundaries are not instrumented. SDK response ID is not HTTP request ID.
-- **Cache control:** checked execution reports block markers as unsupported and implicit-prefix knowledge from the effective caller-owned profile; it never fabricates a hit or request field. Raw Translate rejects required unmapped intent. See the task37 migration guide for the replacement of `CachePolicy.Type`.
+- **Cache control:** checked execution reports block markers as unsupported and implicit-prefix knowledge from the effective caller-owned profile; it never fabricates a hit or request field. Raw Translate rejects required unmapped intent. See the [current migration guide](../../docs/migration.md).
 - **Helpers:** With NewClient+Execute use `resp.StrictText()`. With direct Translate/Execute/ParseResponse use `prompty.StrictTextFromParts(resp.Content)`.
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/openai) for the full API.
 
-The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43.

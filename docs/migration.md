@@ -3,8 +3,7 @@
 These contracts replace previous behaviour. Regenerate and validate persisted data
 at the application boundary; no compatibility loader, wrapper or instruction to
 ignore admission errors is supplied. The [capability matrix](provider-capability-matrix.md)
-is the current implementation map. [task37 migration](task37/migration.md) remains
-historical evidence for its own checkpoint, not the state of the current tree.
+is the current implementation map.
 
 | Change | Required consumer action | Executable contract / evidence |
 | --- | --- | --- |

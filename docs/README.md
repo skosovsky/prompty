@@ -1,6 +1,6 @@
 # Current contracts
 
-Use the root contracts below as the current public specification. `docs/task37/*` preserves historical audits and acceptance evidence; it is superseded by these contracts and the clear-break migration guide. Historical test counts and API snippets do not establish current conformance.
+Use the root contracts below as the current public specification and the clear-break migration guide for consumer changes.
 
 | Contract | Boundary |
 | --- | --- |

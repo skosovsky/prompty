@@ -37,6 +37,6 @@ These new features also require profile knowledge for direct `Translate`. For na
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/skosovsky/prompty/adapter/ollama) for the full API.
 
-The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43.
 
 Sync Chat requires exactly one callback; native Chat owns correlated multi-frame lifecycle. Zero/multiple sync responses fail explicitly. Redirect/transport policy belongs to the host, so an explicit Chat call is not proof of exactly one physical HTTP request. EstimateTokens/EstimateTokensStrict use an approximate message counter, exclude tools/schema/native wrapping and do not certify a context window.

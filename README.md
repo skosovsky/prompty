@@ -198,7 +198,7 @@ Supported `provider_settings` keys:
 
 Provider settings validation is fail-closed: unknown keys or invalid values return `adapter.ErrInvalidProviderSettings` (no silent ignore).
 
-Reasoning settings additionally require a caller-owned `CapabilityProfile.ModelOptionsSchema` for the effective endpoint/model on checked execution. It validates the full `ModelOptions` object and allowed combinations; absent knowledge is unknown and fails before dispatch. Declared schema/resources are local or explicitly injected, never fetched implicitly. SDK mappings are not a claim that all models support the listed settings. See [migration](docs/migration.md) for current clear-break contracts and [task37 migration](docs/task37/migration.md) for earlier explicit modes and the removed OpenAI model-name heuristics.
+Reasoning settings additionally require a caller-owned `CapabilityProfile.ModelOptionsSchema` for the effective endpoint/model on checked execution. It validates the full `ModelOptions` object and allowed combinations; absent knowledge is unknown and fails before dispatch. Declared schema/resources are local or explicitly injected, never fetched implicitly. SDK mappings are not a claim that all models support the listed settings. See [migration](docs/migration.md) for current clear-break contracts.
 
 ## Architecture
 
@@ -231,7 +231,7 @@ Core contracts do not own model routing, retries, agent loops, storage, IAM or s
 
 Output/tool definitions carry an optional `Dialect`, preserved by clone and execution wire. Empty selects `SchemaDialect2020`; set `SchemaDialect7` explicitly for a schema declaring that dialect. Checked preparation and structured/tool helpers reject incompatible declarations or unavailable validation before dispatch. The runtime validator port is not persisted; rebind it after restore when using explicit resources or application-specific validation. Schema validation precedes domain `Validate()` and is not replaced by successful Go decoding.
 
-Final source validation separates `ErrSchemaJSONDecode` (invalid/truncated/multiple documents) from `ErrSchemaMismatch` (valid JSON violating constraints). Invalid-document errors do not become repairable `ValidationError` or executor domain feedback. Incremental syntax remains `ErrStructuredStream`; provider refusal/incomplete remain outcome errors. See [current schema/data contract](docs/schema-data-contract.md) and [historical task37 schema evidence](docs/task37/schema-conformance.md).
+Final source validation separates `ErrSchemaJSONDecode` (invalid/truncated/multiple documents) from `ErrSchemaMismatch` (valid JSON violating constraints). Invalid-document errors do not become repairable `ValidationError` or executor domain feedback. Incremental syntax remains `ErrStructuredStream`; provider refusal/incomplete remain outcome errors. See [current schema/data contract](docs/schema-data-contract.md).
 
 ```go
 stream := client.ExecuteStream(ctx, exec, prompty.StreamNative)
@@ -259,7 +259,7 @@ accepted binding, while failed/canceled status retains partial state. The core
 never interprets signatures or certifies a producer's provider payload. See the
 [executable update example](stream_state_update_example_test.go).
 
-`event.Identity.MessageID` identifies the local handle, not a provider request or physical attempt. `PartIDs` references each frame's logical content parts; in status/terminal it aligns with `Result.Content`, including repeated text-fragment references and materialized tool calls. Custom sources declare these references explicitly; missing/conflicting references fail with `ErrStreamProtocol`. Native and buffered canonical capture preserve them. Middleware attaches lazy observation to the original handle through `ObserveLifecycle`, retaining cancellation/finalizers/capture rather than reassembling a second stream. See the [stream migration contract](docs/task37/migration.md).
+`event.Identity.MessageID` identifies the local handle, not a provider request or physical attempt. `PartIDs` references each frame's logical content parts; in status/terminal it aligns with `Result.Content`, including repeated text-fragment references and materialized tool calls. Custom sources declare these references explicitly; missing/conflicting references fail with `ErrStreamProtocol`. Native and buffered canonical capture preserve them. Middleware attaches lazy observation to the original handle through `ObserveLifecycle`, retaining cancellation/finalizers/capture rather than reassembling a second stream. See the [stream contract](docs/provider-exchange-contract.md).
 
 The [executable SDK/local-SSE example](adapter/openai/checked_example_test.go) demonstrates checked profile binding, trailing usage, response persistence and continuation without a paid provider request.
 
@@ -271,7 +271,7 @@ Strict schema fidelity either preserves the original contract or fails before di
 
 ## Migration Notes
 
-This change is a clear break: old iterator/IsFinished semantics, adjacency-based tool assembly, Type-only cache hints and implicit synthetic structured-output tools are removed. No compatibility bridge or lossy legacy-wire restore is supplied. See the [current clear-break migration](docs/migration.md) and [capability matrix](docs/provider-capability-matrix.md). The [task37 contracts](docs/task37/contracts.md) and [release/issue closeout checklist](docs/task37/release-closeout.md) retain historical checkpoint evidence, not a claim about current live support.
+This change is a clear break: old iterator/IsFinished semantics, adjacency-based tool assembly, Type-only cache hints and implicit synthetic structured-output tools are removed. No compatibility bridge or lossy legacy-wire restore is supplied. See the [current clear-break migration](docs/migration.md) and [capability matrix](docs/provider-capability-matrix.md).
 
 Regression gates: `make lint` and `make test` across all modules, including race checks and generator fixtures.
 

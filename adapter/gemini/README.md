@@ -99,7 +99,7 @@ storage, cleanup, egress and access decisions. Semantic operation capture uses
 common redaction and coverage; transport bytes/physical attempts are not promised.
 
 The inline input bound is 20 MB; serialized SDK response limit defaults to 4 MiB
-and Results allows explicit MaxBytes/MaxLineBytes. Local protocol/error/schema/cancel fixtures cover the implemented ports; task37 audit checkpoints retain their original scope. Vertex batches, embeddings and file results are not
+and Results allows explicit MaxBytes/MaxLineBytes. Local protocol/error/schema/cancel fixtures cover the implemented ports. Vertex batches, embeddings and file results are not
 advertised by this inline path. `ExampleNewBatches` is an executable local SDK
 fixture, not evidence of live account/model support. Protocol reference:
 [Gemini Batch API](https://ai.google.dev/gemini-api/docs/batch-api).
@@ -121,7 +121,7 @@ line, configurable explicitly; input cannot exceed the provider's file limit.
 Required original-source capture needs a file-port accuracy declaration.
 `ExampleNewFileBatches` is a runnable local fixture, not live conformance.
 
-The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43; historical task37 evidence is not rewritten as current certification.
+The [unified capability matrix](../../docs/provider-capability-matrix.md) records pinned SDKs, operation/backend limits, checked/raw guarantees and linked offline evidence. The [clear-break migration](../../docs/migration.md) covers accepted tasks38–43.
 
 ## Opt-in native JSON Schema
 

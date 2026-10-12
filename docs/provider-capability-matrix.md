@@ -4,7 +4,6 @@ This is the current implementation map, including accepted tasks38–43. It is n
 model catalogue or live account certification. SDK versions below are pinned in
 the adapter modules. The evidence column links implementation and offline fixtures;
 fixtures exercise serialization, local admission and protocol interpretation.
-Historical [task37 evidence](task37/) records its own checkpoint and is unchanged.
 
 **Implemented** means a port exists; a caller-owned profile must still confirm the
 exact provider, actual endpoint, effective model, MIME types, settings and feature
