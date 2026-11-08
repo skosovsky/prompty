@@ -226,15 +226,16 @@ func canonicalGeminiPart(part *genai.Part) (prompty.ContentPart, error) {
 	case len(part.ThoughtSignature) != 0:
 		return prompty.ReasoningPart{}, nil
 	default:
-		if reflect.DeepEqual(
-			part,
-			//nolint:exhaustruct_v5 // SDK DTO: optional fields and unselected union arms stay zero.
-			&genai.Part{},
-		) {
+		if isEmptyGeminiPart(part) {
 			return nil, adapter.ErrEmptyResponse
 		}
 		return nil, adapter.ErrUnsupportedContentType
 	}
+}
+
+func isEmptyGeminiPart(part *genai.Part) bool {
+	//nolint:exhaustruct_v5 // A placeholder has no fields set in the SDK DTO.
+	return reflect.DeepEqual(part, &genai.Part{})
 }
 
 func validateGeminiPartShape(part *genai.Part) error {

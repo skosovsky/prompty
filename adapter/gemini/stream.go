@@ -191,6 +191,17 @@ func (s *generateStreamState) frameSDK(
 		if err != nil {
 			return nil, err
 		}
+		// Compact both inputs before assigning logical part indexes and source ordinals.
+		if content := raw.Candidates[0].Content; content != nil {
+			count := len(content.Parts)
+			content.Parts = slices.DeleteFunc(content.Parts, isEmptyGeminiPart)
+			if len(content.Parts) != count {
+				payload, err = json.Marshal(raw)
+				if err != nil {
+					return nil, prompty.ErrProviderState
+				}
+			}
+		}
 	}
 	provenance, err := sourcePartAnnotations(payload, s.sourcePartSerial)
 	if err != nil {
